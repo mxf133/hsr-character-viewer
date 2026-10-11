@@ -10,6 +10,37 @@
 
 界面是网页 GUI，后端是一个**零第三方依赖**的 Node.js 服务（只用 Node 标准库）。
 
+## 功能预览
+
+下面的截图使用本地合成数据，仅用于展示界面，不包含真实账号信息。
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/character-overview.png" alt="角色信息总览" width="100%"></td>
+    <td><img src="docs/screenshots/advice-overview.png" alt="抽卡推荐总览" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center">角色信息总览</td>
+    <td align="center">抽卡推荐与数据状态</td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/character-detail.png" alt="角色详情面板" width="100%"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">角色详情面板：属性、光锥、遗器和星魂</td>
+  </tr>
+</table>
+
+## 直接下载
+
+Windows 用户可以直接下载 [最新便携包](https://github.com/mxf133/hsr-character-viewer/releases/latest)：
+
+1. 解压压缩包。
+2. 确认电脑已安装 **Node.js 18.17 或更新版本**。
+3. 双击 `start.bat`，程序会启动本地服务并打开浏览器。
+
+程序只在本机保存登录凭证和战绩缓存；公开发布包不包含任何账号文件、Cookie 或本机缓存。
+
 > **当前版本见 [`src/version.js`](src/version.js)**（唯一来源：服务启动时打印、界面页脚
 > 显示、`/api/config` 返回）。版本号跟着游戏走：**主版本 = 对齐的游戏版本，末位是
 > 本工具在同一游戏环境里的修订号**（如 `v4.6.68` = 对齐游戏 4.6、第 68 次修订）。
