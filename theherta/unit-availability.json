@@ -1,0 +1,1273 @@
+{
+  "version": 2,
+  "source": "Mar-7th/StarRailRes index_min/en（本地副本）+ 常驻池名单 + 24xxx 免费光锥 id 判据",
+  "generatedAt": "2026-10-08T13:09:44.743Z",
+  "counts": {
+    "characters": 93,
+    "lightCones": 170,
+    "limitedCharacters": 58,
+    "limitedLightCones": 58,
+    "resolvedCharacters": 93,
+    "resolvedLightCones": 170
+  },
+  "missing": {
+    "characters": [],
+    "lightCones": []
+  },
+  "standardCharacters": [
+    "Bailu",
+    "Bronya",
+    "Clara",
+    "Gepard",
+    "Himeko",
+    "Trailblazer (Destruction)",
+    "Trailblazer (Elation)",
+    "Trailblazer (Harmony)",
+    "Trailblazer (Preservation)",
+    "Trailblazer (Remembrance)",
+    "Welt",
+    "Yanqing"
+  ],
+  "standardLightCones": [
+    "But the Battle Isn't Over",
+    "Cruising in the Stellar Sea",
+    "Elation Brimming With Blessings",
+    "In the Name of the World",
+    "Moment of Victory",
+    "Night on the Milky Way",
+    "On the Fall of an Aeon",
+    "Sleep Like the Dead",
+    "Something Irreplaceable",
+    "Texture of Memories",
+    "Time Waits for No One"
+  ],
+  "freeConeIdPrefixes": [
+    "24"
+  ],
+  "characters": {
+    "Acheron": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Aglaea": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Anaxa": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Archer": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Argenti": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Arlan": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Ashveil": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Asta": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Aventurine": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Aventurine • Waveflair": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Bailu": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Black Swan": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Blade": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Boothill": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Bronya": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Castorice": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Cerydra": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Cipher": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Clara": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Cyrene": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Dan Heng": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Dan Heng • Imbibitor Lunae": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Dan Heng • Permansor Terrae": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Dr. Ratio": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Evanescia": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Evernight": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Feixiao": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Firefly": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Fu Xuan": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Fugue": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Gallagher": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Gepard": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Gilgamesh": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Guinaifen": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Hanya": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Herta": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Himeko": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Himeko • Nova": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Hook": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Huohuo": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Hyacine": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Hysilens": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Jade": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Jiaoqiu": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Jing Yuan": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Jingliu": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Kafka": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Lingsha": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Luka": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Luocha": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Lynx": {
+      "rarity": 4,
+      "limited": false
+    },
+    "March 7th (Hunt)": {
+      "rarity": 4,
+      "limited": false
+    },
+    "March 7th (Preservation)": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Misha": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Mortenax Blade": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Moze": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Mydei": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Natasha": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Pearl": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Pela": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Phainon": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Qingque": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Rappa": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Rin Tohsaka": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Robin": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Robin • Summeretto": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Ruan Mei": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Saber": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Sampo": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Seele": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Serval": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Silver Wolf": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Silver Wolf LV.999": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Sparkle": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Sparxie": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Sunday": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Sushang": {
+      "rarity": 4,
+      "limited": false
+    },
+    "The Dahlia": {
+      "rarity": 5,
+      "limited": true
+    },
+    "The Herta": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Tingyun": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Topaz & Numby": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Trailblazer (Destruction)": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Trailblazer (Elation)": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Trailblazer (Harmony)": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Trailblazer (Preservation)": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Trailblazer (Remembrance)": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Tribbie": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Welt": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Xueyi": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Yanqing": {
+      "rarity": 5,
+      "limited": false
+    },
+    "Yao Guang": {
+      "rarity": 5,
+      "limited": true
+    },
+    "Yukong": {
+      "rarity": 4,
+      "limited": false
+    },
+    "Yunli": {
+      "rarity": 5,
+      "limited": true
+    }
+  },
+  "lightCones": {
+    "A Dream Scented in Wheat": {
+      "id": "21060",
+      "rarity": 4,
+      "limited": false
+    },
+    "A Grounded Ascent": {
+      "id": "23034",
+      "rarity": 5,
+      "limited": true
+    },
+    "A Little Getaway": {
+      "id": "21066",
+      "rarity": 4,
+      "limited": false
+    },
+    "A Secret Vow": {
+      "id": "21012",
+      "rarity": 4,
+      "limited": false
+    },
+    "A Star That Lights the Night": {
+      "id": "23060",
+      "rarity": 5,
+      "limited": true
+    },
+    "A Thankless Coronation": {
+      "id": "23045",
+      "rarity": 5,
+      "limited": true
+    },
+    "A Trail of Bygone Blood": {
+      "id": "21058",
+      "rarity": 4,
+      "limited": false
+    },
+    "Adversarial": {
+      "id": "20014",
+      "rarity": 3,
+      "limited": false
+    },
+    "After the Charmony Fall": {
+      "id": "21045",
+      "rarity": 4,
+      "limited": false
+    },
+    "Along the Passing Shore": {
+      "id": "23024",
+      "rarity": 5,
+      "limited": true
+    },
+    "Amber": {
+      "id": "20003",
+      "rarity": 3,
+      "limited": false
+    },
+    "An Instant Before A Gaze": {
+      "id": "23018",
+      "rarity": 5,
+      "limited": true
+    },
+    "Arrows": {
+      "id": "20000",
+      "rarity": 3,
+      "limited": false
+    },
+    "Baptism of Pure Thought": {
+      "id": "23020",
+      "rarity": 5,
+      "limited": true
+    },
+    "Before Dawn": {
+      "id": "23010",
+      "rarity": 5,
+      "limited": true
+    },
+    "Before the Tutorial Mission Starts": {
+      "id": "22000",
+      "rarity": 4,
+      "limited": false
+    },
+    "Boundless Choreo": {
+      "id": "21044",
+      "rarity": 4,
+      "limited": false
+    },
+    "Brighter Than the Sun": {
+      "id": "23015",
+      "rarity": 5,
+      "limited": true
+    },
+    "But the Battle Isn't Over": {
+      "id": "23003",
+      "rarity": 5,
+      "limited": false
+    },
+    "Carve the Moon, Weave the Clouds": {
+      "id": "21032",
+      "rarity": 4,
+      "limited": false
+    },
+    "Chorus": {
+      "id": "20005",
+      "rarity": 3,
+      "limited": false
+    },
+    "Collapsing Sky": {
+      "id": "20002",
+      "rarity": 3,
+      "limited": false
+    },
+    "Colors for Tomorrow": {
+      "id": "23055",
+      "rarity": 5,
+      "limited": true
+    },
+    "Concert for Two": {
+      "id": "21043",
+      "rarity": 4,
+      "limited": false
+    },
+    "Cornucopia": {
+      "id": "20001",
+      "rarity": 3,
+      "limited": false
+    },
+    "Cruising in the Stellar Sea": {
+      "id": "24001",
+      "rarity": 5,
+      "limited": false
+    },
+    "Dance at Sunset": {
+      "id": "23030",
+      "rarity": 5,
+      "limited": true
+    },
+    "Dance Dance Dance": {
+      "id": "21018",
+      "rarity": 4,
+      "limited": false
+    },
+    "Darting Arrow": {
+      "id": "20007",
+      "rarity": 3,
+      "limited": false
+    },
+    "Data Bank": {
+      "id": "20006",
+      "rarity": 3,
+      "limited": false
+    },
+    "Day One of My New Life": {
+      "id": "21002",
+      "rarity": 4,
+      "limited": false
+    },
+    "Dazzled by a Flowery World": {
+      "id": "23053",
+      "rarity": 5,
+      "limited": true
+    },
+    "Defense": {
+      "id": "20010",
+      "rarity": 3,
+      "limited": false
+    },
+    "Destiny's Threads Forewoven": {
+      "id": "21039",
+      "rarity": 4,
+      "limited": false
+    },
+    "Dream's Montage": {
+      "id": "21048",
+      "rarity": 4,
+      "limited": false
+    },
+    "Dreamville Adventure": {
+      "id": "21036",
+      "rarity": 4,
+      "limited": false
+    },
+    "Earthly Escapade": {
+      "id": "23021",
+      "rarity": 5,
+      "limited": true
+    },
+    "Echoes of the Coffin": {
+      "id": "23008",
+      "rarity": 5,
+      "limited": true
+    },
+    "Elation Brimming With Blessings": {
+      "id": "24006",
+      "rarity": 5,
+      "limited": false
+    },
+    "Epoch Etched in Golden Blood": {
+      "id": "23048",
+      "rarity": 5,
+      "limited": true
+    },
+    "Eternal Calculus": {
+      "id": "24004",
+      "rarity": 5,
+      "limited": false
+    },
+    "Eyes of the Prey": {
+      "id": "21008",
+      "rarity": 4,
+      "limited": false
+    },
+    "Fermata": {
+      "id": "21022",
+      "rarity": 4,
+      "limited": false
+    },
+    "Final Victor": {
+      "id": "21037",
+      "rarity": 4,
+      "limited": false
+    },
+    "Fine Fruit": {
+      "id": "20008",
+      "rarity": 3,
+      "limited": false
+    },
+    "Flame of Blood, Blaze My Path": {
+      "id": "23039",
+      "rarity": 5,
+      "limited": true
+    },
+    "Flames Afar": {
+      "id": "21038",
+      "rarity": 4,
+      "limited": false
+    },
+    "Flickering Stars": {
+      "id": "23061",
+      "rarity": 5,
+      "limited": true
+    },
+    "Flowing Nightglow": {
+      "id": "23026",
+      "rarity": 5,
+      "limited": true
+    },
+    "Fly Into a Pink Tomorrow": {
+      "id": "22006",
+      "rarity": 4,
+      "limited": false
+    },
+    "For Tomorrow's Journey": {
+      "id": "22002",
+      "rarity": 4,
+      "limited": false
+    },
+    "Geniuses' Greetings": {
+      "id": "21051",
+      "rarity": 4,
+      "limited": false
+    },
+    "Geniuses' Repose": {
+      "id": "21020",
+      "rarity": 4,
+      "limited": false
+    },
+    "Good Night and Sleep Well": {
+      "id": "21001",
+      "rarity": 4,
+      "limited": false
+    },
+    "Hey, Over Here": {
+      "id": "22001",
+      "rarity": 4,
+      "limited": false
+    },
+    "Hidden Shadow": {
+      "id": "20018",
+      "rarity": 3,
+      "limited": false
+    },
+    "Holiday Thermae Escapade": {
+      "id": "21061",
+      "rarity": 4,
+      "limited": false
+    },
+    "I Am As You Behold": {
+      "id": "23062",
+      "rarity": 5,
+      "limited": true
+    },
+    "I Shall Be My Own Sword": {
+      "id": "23014",
+      "rarity": 5,
+      "limited": true
+    },
+    "I Venture Forth to Hunt": {
+      "id": "23031",
+      "rarity": 5,
+      "limited": true
+    },
+    "If Time Were a Flower": {
+      "id": "23038",
+      "rarity": 5,
+      "limited": true
+    },
+    "In Pursuit of the Wind": {
+      "id": "21056",
+      "rarity": 4,
+      "limited": false
+    },
+    "In the Name of the World": {
+      "id": "23004",
+      "rarity": 5,
+      "limited": false
+    },
+    "In the Night": {
+      "id": "23001",
+      "rarity": 5,
+      "limited": true
+    },
+    "Incessant Rain": {
+      "id": "23007",
+      "rarity": 5,
+      "limited": true
+    },
+    "Indelible Promise": {
+      "id": "21042",
+      "rarity": 4,
+      "limited": false
+    },
+    "Inherently Unjust Destiny": {
+      "id": "23023",
+      "rarity": 5,
+      "limited": true
+    },
+    "Into the Unreachable Veil": {
+      "id": "23037",
+      "rarity": 5,
+      "limited": true
+    },
+    "It's Showtime": {
+      "id": "21041",
+      "rarity": 4,
+      "limited": false
+    },
+    "Journey, Forever Peaceful": {
+      "id": "21053",
+      "rarity": 4,
+      "limited": false
+    },
+    "Landau's Choice": {
+      "id": "21009",
+      "rarity": 4,
+      "limited": false
+    },
+    "Lies Dance on the Breeze": {
+      "id": "23043",
+      "rarity": 5,
+      "limited": true
+    },
+    "Life Should Be Cast to Flames": {
+      "id": "23041",
+      "rarity": 5,
+      "limited": true
+    },
+    "Lingering Tear": {
+      "id": "20024",
+      "rarity": 3,
+      "limited": false
+    },
+    "Long May Rainbows Adorn the Sky": {
+      "id": "23042",
+      "rarity": 5,
+      "limited": true
+    },
+    "Long Road Leads Home": {
+      "id": "23035",
+      "rarity": 5,
+      "limited": true
+    },
+    "Loop": {
+      "id": "20011",
+      "rarity": 3,
+      "limited": false
+    },
+    "Make Farewells More Beautiful": {
+      "id": "23040",
+      "rarity": 5,
+      "limited": true
+    },
+    "Make the World Clamor": {
+      "id": "21013",
+      "rarity": 4,
+      "limited": false
+    },
+    "Mediation": {
+      "id": "20019",
+      "rarity": 3,
+      "limited": false
+    },
+    "Memories of the Past": {
+      "id": "21004",
+      "rarity": 4,
+      "limited": false
+    },
+    "Memory's Curtain Never Falls": {
+      "id": "24005",
+      "rarity": 5,
+      "limited": false
+    },
+    "Meshing Cogs": {
+      "id": "20012",
+      "rarity": 3,
+      "limited": false
+    },
+    "Moment of Victory": {
+      "id": "23005",
+      "rarity": 5,
+      "limited": false
+    },
+    "Multiplication": {
+      "id": "20015",
+      "rarity": 3,
+      "limited": false
+    },
+    "Mushy Shroomy's Adventures": {
+      "id": "21064",
+      "rarity": 4,
+      "limited": false
+    },
+    "Mutual Demise": {
+      "id": "20016",
+      "rarity": 3,
+      "limited": false
+    },
+    "Never Forget Her Flame": {
+      "id": "23050",
+      "rarity": 5,
+      "limited": true
+    },
+    "Night of Fright": {
+      "id": "23017",
+      "rarity": 5,
+      "limited": true
+    },
+    "Night on the Milky Way": {
+      "id": "23000",
+      "rarity": 5,
+      "limited": false
+    },
+    "Ninja Record: Sound Hunt": {
+      "id": "22003",
+      "rarity": 4,
+      "limited": false
+    },
+    "Ninjutsu Inscription: Dazzling Evilbreaker": {
+      "id": "23033",
+      "rarity": 5,
+      "limited": true
+    },
+    "Nowhere to Run": {
+      "id": "21033",
+      "rarity": 4,
+      "limited": false
+    },
+    "On the Fall of an Aeon": {
+      "id": "24000",
+      "rarity": 5,
+      "limited": false
+    },
+    "Only Silence Remains": {
+      "id": "21003",
+      "rarity": 4,
+      "limited": false
+    },
+    "Passkey": {
+      "id": "20013",
+      "rarity": 3,
+      "limited": false
+    },
+    "Past and Future": {
+      "id": "21025",
+      "rarity": 4,
+      "limited": false
+    },
+    "Past Self in Mirror": {
+      "id": "23019",
+      "rarity": 5,
+      "limited": true
+    },
+    "Patience Is All You Need": {
+      "id": "23006",
+      "rarity": 5,
+      "limited": true
+    },
+    "Perfect Timing": {
+      "id": "21014",
+      "rarity": 4,
+      "limited": false
+    },
+    "Pioneering": {
+      "id": "20017",
+      "rarity": 3,
+      "limited": false
+    },
+    "Planetary Rendezvous": {
+      "id": "21011",
+      "rarity": 4,
+      "limited": false
+    },
+    "Poised to Bloom": {
+      "id": "21046",
+      "rarity": 4,
+      "limited": false
+    },
+    "Post-Op Conversation": {
+      "id": "21000",
+      "rarity": 4,
+      "limited": false
+    },
+    "Quid Pro Quo": {
+      "id": "21021",
+      "rarity": 4,
+      "limited": false
+    },
+    "Race to the Horizon": {
+      "id": "22008",
+      "rarity": 4,
+      "limited": false
+    },
+    "Reforged in Hellfire": {
+      "id": "23059",
+      "rarity": 5,
+      "limited": true
+    },
+    "Reforged Remembrance": {
+      "id": "23022",
+      "rarity": 5,
+      "limited": true
+    },
+    "Reminiscence": {
+      "id": "20022",
+      "rarity": 3,
+      "limited": false
+    },
+    "Resolution Shines As Pearls of Sweat": {
+      "id": "21015",
+      "rarity": 4,
+      "limited": false
+    },
+    "Return to Darkness": {
+      "id": "21031",
+      "rarity": 4,
+      "limited": false
+    },
+    "Rise and Sing": {
+      "id": "23063",
+      "rarity": 5,
+      "limited": true
+    },
+    "River Flows in Spring": {
+      "id": "21024",
+      "rarity": 4,
+      "limited": false
+    },
+    "Sagacity": {
+      "id": "20020",
+      "rarity": 3,
+      "limited": false
+    },
+    "Sailing Towards a Second Life": {
+      "id": "23027",
+      "rarity": 5,
+      "limited": true
+    },
+    "Scent Alone Stays True": {
+      "id": "23032",
+      "rarity": 5,
+      "limited": true
+    },
+    "See You at the End": {
+      "id": "21062",
+      "rarity": 4,
+      "limited": false
+    },
+    "Shadowburn": {
+      "id": "20021",
+      "rarity": 3,
+      "limited": false
+    },
+    "Shadowed by Night": {
+      "id": "21047",
+      "rarity": 4,
+      "limited": false
+    },
+    "Shared Feeling": {
+      "id": "21007",
+      "rarity": 4,
+      "limited": false
+    },
+    "Shattered Home": {
+      "id": "20009",
+      "rarity": 3,
+      "limited": false
+    },
+    "She Already Shut Her Eyes": {
+      "id": "23011",
+      "rarity": 5,
+      "limited": true
+    },
+    "Sleep Like the Dead": {
+      "id": "23012",
+      "rarity": 5,
+      "limited": false
+    },
+    "Sneering": {
+      "id": "20023",
+      "rarity": 3,
+      "limited": false
+    },
+    "Solitary Healing": {
+      "id": "24003",
+      "rarity": 5,
+      "limited": false
+    },
+    "Something Irreplaceable": {
+      "id": "23002",
+      "rarity": 5,
+      "limited": false
+    },
+    "Subscribe for More!": {
+      "id": "21017",
+      "rarity": 4,
+      "limited": false
+    },
+    "Summer Rides the Surf": {
+      "id": "23064",
+      "rarity": 5,
+      "limited": true
+    },
+    "Sweat Now, Cry Less": {
+      "id": "21052",
+      "rarity": 4,
+      "limited": false
+    },
+    "Swordplay": {
+      "id": "21010",
+      "rarity": 4,
+      "limited": false
+    },
+    "Texture of Memories": {
+      "id": "24002",
+      "rarity": 5,
+      "limited": false
+    },
+    "The Birth of the Self": {
+      "id": "21006",
+      "rarity": 4,
+      "limited": false
+    },
+    "The Day The Cosmos Fell": {
+      "id": "21040",
+      "rarity": 4,
+      "limited": false
+    },
+    "The Finale of a Lie": {
+      "id": "23056",
+      "rarity": 5,
+      "limited": true
+    },
+    "The Flower Remembers": {
+      "id": "21057",
+      "rarity": 4,
+      "limited": false
+    },
+    "The Forever Victual": {
+      "id": "22005",
+      "rarity": 4,
+      "limited": false
+    },
+    "The Great Cosmic Enterprise": {
+      "id": "22004",
+      "rarity": 4,
+      "limited": false
+    },
+    "The Hell Where Ideals Burn": {
+      "id": "23046",
+      "rarity": 5,
+      "limited": true
+    },
+    "The Moles Welcome You": {
+      "id": "21005",
+      "rarity": 4,
+      "limited": false
+    },
+    "The Seriousness of Breakfast": {
+      "id": "21027",
+      "rarity": 4,
+      "limited": false
+    },
+    "The Story's Next Page": {
+      "id": "21054",
+      "rarity": 4,
+      "limited": false
+    },
+    "The Unreachable Side": {
+      "id": "23009",
+      "rarity": 5,
+      "limited": true
+    },
+    "This Is Me!": {
+      "id": "21030",
+      "rarity": 4,
+      "limited": false
+    },
+    "This Love, Forever": {
+      "id": "23052",
+      "rarity": 5,
+      "limited": true
+    },
+    "Those Many Springs": {
+      "id": "23029",
+      "rarity": 5,
+      "limited": true
+    },
+    "Though Worlds Apart": {
+      "id": "23051",
+      "rarity": 5,
+      "limited": true
+    },
+    "Thus Burns the Dawn": {
+      "id": "23044",
+      "rarity": 5,
+      "limited": true
+    },
+    "Time Waits for No One": {
+      "id": "23013",
+      "rarity": 5,
+      "limited": false
+    },
+    "Time Woven Into Gold": {
+      "id": "23036",
+      "rarity": 5,
+      "limited": true
+    },
+    "To Evernight's Stars": {
+      "id": "23049",
+      "rarity": 5,
+      "limited": true
+    },
+    "Today Is Another Peaceful Day": {
+      "id": "21034",
+      "rarity": 4,
+      "limited": false
+    },
+    "Today's Good Luck": {
+      "id": "21065",
+      "rarity": 4,
+      "limited": false
+    },
+    "Tomorrow, Together": {
+      "id": "22007",
+      "rarity": 4,
+      "limited": false
+    },
+    "Trend of the Universal Market": {
+      "id": "21016",
+      "rarity": 4,
+      "limited": false
+    },
+    "Under the Blue Sky": {
+      "id": "21019",
+      "rarity": 4,
+      "limited": false
+    },
+    "Until the Flowers Bloom Again": {
+      "id": "23058",
+      "rarity": 5,
+      "limited": true
+    },
+    "Unto Tomorrow's Morrow": {
+      "id": "21055",
+      "rarity": 4,
+      "limited": false
+    },
+    "Victory In a Blink": {
+      "id": "21050",
+      "rarity": 4,
+      "limited": false
+    },
+    "Void": {
+      "id": "20004",
+      "rarity": 3,
+      "limited": false
+    },
+    "Warmth Shortens Cold Nights": {
+      "id": "21028",
+      "rarity": 4,
+      "limited": false
+    },
+    "We Are Wildfire": {
+      "id": "21023",
+      "rarity": 4,
+      "limited": false
+    },
+    "We Will Meet Again": {
+      "id": "21029",
+      "rarity": 4,
+      "limited": false
+    },
+    "Welcome to the Cosmic City": {
+      "id": "23057",
+      "rarity": 5,
+      "limited": true
+    },
+    "What Is Real?": {
+      "id": "21035",
+      "rarity": 4,
+      "limited": false
+    },
+    "When She Decided to See": {
+      "id": "23054",
+      "rarity": 5,
+      "limited": true
+    },
+    "Whereabouts Should Dreams Rest": {
+      "id": "23025",
+      "rarity": 5,
+      "limited": true
+    },
+    "Why Does the Ocean Sing": {
+      "id": "23047",
+      "rarity": 5,
+      "limited": true
+    },
+    "Woof! Walk Time!": {
+      "id": "21026",
+      "rarity": 4,
+      "limited": false
+    },
+    "Worrisome, Blissful": {
+      "id": "23016",
+      "rarity": 5,
+      "limited": true
+    },
+    "Yet Hope Is Priceless": {
+      "id": "23028",
+      "rarity": 5,
+      "limited": true
+    }
+  }
+}

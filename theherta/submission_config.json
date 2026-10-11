@@ -1,0 +1,1138 @@
+{
+  "categories": [
+    "0-Cycle",
+    "Clear",
+    "full stars"
+  ],
+  "modes": [
+    "Anomaly Arbitration",
+    "Memory of Chaos",
+    "Pure Fiction",
+    "Apocalyptic Shadow"
+  ],
+  "seasons": [
+    {
+      "version": "3.0",
+      "modes": {
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "True Sting",
+              "id": 802401107,
+              "hp": "1,536,294 x2"
+            },
+            {
+              "name": "Nikador",
+              "id": 4014010,
+              "hp": "3,770,904 x2",
+              "image_id": 4014020
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "3.1",
+      "modes": {
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "Flame Reaver",
+              "id": 4034010,
+              "hp": "2,269,525 x2"
+            },
+            {
+              "name": "Kafka",
+              "id": 200401007,
+              "hp": "1,815,620"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "3.2",
+      "modes": {
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "Pollux",
+              "id": 4014030,
+              "hp": "2,723,430 x2"
+            },
+            {
+              "name": "5 TVs",
+              "id": 3004020,
+              "hp": "3,351,914 x2"
+            }
+          ]
+        },
+        "Apocalyptic Shadow": {
+          "bosses": [
+            {
+              "name": "Skaracabaz",
+              "id": 802501104,
+              "hp": "4,223,563 x2"
+            },
+            {
+              "name": "Hoolay",
+              "id": 203401404,
+              "hp": "2,419,750.083 x2"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "3.3",
+      "modes": {
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "True Sting",
+              "id": 802401107,
+              "hp": "1,997,182 x2"
+            },
+            {
+              "name": "Hoolay",
+              "id": 2034010,
+              "hp": "2,304,441 x2"
+            }
+          ]
+        },
+        "Pure Fiction": {
+          "bosses": [
+            {
+              "name": "Argenti",
+              "id": 302401204,
+              "hp": "14,444,525"
+            },
+            {
+              "name": "True Sting",
+              "id": 8024013,
+              "hp": "14,444,524",
+              "image_id": 8024010
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "3.4",
+      "modes": {
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "Svarog",
+              "id": 101401016,
+              "hp": "3,687,106"
+            },
+            {
+              "name": "Aventurine",
+              "id": 803401004,
+              "hp": "2,360,306 x2"
+            }
+          ]
+        },
+        "Pure Fiction": {
+          "bosses": [
+            {
+              "name": "Gepard",
+              "id": 100402014,
+              "hp": "14,444,524"
+            },
+            {
+              "name": "Hoolay",
+              "id": 2034016,
+              "hp": "13,000,072",
+              "image_id": 2034010
+            }
+          ]
+        },
+        "Apocalyptic Shadow": {
+          "bosses": [
+            {
+              "name": "Flame Reaver",
+              "id": 403401304,
+              "hp": "2,419,750.083 x2"
+            },
+            {
+              "name": "Doomsday Beast",
+              "id": 801501204,
+              "hp": "3,811,106.381 x2"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "3.5",
+      "modes": {
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "Gepard",
+              "id": 100402016,
+              "hp": "2,346,340"
+            },
+            {
+              "name": "Zandar",
+              "id": 4044010,
+              "hp": "11,731,702"
+            }
+          ]
+        },
+        "Pure Fiction": {
+          "bosses": [
+            {
+              "name": "Bronya",
+              "id": 100403008,
+              "hp": "16,611,203"
+            },
+            {
+              "name": "Flame Reaver",
+              "id": 4034014,
+              "hp": "16,611,203"
+            }
+          ]
+        },
+        "Apocalyptic Shadow": {
+          "bosses": [
+            {
+              "name": "Hoolay",
+              "id": 2034010,
+              "hp": "3,712,116.605 x2"
+            },
+            {
+              "name": "Feixiao",
+              "id": 203501204,
+              "hp": "11,548,807.216 x2"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "3.6",
+      "modes": {
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "Flame Reaver",
+              "id": 4034010,
+              "hp": "3,631,241 x2"
+            },
+            {
+              "name": "Ichor Memosprite",
+              "id": 4064010,
+              "hp": "3,016,723 x2",
+              "image_pos": "center 60%"
+            }
+          ]
+        },
+        "Pure Fiction": {
+          "bosses": [
+            {
+              "name": "Argenti",
+              "id": 302401204,
+              "hp": "20,222,335"
+            },
+            {
+              "name": "Nikador",
+              "id": 401401401,
+              "hp": "20,222,234",
+              "image_id": 4014020
+            }
+          ]
+        },
+        "Apocalyptic Shadow": {
+          "bosses": [
+            {
+              "name": "Pollux",
+              "id": 401403604,
+              "hp": "8,447,127.564 x2"
+            },
+            {
+              "name": "Cocolia",
+              "id": 100401404,
+              "hp": "4,751,509.254 x2"
+            }
+          ]
+        },
+        "Anomaly Arbitration": {
+          "bosses": [
+            {
+              "name": "Zandar: Plight",
+              "id": 4044010,
+              "hp": "173,092,796"
+            },
+            {
+              "name": "Zandar",
+              "id": 4044010,
+              "hp": "43,273,199"
+            },
+            {
+              "name": "Puppets Trio",
+              "id": 3004012,
+              "hp": "4,189,893 x2",
+              "prefix": "K1"
+            },
+            {
+              "name": "Sleepie",
+              "id": 3014020,
+              "hp": "1,843,551 x2",
+              "prefix": "K2"
+            },
+            {
+              "name": "Gryphon",
+              "id": 4033030,
+              "hp": "2,618,683",
+              "prefix": "K3"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "3.7",
+      "modes": {
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "Sam",
+              "id": 302402009,
+              "hp": "11,173,049"
+            },
+            {
+              "name": "Hoolay",
+              "id": 2034010,
+              "hp": "3,840,735 x2"
+            }
+          ]
+        },
+        "Pure Fiction": {
+          "bosses": [
+            {
+              "name": "Cocolia",
+              "id": 100401012,
+              "hp": "27,444,598"
+            },
+            {
+              "name": "Zandar",
+              "id": 4044012,
+              "hp": "39,919,412"
+            }
+          ]
+        },
+        "Apocalyptic Shadow": {
+          "bosses": [
+            {
+              "name": "Skaracabaz",
+              "id": 802501104,
+              "hp": "8,447,127.564 x2"
+            },
+            {
+              "name": "Phantylia",
+              "id": 801502204,
+              "hp": "4,751,509.254 x2"
+            }
+          ]
+        },
+        "Anomaly Arbitration": {
+          "bosses": [
+            {
+              "name": "Aquila: Plight",
+              "id": 401501101,
+              "hp": "56,345,333 x4.4"
+            },
+            {
+              "name": "Aquila",
+              "id": 401501101,
+              "hp": "12,677,700 x4.4"
+            },
+            {
+              "name": "Aurumaton Spectral Envoy",
+              "id": 2013020,
+              "hp": "2,094,946",
+              "prefix": "K1"
+            },
+            {
+              "name": "Hoolay",
+              "id": 2034010,
+              "hp": "3,360,643 x2",
+              "prefix": "K2"
+            },
+            {
+              "name": "5 TVs",
+              "id": 3004020,
+              "hp": "3,491,578 x2",
+              "prefix": "K3"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "3.8",
+      "modes": {
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "Cocolia + Bronya",
+              "id": 100401014,
+              "hp": "4,748,545"
+            },
+            {
+              "name": "Harbinger of Death",
+              "id": 3024030,
+              "image_pos": "center 20%",
+              "hp": "11,173,049"
+            }
+          ]
+        },
+        "Pure Fiction": {
+          "bosses": [
+            {
+              "name": "Hoolay",
+              "id": 2034016,
+              "hp": "27,444,596",
+              "image_id": 2034010
+            },
+            {
+              "name": "Abundant Ebon Deer",
+              "id": 202401406,
+              "hp": "27,444,601"
+            }
+          ]
+        },
+        "Apocalyptic Shadow": {
+          "bosses": [
+            {
+              "name": "Argenti",
+              "id": 302401304,
+              "hp": "6,049,375 x2"
+            },
+            {
+              "name": "5 TVs",
+              "id": 300402104,
+              "hp": "14,782,473.236 x2"
+            }
+          ]
+        },
+        "Anomaly Arbitration": {
+          "bosses": [
+            {
+              "name": "Septimus: Plight",
+              "id": 3025010,
+              "hp": "50,846,008 x 2.8"
+            },
+            {
+              "name": "Septimus",
+              "id": 3025010,
+              "hp": "10,818,299 x 2.8"
+            },
+            {
+              "name": "The Ascended + Cyclonic Swarm Mother",
+              "id": 4053020,
+              "hp": "4,189,893",
+              "prefix": "K1"
+            },
+            {
+              "name": "True Sting",
+              "id": 802401107,
+              "hp": "3,072,588 x2",
+              "prefix": "K2"
+            },
+            {
+              "name": "Ichor Memosprite",
+              "id": 4064010,
+              "hp": "2,828,178 x2",
+              "prefix": "K3"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "4.0",
+      "modes": {
+        "Memory of Chaos": {
+          "availableDate": "2026-03-02",
+          "expireDate": "2026-04-13",
+          "bosses": [
+            {
+              "name": "SparxiConOfficial",
+              "id": 5014010,
+              "hp": "5,935,673 x2"
+            },
+            {
+              "name": "Zandar",
+              "id": 4044010,
+              "hp": "16,759,548"
+            }
+          ]
+        },
+        "Anomaly Arbitration": {
+          "expireDate": "2026-03-25",
+          "bosses": [
+            {
+              "name": "SparxiConOfficial (Plight)",
+              "id": 501401003,
+              "hp": "55,533,953 x2"
+            },
+            {
+              "name": "SparxiConOfficial",
+              "id": 5014010,
+              "hp": "10,728,147 x2"
+            },
+            {
+              "name": "Harbinger of Death",
+              "id": 3024030,
+              "hp": "8,938,439",
+              "image_pos": "center 20%",
+              "prefix": "K1"
+            },
+            {
+              "name": "Flame Reaver",
+              "id": 4034010,
+              "hp": "6,241,195 x2",
+              "prefix": "K2"
+            },
+            {
+              "name": "Sam",
+              "id": 3024020,
+              "hp": "9,601,839",
+              "prefix": "K3"
+            }
+          ]
+        },
+        "Apocalyptic Shadow": {
+          "bosses": [
+            {
+              "name": "Pollux",
+              "id": 401403604,
+              "hp": "13,198,637 x2"
+            },
+            {
+              "name": "Kafka",
+              "id": 200401404,
+              "hp": "4,262,060 x2"
+            }
+          ]
+        },
+        "Pure Fiction": {
+          "availableDate": "2026-02-16",
+          "expireDate": "2026-03-30",
+          "bosses": [
+            {
+              "name": "Bronya",
+              "id": 100403008,
+              "hp": "24,555,692"
+            },
+            {
+              "name": "True Sting",
+              "id": 8024013,
+              "hp": "24,555,692",
+              "image_id": 8024010
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "4.1",
+      "modes": {
+        "Pure Fiction": {
+          "availableDate": "2026-03-30",
+          "expireDate": "2026-05-30",
+          "bosses": [
+            {
+              "name": "Argenti",
+              "id": 302401204,
+              "hp": "30,333,503"
+            },
+            {
+              "name": "Sam",
+              "id": 302402006,
+              "hp": "30,333,501"
+            }
+          ]
+        },
+        "Memory of Chaos": {
+          "availableDate": "2026-04-13",
+          "expireDate": "2026-05-25",
+          "bosses": [
+            {
+              "name": "Nikador",
+              "id": 4014012,
+              "hp": "10,893,723 x2",
+              "spd": "158.4",
+              "image_id": 4014020
+            },
+            {
+              "name": "Kafka",
+              "id": 200401007,
+              "hp": "5,991,548"
+            }
+          ]
+        },
+        "Apocalyptic Shadow": {
+          "availableDate": "2026-03-16",
+          "expireDate": "2026-04-27",
+          "bosses": [
+            {
+              "name": "Nikador",
+              "id": 401401304,
+              "hp": "8,084,165 x2",
+              "image_pos": "center 60%",
+              "image_id": 4014020
+            },
+            {
+              "name": "Feixiao",
+              "id": 203501204,
+              "hp": "11,856,775 x2"
+            }
+          ]
+        },
+        "Anomaly Arbitration": {
+          "availableDate": "2026-03-25",
+          "expireDate": "2026-04-21",
+          "bosses": [
+            {
+              "name": "King Pom-Pom (Plight)",
+              "id": 5014020,
+              "hp": "43,949,342 x2"
+            },
+            {
+              "name": "King Pom-Pom",
+              "id": 5014020,
+              "hp": "9,466,012 x2"
+            },
+            {
+              "name": "Rocking Rebel",
+              "id": 5013010,
+              "hp": "4,085,146",
+              "prefix": "K1"
+            },
+            {
+              "name": "Pollux",
+              "id": 4014030,
+              "hp": "6,808,577 x2",
+              "prefix": "K2"
+            },
+            {
+              "name": "Zandar",
+              "id": 4044010,
+              "hp": "23,044,415",
+              "prefix": "K3"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "4.2",
+      "modes": {
+        "Apocalyptic Shadow": {
+          "availableDate": "2026-04-27",
+          "expireDate": "2026-06-08",
+          "bosses": [
+            {
+              "name": "SparxiConOfficial",
+              "id": 501401404
+            },
+            {
+              "name": "Skaracabaz",
+              "id": 802501104
+            }
+          ]
+        },
+        "Pure Fiction": {
+          "availableDate": "2026-05-11",
+          "expireDate": "2026-06-22",
+          "bosses": [
+            {
+              "name": "Nikador",
+              "id": 401401401,
+              "hp": "39,000,216",
+              "image_id": 4014020
+            },
+            {
+              "name": "Ichor Memosprite",
+              "id": 4064014,
+              "image_id": 4064010,
+              "hp": "39,000,216"
+            }
+          ]
+        },
+        "Memory of Chaos": {
+          "availableDate": "2026-05-25",
+          "expireDate": "2026-07-06",
+          "bosses": [
+            {
+              "name": "Harbinger of Death",
+              "id": 3024030,
+              "hp": "14,524,964"
+            },
+            {
+              "name": "King Pom-Pom",
+              "id": 5014020,
+              "hp": "6,808,577 x2"
+            }
+          ]
+        },
+        "Anomaly Arbitration": {
+          "availableDate": "2026-04-22",
+          "expireDate": "2026-06-02",
+          "bosses": [
+            {
+              "name": "Illwish Archlotus (Plight)",
+              "id": 5024010,
+              "hp": "46,735,056 x 2"
+            },
+            {
+              "name": "Illwish Archlotus",
+              "id": 5024010,
+              "hp": "12,332,862 x 2"
+            },
+            {
+              "name": "Rocking Rebel",
+              "id": 5013010,
+              "prefix": "K1"
+            },
+            {
+              "name": "SparxiConOfficial",
+              "id": 5014010,
+              "prefix": "K2"
+            },
+            {
+              "name": "Flame Reaver",
+              "id": 4034010,
+              "prefix": "K3"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "version": "4.3",
+      "modes": {
+        "Apocalyptic Shadow": {
+          "bosses": [
+            {
+              "name": "Ichor Memosprite",
+              "id": 406401204,
+              "hp": "7,259,250 x2"
+            },
+            {
+              "name": "Cocolia",
+              "id": 100401404,
+              "hp": "6,874,290 x2"
+            },
+            {
+              "name": "Flame Reaver",
+              "id": 403401304,
+              "hp": "6,775,300 x2"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-06-08",
+          "expireDate": "2026-07-20"
+        },
+        "Anomaly Arbitration": {
+          "bosses": [
+            {
+              "name": "Skaracabaz (Plight)",
+              "id": 802501003,
+              "hp": "53,099,830 x 2.4"
+            },
+            {
+              "name": "Skaracabaz",
+              "id": 802501003,
+              "hp": "14,559,631 x 2.4"
+            },
+            {
+              "name": "God-Devourer Offspring",
+              "id": 5023020,
+              "hp": "3,072,589",
+              "prefix": "K1"
+            },
+            {
+              "name": "King Pom-Pom",
+              "id": 5014020,
+              "hp": "9,427,261 x2",
+              "prefix": "K2"
+            },
+            {
+              "name": "Nikador",
+              "id": 4014012,
+              "hp": "18,016,543 x2",
+              "prefix": "K3",
+              "image_id": 4014020,
+              "spd": "158.4"
+            }
+          ],
+          "availableDate": "2026-06-01",
+          "expireDate": "2026-07-12"
+        },
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "Flame Reaver",
+              "id": 4034010,
+              "hp": "5,900,767 x2"
+            },
+            {
+              "name": "Murata Graphia, Founding Artist",
+              "id": 5014030,
+              "hp": "5,900,767 x2"
+            },
+            {
+              "name": "SparxiConOfficial",
+              "id": 5014010,
+              "hp": "10,090,661 x2"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-07-06",
+          "expireDate": "2026-08-17"
+        },
+        "Pure Fiction": {
+          "bosses": [
+            {
+              "name": "Zandar",
+              "id": 4044012,
+              "hp": "60,929,632"
+            },
+            {
+              "name": "Cocolia",
+              "id": 100401012,
+              "hp": "41,889,124"
+            },
+            {
+              "name": "Kafka",
+              "id": 200401009,
+              "hp": "56,333,645"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-06-22",
+          "expireDate": "2026-08-03"
+        }
+      }
+    },
+    {
+      "version": "4.4",
+      "modes": {
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "Sam",
+              "id": 3024020,
+              "hp": "11,347,629"
+            },
+            {
+              "name": "King Pom-Pom",
+              "id": 5014020,
+              "hp": "8,510,721 x2"
+            },
+            {
+              "name": "Harbinger of Death",
+              "id": 3024030,
+              "hp": "21,508,121"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-08-17",
+          "expireDate": "2026-09-28"
+        },
+        "Pure Fiction": {
+          "bosses": [
+            {
+              "name": "Gepard",
+              "id": 100402014,
+              "hp": "57,778,099"
+            },
+            {
+              "name": "King Pom-Pom",
+              "id": 5014023,
+              "hp": "52,000,289"
+            },
+            {
+              "name": "Abundant Ebon Deer",
+              "id": 202401406,
+              "hp": "72,222,637"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-08-03",
+          "expireDate": "2026-09-14"
+        },
+        "Anomaly Arbitration": {
+          "bosses": [
+            {
+              "name": "Murata Graphia, Founding Artist (Plight)",
+              "id": 501403002,
+              "hp": "63,467,351 x2"
+            },
+            {
+              "name": "Murata Graphia, Founding Artist",
+              "id": 501403002,
+              "hp": "16,660,180 x2"
+            },
+            {
+              "name": "Argenti",
+              "id": 302401012,
+              "hp": "5,342,114 x2",
+              "prefix": "K1"
+            },
+            {
+              "name": "Svarog",
+              "id": 101401016,
+              "hp": "9,909,099",
+              "prefix": "K2"
+            },
+            {
+              "name": "Illwish Archlotus",
+              "id": 5024010,
+              "hp": "6,703,830 x2",
+              "prefix": "K3"
+            }
+          ]
+        },
+        "Apocalyptic Shadow": {
+          "bosses": [
+            {
+              "name": "Argenti",
+              "id": 302401304,
+              "hp": "9,349,034 x2"
+            },
+            {
+              "name": "Nikador",
+              "id": 401401304,
+              "hp": "14,628,489 x2"
+            },
+            {
+              "name": "5 TVs",
+              "id": 300402104,
+              "hp": "30,026,899 x2"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-07-20",
+          "expireDate": "2026-08-31"
+        }
+      }
+    },
+    {
+      "version": "4.5",
+      "modes": {
+        "Pure Fiction": {
+          "bosses": [
+            {
+              "name": "True Sting",
+              "id": 8024013,
+              "hp": "63,555,909"
+            },
+            {
+              "name": "Illwish Archlotus",
+              "id": 5024014,
+              "hp": "63,555,909"
+            },
+            {
+              "name": "Hoolay",
+              "id": 2034016,
+              "hp": "78,000,433"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-09-14",
+          "expireDate": "2026-10-19"
+        },
+        "Anomaly Arbitration": {
+          "bosses": [
+            {
+              "name": "Anti-Creator, Hatred Inundate (Plight)",
+              "id": 403501001,
+              "hp": "49,583,878 x3"
+            },
+            {
+              "name": "Anti-Creator, Hatred Inundate",
+              "id": 403501001,
+              "hp": "12,395,970 x3"
+            },
+            {
+              "name": "Cocolia",
+              "id": 100401014,
+              "hp": "10,209,373",
+              "prefix": "K1"
+            },
+            {
+              "name": "SparxiConOfficial",
+              "id": 5014010,
+              "hp": "10,684,229 x2",
+              "prefix": "K2"
+            },
+            {
+              "name": "Flame Reaver",
+              "id": 4034010,
+              "hp": "6,808,577 x2",
+              "prefix": "K3"
+            }
+          ],
+          "availableDate": "2026-08-24",
+          "expireDate": "2026-10-04"
+        },
+        "Apocalyptic Shadow": {
+          "bosses": [
+            {
+              "name": "Abundant Ebon Deer",
+              "id": 202401604,
+              "hp": "13,550,600 x2"
+            },
+            {
+              "name": "Feixiao",
+              "id": 203501204,
+              "hp": "19,478,988 x2"
+            },
+            {
+              "name": "SparxiConOfficial",
+              "id": 501401404,
+              "hp": "30,004,901 x2"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-08-31",
+          "expireDate": "2026-10-05"
+        },
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "SparxiConOfficial",
+              "id": 5014010,
+              "hp": "9,645,484 x2"
+            },
+            {
+              "name": "Zandar",
+              "id": 4044010,
+              "hp": "27,234,309"
+            },
+            {
+              "name": "Murata Graphia, Founding Artist",
+              "id": 5014030,
+              "hp": "8,397,245 x2"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-09-28",
+          "expireDate": "2026-11-02"
+        }
+      }
+    },
+    {
+      "version": "4.6",
+      "modes": {
+        "Pure Fiction": {
+          "bosses": [
+            {
+              "name": "Flame Reaver",
+              "id": 4034014,
+              "hp": "66,444,814"
+            },
+            {
+              "name": "King Pom-Pom",
+              "id": 5014023,
+              "hp": "66,444,814"
+            },
+            {
+              "name": "Argenti",
+              "id": 302401204,
+              "hp": "80,889,343"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-10-19",
+          "expireDate": "2026-11-30"
+        },
+        "Apocalyptic Shadow": {
+          "bosses": [
+            {
+              "name": "Kafka",
+              "id": 200401404,
+              "hp": "13,275,627 x2"
+            },
+            {
+              "name": "Ichor Memosprite",
+              "id": 406401204,
+              "hp": "10,888,875 x2"
+            },
+            {
+              "name": "Hoolay",
+              "id": 203401404,
+              "hp": "10,646,900 x2"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-10-05",
+          "expireDate": "2026-11-16"
+        },
+        "Anomaly Arbitration": {
+          "bosses": [
+            {
+              "name": "Yabuli (Plight)",
+              "id": 503401002,
+              "hp": "23,529,802"
+            },
+            {
+              "name": "Yabuli",
+              "id": 503401002,
+              "hp": "6,389,558"
+            },
+            {
+              "name": "King Pom-Pom",
+              "id": 5014020,
+              "hp": "7,332,314 x2",
+              "prefix": "K1"
+            },
+            {
+              "name": "Pollux",
+              "id": 4014030,
+              "hp": "9,078,103 x2",
+              "prefix": "K2"
+            },
+            {
+              "name": "Harbinger of Death",
+              "id": 3024030,
+              "hp": "13,966,312",
+              "prefix": "K3"
+            }
+          ],
+          "availableDate": "2026-09-28",
+          "expireDate": "2026-11-08"
+        },
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "Hoolay",
+              "id": 2034010,
+              "hp": "6,241,196 x2"
+            },
+            {
+              "name": "Yabuli",
+              "id": 5034010,
+              "hp": "5,106,433"
+            },
+            {
+              "name": "Ichor Memosprite",
+              "id": 4064010,
+              "hp": "7,258,991 x2"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-11-02",
+          "expireDate": "2026-12-14"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+# 行尾策略（Windows 上开发，但仓库内容统一 LF）
+#
+# 为什么要写死：本项目所有源码都是 LF，而 Windows 的 Git 默认 `core.autocrlf=true`
+# 会在 checkout 时把它们变成 CRLF，于是**同一个文件每次提交都显示整篇改动**，
+# diff 彻底失效（交接时最怕这个）。
+#   * 文本文件：入库 LF，检出也是 LF（`eol=lf`）
+#   * .bat / .cmd / .ps1：仓库里仍存 LF，但检出成 CRLF（cmd.exe 与 PowerShell 5.1 的
+#     传统口味；launcher-test.mjs 只要求它们是纯 ASCII，不关心行尾）
+#     `.cmd` 那行**保留**：启动脚本已改名 `start.bat`（2026-10-11 用户点名），但仓库里
+#     还可能有别的 .cmd，而且这条策略本身没坏 —— 删掉只会让以后新增的 .cmd 静默变成 LF。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制：不做任何行尾/编码转换
+*.zip binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.woff2 binary
