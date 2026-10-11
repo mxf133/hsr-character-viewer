@@ -1,0 +1,859 @@
+// 跨模式综合结论：这个账号该抽哪些角色 / 星魂 / 光锥更划算。
+//
+// 为什么单独一个模块而不是塞进 archive.js：它要**同时**看四个副本（异相仲裁
+// 还要拆成骑士关/绝境两档），而 archive.js 的职责是「一个副本一个版本」的读数。
+// 两个模块共用同一套聚合口径（archive.js 的 archiveTeams）和同一套算法
+// （public/scripts/advice.js 的 buildConclusion），所以两边给出的
+// 「这套作业要几发」「这套阵容什么档」永远一致。
+//
+// 算法本身写在 advice.js 里（纯函数，浏览器与服务端共用），这里只负责
+// 「按副本把数据取齐 + 把中文名补上」。
+import { archiveFrontierAll, archiveIndex, archiveTeams, loadI18n, zhName } from './archive.js';
+import { buildConclusion, normalizeHiddenCosts, VERSION_WINDOW } from '../../public/scripts/advice.js';
+
+/** 结论覆盖的副本顺序（按游戏解锁顺序）。 */
+const MODE_ORDER = ['moc', 'pf', 'as', 'aa'];
+
+/**
+ * 每个「环境」= 副本 × 关卡。异相仲裁把三种难度混在同一版本里（骑士关与普通
+ * 王棋关看轮次，绝境王棋关看行动值），所以拆成两档分别计入结论。
+ *
+ * 版本取「该关卡最新的**可靠**版本」：末日幻影 4.6 刚开时只有 7 条投稿，
+ * 拿它当基线等于用 7 个人的成绩给整个账号下结论——这条规则在别处已经立过
+ * （样本 < minSeasonRuns 的版本不参与强度计算），这里必须一致。
+ *
+ * ⚠️ 这里回**两个**版本（v4.6.48 修）：`season` 是「主证据版本」（会被完整性回退，
+ * 服务基线 / 抽卡方案 / 差距榜），`frontierSeason` 是压金前沿窗口的锚点（只受
+ * `minSeasonRuns` 约束、**不回退**，服务性价比总榜）。分开的原因见下面
+ * `newestReliable` 那一段的注释 —— 合在一起时，「为了基线稳妥而回退一版」会顺带
+ * 把更新版本从总榜的版本窗口里整个删掉。
+ */
+export const listEnvs = (index) => {
+  const modes = [...(index.modes || [])].sort(
+    (a, b) => MODE_ORDER.indexOf(a.mode) - MODE_ORDER.indexOf(b.mode),
+  );
+  const minRuns = index.minSeasonRuns ?? 20;
+  const out = [];
+  for (const mode of modes) {
+    for (const stage of mode.stages || []) {
+      const seasons = [...(stage.seasons || [])];
+      if (!seasons.length) continue;
+      const runs = stage.seasonRuns || {};
+      // 选择最近一个**完整且可靠**的赛季。新赛季刚开放时，黑塔网可能只收集到
+      // 上一赛季一半左右的投稿；如果直接把它当主证据，旧角色的历史高分与新角色
+      // 的少量样本会一起被放大。完整性只看数据量相对上一可靠赛季的比例，不写角色
+      // 名单，也不依赖社区手工标注。
+      const reliable = seasons
+        .map((value, index) => ({ value, index, runs: Number(runs[value] ?? 0) }))
+        .filter((entry) => entry.runs >= minRuns);
+      // ⚠️ **两个版本必须分开算**（v4.6.48 修）—— 它们服务两件不同的事：
+      //
+      //   `season`         主证据版本 → 基线 / 达标成本 / 抽卡方案 / 差距榜。
+      //                    新赛季刚开、只收到一半投稿时确实不该当主证据，所以它吃
+      //                    下面那段「完整性回退」。
+      //   `frontierSeason` 压金前沿（性价比总榜）的**版本窗口锚点** → 只受可靠性
+      //                    下限 `minSeasonRuns` 约束，**绝不回退**。
+      //
+      // 为什么总榜不能跟着回退：`archiveFrontier` 的窗口是
+      // `seasons.slice(idx - window + 1, idx + 1)` —— 锚点一回退，**比它更新的版本
+      // 就整个掉出窗口**（不是降权，是删掉）。实测：4.6 的异相仲裁有 591 / 230 条
+      // 投稿（远超下限 20），却因为「只有 4.5 的 48%」被回退，4.6 的分区数据一条都
+      // 没进总榜 —— 砂金•戏浪在 4.6 的最便宜满分证据（9 金）被 4.5 的 11 金证据顶替，
+      // 该副本贡献 887 → 661，名次 #2 → #14。
+      // 总榜本来就是**跨版本加权**（2:2:2:1:1:1:1）的，缺证据的版本有既定的推算
+      // 分支，没有理由把最新版本整段排除。
+      const newestReliable = reliable[reliable.length - 1] || {
+        value: seasons[seasons.length - 1], index: seasons.length - 1,
+        runs: Number(runs[seasons[seasons.length - 1]] ?? 0),
+      };
+      let selected = newestReliable;
+      if (reliable.length >= 2) {
+        const previous = reliable[reliable.length - 2];
+        const completeness = previous.runs > 0 ? selected.runs / previous.runs : 1;
+        if (completeness < 0.60) selected = previous;
+      }
+      const season = selected.value;
+      const reliableFlag = selected.runs >= minRuns;
+      const label = stage.labelCn
+        ? `${mode.labelCn} · ${stage.labelCn}`
+        : mode.labelCn;
+      out.push({
+        id: `${mode.mode}${stage.stage ? `/${stage.stage}` : ''}`,
+        mode: mode.mode,
+        stage: stage.stage || '',
+        label,
+        // 该关卡自己的最新有数据版本：不同副本的最新版本并不一致。
+        season,
+        // 压金前沿窗口的锚点：**不回退**的最新可靠版本（见上）。总榜只吃这一个。
+        frontierSeason: newestReliable.value,
+        reliable: reliableFlag,
+      });
+    }
+  }
+  return out;
+};
+
+/**
+ * 把「环境」取齐成 `buildConclusion` 要的形状（`listEnvs` → 逐副本 `archiveTeams`）。
+ *
+ * ⚠️ `archiveConclusion` 与 `tools/` 里的探针**共用这一段**（v4.6.48 起）。以前探针
+ * 各自手写了一套「版本选取 + 取阵容表」，于是与生产分叉成了两套口径 ——「探针说砂金
+ * #3、界面上是 #14」正是这么来的。要改口径就改这里，**不要再抄第二份**。
+ */
+export const conclusionEnvs = async (index, options = {}) => {
+  const window = Math.max(1, Math.min(Number(options.window) || 6, 12));
+  const envs = [];
+  const skipped = [];
+  for (const env of listEnvs(index)) {
+    const data = await archiveTeams(env.mode, {
+      season: env.season,
+      stage: env.stage,
+      window,
+      // 星魂的边际收益要按**同一套阵容**配对量（见 buildConclusion 的修正②）。
+      // 聚合层默认不带这张表，所以这里必须显式要。
+      withEidoPerf: true,
+      // 绝境行动值必须与实际投稿的配装绑定，不能把 roster 的 bestAv 配到另一条 sample 上。
+      withFrontier: true,
+    });
+    if (!data.ok) {
+      skipped.push({ env: env.id, reason: data.error || '读取失败' });
+      continue;
+    }
+    envs.push({
+      ...env,
+      season: data.season,
+      totalRuns: data.totalRuns,
+      recentSeasons: data.recentSeasons,
+      reliable: data.reliable,
+      tierLines: data.tierLines,
+      // 末日幻影的判据线是积分线（越大越好），其余是行动值线（越小越好）。
+      // 结论里要把两者换算到同一个方向，所以这个标记必须传下去。
+      lowerIsBetter: data.lowerIsBetter !== false,
+      // 该期成绩分布分位数：把「提升」换算成「击败比例」用（见 advice.js 的 percentileOf）
+      dist: data.dist || null,
+      teams: data.teams,
+      frontierRows: data.frontierRows,
+    });
+  }
+  return { envs, skipped, window };
+};
+
+/**
+ * 补齐中文名。角色与光锥是两张表，所以按 `kind` 分开取，不能一把梭。
+ * （generic 遍历会把光锥名拿去角色表里查，得到 null 再被覆盖，读起来很迷惑。）
+ */
+const localizeItem = (item, i18n) => {
+  if (!item || typeof item.name !== 'string') return item;
+  item.nameCn = zhName(i18n, item.kind === 'cone' ? 'lightCones' : 'characters', item.name) || null;
+  return item;
+};
+
+const localizeConclusion = (result, i18n) => {
+  for (const row of result.envs) {
+    if (row.baseline?.roster) {
+      row.baseline.rosterCn = row.baseline.roster.map((n) => zhName(i18n, 'characters', n));
+    }
+    for (const cand of row.candidates) {
+      (cand.items || []).forEach((item) => localizeItem(item, i18n));
+    }
+  }
+  for (const unit of result.units) {
+    localizeItem(unit, i18n);
+    // 图标：总榜与抽卡方案都要带角色/光锥图标（官方高清图，来源见 tools/herta-i18n.mjs）
+    unit.icon = i18n?.icons?.characters?.[unit.name]
+      || i18n?.icons?.lightCones?.[unit.name]
+      || null;
+    for (const env of unit.envs) {
+      for (const item of env.companions || []) localizeItem(item, i18n);
+    }
+  }
+  // 性价比总榜（**纯黑塔网数据口径**，不依赖角色池）：角色 / 星魂 / 光锥混排，
+  // 同样要中文名与图标，否则界面只能显示英文键。
+  for (const unit of result.frontierUnits || []) {
+    localizeItem(unit, i18n);
+    unit.icon = i18n?.icons?.characters?.[unit.name]
+      || i18n?.icons?.lightCones?.[unit.name]
+      || null;
+  }
+  // 逐星魂档的总榜：与 `frontierUnits` 共用同一批对象（`byTier` 是 `sorted` 的过滤
+  // 结果，不是拷贝），所以上面那轮**已经**把它们补过了。这里仍然显式走一遍 ——
+  // 将来谁把 `byTier` 改成深拷贝，界面不会突然退回英文键（`slimFrontierUnit` 不
+  // 下发 nameCn / icon，所以这只影响服务端返回值与探针）。
+  for (const rows of Object.values(result.frontierTiers || {})) {
+    for (const unit of rows || []) {
+      localizeItem(unit, i18n);
+      unit.icon = i18n?.icons?.characters?.[unit.name]
+        || i18n?.icons?.lightCones?.[unit.name]
+        || null;
+    }
+  }
+  // 「和主流强阵的差距」榜同样要中文名与图标，否则界面只能显示英文键
+  for (const unit of result.gapUnits || []) {
+    localizeItem(unit, i18n);
+    unit.icon = i18n?.icons?.characters?.[unit.name]
+      || i18n?.icons?.lightCones?.[unit.name]
+      || null;
+    for (const t of unit.targets || []) {
+      for (const item of t.companions || []) localizeItem(item, i18n);
+    }
+  }
+  // 星魂全局榜（同阵容配对的「能压到几金」）
+  for (const unit of result.eidolonUnits || []) {
+    localizeItem(unit, i18n);
+    unit.icon = i18n?.icons?.characters?.[unit.name] || null;
+  }
+  for (const pack of result.packages) {
+    for (const item of pack.items || []) localizeItem(item, i18n);
+    // 抽卡方案里要显示图标，所以作业里的每个单位也带上官方高清图
+    for (const item of pack.items || []) {
+      item.icon = i18n?.icons?.characters?.[item.name]
+        || i18n?.icons?.lightCones?.[item.name]
+        || null;
+    }
+  }
+  return result;
+};
+
+/**
+ * 发给浏览器的载荷瘦身（2026-10）。
+ *
+ * 为什么要做：`buildConclusion` 的返回是给**算法**用的（每个候选都带整套配装
+ * `sample`、打包组合、每个单位的期望抽数表…），原样丢给浏览器实测 689 KB，
+ * 而界面真正读的字段不到三分之一 —— 同一份数据还被重复带了三遍：
+ * 环境表里有 `candidates`、`units` 里每个环境又带一次 `companions`、`best` 再
+ * 带一次同一份环境条目。
+ *
+ * 这里按「界面实际用到什么」投影一遍：`public/scripts/advice-view.js` 只读
+ * `envs[].{id,mode,stage,label,season,reliable,tierLines,baseline.tier}`、
+ * `frontierUnits`、`units`（抽卡方案）与 `counts`。差距榜 / 星魂榜 / 作业榜
+ * （`gapUnits` / `eidolonUnits` / `packages`）目前界面不渲染，但它们是公开 API
+ * 的一部分（README 有文档、e2e 有断言），所以**保留形状、只截断并去掉配装明细**。
+ */
+const slimEnvEntry = (env) => ({
+  id: env.id,
+  envLabel: env.envLabel,
+  gain: env.gain,
+  value: env.value,
+  pulls: env.pulls,
+  ownPulls: env.ownPulls,
+  from: env.from,
+  target: env.target,
+  tier: env.tier ?? null,
+  easy: Boolean(env.easy),
+  // 权重：两条链上的字段名不一样（个人口径内部叫 `envWeight`，总榜叫 `weight`），
+  // 界面只认 `weight` —— 不在这里归一的话，抽卡方案浮层里的「权重」列恒显示「×—」
+  // （实测：这一列一直是空的，因为投影时把它整个丢掉了）。
+  weight: env.weight ?? env.envWeight ?? null,
+  costBefore: env.costBefore ?? null,
+  costAfter: env.costAfter ?? null,
+  pctBefore: env.pctBefore ?? null,
+  pctAfter: env.pctAfter ?? null,
+  eidolonStep: env.eidolonStep ?? null,
+  evidence: env.evidence || null,
+  count: env.count ?? null,
+  season: env.season ?? null,
+  inferred: Boolean(env.inferred),
+  lowTierShare: env.lowTierShare ?? null,
+  baseSupport: env.baseSupport === true,
+});
+
+const slimUnit = (unit) => ({
+  key: unit.key,
+  kind: unit.kind,
+  name: unit.name,
+  nameCn: unit.nameCn || null,
+  icon: unit.icon || null,
+  pulls: unit.pulls,
+  pullsExpected: unit.pullsExpected ?? null,
+  from: unit.from,
+  target: unit.target,
+  uncertain: Boolean(unit.uncertain),
+  total: unit.total,
+  personalTotal: unit.personalTotal,
+  envCount: unit.envCount,
+  allEnvCount: unit.allEnvCount,
+  // 抽卡方案的「为什么」按这前几个副本写，再多也没人看（界面只列 3 条）
+  envs: (unit.envs || []).slice(0, 4).map(slimEnvEntry),
+  // 「补齐后可照抄」与证据：界面用 best.rosterCn / companions / count / evidence
+  best: unit.best ? {
+    ...slimEnvEntry(unit.best),
+    rosterCn: unit.best.rosterCn || null,
+    companions: (unit.best.companions || []).map((c) => ({
+      kind: c.kind, name: c.name, nameCn: c.nameCn || null, pulls: c.pulls, from: c.from, target: c.target,
+    })),
+  } : null,
+});
+
+/**
+ * 总榜单位 = **整包**：角色 + 星魂目标档 + 光锥（含叠影）绑成一条。
+ *
+ * 用户 2026-10 口径：不再拆成「角色 / 星魂 / 光锥」三行，也不算某个星魂自己的造价；
+ * 分子（档位 × 行动值）与分母（该配置的金数）都只来自**队伍**，所以整包自己的金数
+ * 只用于展示，不参与排序。
+ *
+ * ⚠️ **逐副本明细只发给前 `FRONTIER_DETAIL_ROWS` 条** —— 这不是审美问题：整包口径下
+ * 条目数比旧的节点榜多一倍（实测 1101 条），`tools/e2e-test.mjs` 有一条**硬上限
+ * 600 KB**（响应要能安稳送到浏览器）。名次靠后的条目仍然带「最佳证据」
+ * （`bestTeamGold` / `bestTier` / `bestActionValue` 每条都发），只是不再逐副本展开。
+ *
+ * ⚠️ **2026-10-11（v4.6.77）改过这里的两个「省载荷」取舍**，改的原因都是用户看出来的
+ * 界面缺陷，不是审美：
+ *   ① **逐副本明细以前 `.slice(0, 3)`** —— 一个整包最多有 5 个关卡（混沌 / 虚构 / 末日 /
+ *      异相仲裁 / 绝境），于是窗口里只列 3 个关卡，用户在界面上报「缺少虚构叙事、
+ *      异相仲裁·王棋和骑士关」。现在**全给**（实测 62 条共 137 → 167 个逐副本条目）。
+ *   ② **`envLabel` 以前不发**（想着「界面按 `id` 去顶层 `frontierEnvs` 查 `label`」）——
+ *      总榜那张表确实是那么查的，但 v4.6.76 新加的「逐关卡最佳证据队伍」说明行直接读了
+ *      `env.envLabel`，于是界面上印出的是**数据集英文 id**（`aa/plight` / `as` / `moc`）。
+ *      现在每条都带 `envLabel`（与顶层 `label` 同一个字符串）。
+ *   ③ **队友名单以前只给 `envIndex === 0`**（= 贡献最高的那一个关卡）—— 用户要的是
+ *      「最佳证据的队伍显示**所有**关卡的队伍」，所以现在**每个关卡都带**。
+ *      实测载荷 187.8 KB → **232.9 KB**（上限 600 KB，仍有余量；那条硬上限断言在
+ *      `tools/e2e-test.mjs`，形状断言也在那里 —— 这三条取舍各自对应一条）。
+ */
+const FRONTIER_DETAIL_ROWS = 200;
+
+/**
+ * 图标地址的**四级兜底**解析（`resolveIcon`）。
+ *
+ * 为什么不能直接用 `i18n.icons[table][name]`（原以为够用，实测配装块 112 张图里
+ * **15 张没有 src**）：缺图是常态，不是异常。三类差异现在就在数据里——
+ *   * 形态变体：数据集写 `March 7th (Hunt)`，图标表登记 `March 7th`；
+ *   * 开拓者：数据集写 `Trailblazer (Destruction)`，图标表登记 `{NICKNAME}`；
+ *   * 标点差异：数据集写 `Dance Dance Dance`，图标表写 `Dance! Dance! Dance!`，
+ *     以及光锥 `To Say Goodbye` vs `Make Farewells More Beautiful` 这类**译名不同**。
+ *
+ * ⚠️ 与 `public/scripts/advice-view.js` 的 `iconUrlOf()` **同一套规则**（那边是给总榜行
+ * 与浮层配队用的，那边早就发现过这三类差异）。这里另写一份是因为角色面板在**另一个
+ * 分页**、拿不到 advice-view 的模块级状态；改一处两边都改的成本低于接一个跨模块依赖。
+ * ⚠️ **不要在这里自己拼 CDN URL**：图标表里没有的键就是真的没有，拼出来的地址只 404。
+ */
+const looseKeyOf = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const baseFormKeyOf = (name) => {
+  const raw = String(name || '');
+  if (/^Trailblazer\b/i.test(raw)) return '{NICKNAME}';
+  return raw.replace(/\s*\([^)]*\)\s*$/, '').trim();
+};
+
+/**
+ * 建一张「两种索引」的图标表：精确键 + 去标点小写键。
+ * 顺带把**中文名**也收进精确索引 —— 译名不同（`To Say Goodbye` /
+ * `Make Farewells More Beautiful`）时，中文名往往能对上，而面板手上就有中文名。
+ */
+const iconResolver = (i18n) => {
+  const build = (table, cnTable) => {
+    const exact = new Map();
+    const loose = new Map();
+    for (const [key, url] of Object.entries(table || {})) {
+      if (!url) continue;
+      if (!exact.has(key)) exact.set(key, url);
+      const cn = cnTable?.[key];
+      if (cn && !exact.has(cn)) exact.set(cn, url);
+      const folded = looseKeyOf(key);
+      if (folded && !loose.has(folded)) loose.set(folded, url);
+    }
+    return { exact, loose };
+  };
+  const icons = i18n?.icons || {};
+  return {
+    char: build(icons.characters, i18n?.characters),
+    cone: build(icons.lightCones, i18n?.lightCones),
+  };
+};
+
+/** 英文键**或**中文名** → 图标地址；查不到返回 null。 */
+const resolveIcon = (maps, kind, name) => {
+  if (!name) return null;
+  const m = maps[kind === 'cone' ? 'cone' : 'char'];
+  return m.exact.get(name)
+    || m.exact.get(baseFormKeyOf(name))
+    || m.loose.get(looseKeyOf(name))
+    || m.loose.get(looseKeyOf(baseFormKeyOf(name)))
+    || null;
+};
+
+const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
+  key: unit.key,
+  kind: 'pack',
+  name: unit.name,
+  // ⚠️ 不发 `nameCn` / `icon`：总榜单位从来不带这些（界面按英文键走 i18n 解析中文名），
+  // 1100 条 × 2 个恒为 null 的键纯属浪费载荷。
+  // 整包的两个附加维度（另一个是角色本身）：界面写成「银狼LV.999 E2 · 欢迎来到银河城S1」
+  eidolon: Number(unit.eidolon) || 0,
+  lc: unit.lc || null,
+  superimp: Number(unit.superimp) || 1,
+  // 整包自己的金数：只用于展示（**不进公式、不参与排序**）
+  gold: Number(unit.gold ?? unit.pulls) || 0,
+  total: unit.total,
+  envCount: unit.envCount,
+  // 并列分组键：同分 = 同一支队伍的成员（口径使然），界面据此标注并列。
+  bestTeamGold: unit.bestTeamGold ?? null,
+  bestTier: unit.bestTier ?? null,
+  bestActionValue: unit.bestActionValue ?? null,
+  // 逐副本明细：**全部下发**（2026-10-11 v4.6.77 起；改前 `.slice(0, 3)`，用户看到
+  // 「关卡下方缺少虚构叙事、异相仲裁·王棋和骑士关」）。一个整包最多 5 个关卡
+  // （混沌 / 虚构 / 末日 / 异相仲裁 / 绝境），窗口那张表与「最佳证据的队伍」都按它渲染
+  // —— 截断 3 个会让两处同时少列关卡，而且 `envCount` 还写着 5，自相矛盾。
+  // ⚠️ `envLabel` **必须发**（2026-10-11 v4.6.77）：总榜那张表是用 `id` 去顶层
+  // `frontierEnvs` 查 `label` 的，但「逐关卡最佳证据队伍」的说明行读 `env.envLabel`
+  // —— 不发它，界面上就会印出数据集英文 id（`aa/plight` / `as` / `moc`）。
+  // 每个关卡的**队友名单也全发**（改前只给 `envIndex === 0`）：用户要的是
+  // 「最佳证据的队伍显示**所有**关卡的情况和贡献」，只给一支队伍等于没做到。
+  // ⚠️ `maxEnvs` 只有传了**有限数**才截断。别把默认值写成 `Infinity` 之类再直接
+  // `.slice(0, maxEnvs)`：`Array.map(slimFrontierUnit)` 会把**第三个参数（整个数组）**
+  // 传进来，`slice(0, 数组)` 得到的是空数组 —— 实测总榜 84 条的逐副本明细会被整片抹掉。
+  envs: index < FRONTIER_DETAIL_ROWS
+    ? (unit.envs || []).slice(0, Number.isFinite(maxEnvs) ? maxEnvs : undefined).map((env) => ({
+      id: env.id,
+      envLabel: env.envLabel ?? null,
+      // 该整包在这一副本里的贡献（Σ = total）。`score` = value ÷ 副本权重，界面自己算。
+      value: env.value,
+      // 最佳证据那条**队伍**配置：界面写「7 金 · 满分 · 行动值 295 · 4.2 赛季」。
+      bestTeamGold: env.bestTeamGold ?? null,
+      // **最佳证据所在版本**的最便宜金数 —— 金数项的分母（用户 2026-10-10 第 5 轮：
+      // 按版本归一）。浮层拆「贡献来源」必须用它，用顶层 `frontierEnvs[].minCost`
+      // （全窗口最小值）会算得比榜上的分低。**不能省**：它是逐条值，不能从副本元数据推。
+      seasonMinCost: env.seasonMinCost ?? null,
+      tier: env.tier ?? null,
+      actionValue: env.actionValue ?? null,
+      evidenceSeason: env.evidenceSeason ?? null,
+      // 证据广度：只展示，不参与排序。
+      configCount: env.configCount ?? null,
+      seasonCount: env.seasonCount ?? null,
+      // 用户 2026-10-10（第二轮）：**早于登场**、不参与平均的版本数（不奖不罚）。
+      absentSeasons: env.absentSeasons ?? 0,
+      // 用户 2026-10-10（第一轮）：已登场却**没有任何成绩**、算 0 分的版本数。
+      // ⚠️ 与 `absentSeasons` 含义**相反**（「还没轮到它」vs「明确的差」），界面必须分开报。
+      // （v4.6.78 删掉了 `unrankedSeasons`：池 = 全部成绩后「有人用但没进池」不存在。）
+      droppedSeasons: env.droppedSeasons ?? 0,
+      // 这个整包最早可能存在的版本（角色与光锥里较晚登场的那个）。
+      bornSeason: env.bornSeason ?? null,
+      members: (env.members || []).map((m) => ({
+        char: m.char, eidolon: m.eidolon, lc: m.lc || null, superimp: m.superimp,
+      })),
+    }))
+    : [],
+});
+
+/**
+ * 角色面板用的**单角色全部配装**投影（`archiveCharacterPacks` 的输出形状）。
+ *
+ * 与 `slimFrontierUnit` 的差别，也是这里必须另写一份而不能复用它的原因：
+ *
+ *   1. **逐副本明细全给**，不截 `FRONTIER_DETAIL_ROWS`（那是给总榜的：名次靠后的
+ *      条目省掉明细是为了压 `/conclusion` 的 600 KB 硬上限）。面板是**按需**取一个
+ *      角色，实测最多 59 条 —— 全给也只有几十 KB。
+ *   2. **每一副本都给队友名单**（总榜只给头条那一支，否则载荷会顶到 685 KB）。
+ *      用户要的就是「每个配装的最佳证据的队伍」—— 每一支队伍都得看得见是谁。
+ *   3. **发中文名与图标**：面板是给人看的，而且它是全站唯一会在同屏列出 4~16 个
+ *      角色头像 + 光锥图标的地方（`i18n.icons`）。
+ */
+const slimCharacterPack = (unit, i18n, maps) => ({
+  key: unit.key,
+  name: unit.name,
+  nameCn: zhName(i18n, 'characters', unit.name) || null,
+  icon: resolveIcon(maps, 'char', unit.name),
+  eidolon: Number(unit.eidolon) || 0,
+  lc: unit.lc || null,
+  lcCn: unit.lc ? (zhName(i18n, 'lightCones', unit.lc) || null) : null,
+  lcIcon: unit.lc ? resolveIcon(maps, 'cone', unit.lc) : null,
+  superimp: Number(unit.superimp) || 1,
+  gold: Number(unit.gold ?? unit.pulls) || 0,
+  total: unit.total,
+  envCount: unit.envCount,
+  bestTeamGold: unit.bestTeamGold ?? null,
+  bestTier: unit.bestTier ?? null,
+  bestActionValue: unit.bestActionValue ?? null,
+  limitedCones: unit.limitedCones ?? 0,
+  absentSeasons: unit.absentSeasons ?? 0,
+  droppedSeasons: unit.droppedSeasons ?? 0,
+  envs: (unit.envs || []).map((env) => ({
+    id: env.id,
+    envLabel: env.envLabel,
+    weight: env.weight,
+    value: env.value,
+    score: env.score,
+    bestTeamGold: env.bestTeamGold ?? null,
+    tier: env.tier ?? null,
+    actionValue: env.actionValue ?? null,
+    evidenceSeason: env.evidenceSeason ?? null,
+    limitedCones: env.limitedCones ?? null,
+    configCount: env.configCount ?? null,
+    seasonCount: env.seasonCount ?? null,
+    absentSeasons: env.absentSeasons ?? 0,
+    droppedSeasons: env.droppedSeasons ?? 0,
+    bornSeason: env.bornSeason ?? null,
+    // 最佳证据那支**完整队伍**（含每位队友的星魂档与光锥）—— 用户要的就是这个。
+    members: (env.members || []).map((m) => ({
+      char: m.char,
+      nameCn: zhName(i18n, 'characters', m.char) || null,
+      icon: resolveIcon(maps, 'char', m.char),
+      eidolon: Number(m.eidolon) || 0,
+      lc: m.lc || null,
+      lcCn: m.lc ? (zhName(i18n, 'lightCones', m.lc) || null) : null,
+      lcIcon: m.lc ? resolveIcon(maps, 'cone', m.lc) : null,
+      superimp: Number(m.superimp) || 1,
+    })),
+  })),
+});
+
+/**
+ * 一个角色的**全部压金配装**（用户 2026-10：「需要在每个角色的详细界面显示所有的
+ * 配装的最佳证据的队伍，并分别给出性价比评分」）。
+ *
+ * 为什么是按需接口而不是塞进 `/conclusion`：那份载荷已经是 0.67 MB（`e2e-test.mjs`
+ * 有 600 KB 硬上限），而收敛前的整包有 1097 条 / 67 个角色（实测最多一个角色 59 条）。
+ * 全量带上等于为一个「点开才看」的面板把每次加载的载荷翻倍。
+ *
+ * `name` 是**角色标识**，英文数据集键或中文名都认：
+ *   * 抽卡推荐页的战斗记录有 `nameEn`（英文键）；
+ *   * 「角色信息」页只有米游社给的**中文名**（见 `src/server/records.js` 与
+ *     快照本身），而压金数据是按英文键建的 —— 两边不通，所以这里多认一次中文名。
+ *   中文名走 `i18n.charactersById` / `zhName` 的反向表；认不出就返回
+ * `found:false` + 空数组，**不报错** —— 一个不在压金前沿里的角色本来就该是空面板。
+ *
+ * ⚠️ 口径与 `/conclusion` 完全一致：同一个 `buildConclusion`、同一份
+ * `frontierWeights` **和同一份 `hiddenCosts`**。两边跑不同的权重 / 隐金设置会让
+ * 「总榜显示的名次」与「面板显示的分数」对不上。
+ *
+ * @param {string} name 角色英文数据集键**或**中文名
+ * @param {{window?:string, frontierWeights?:object, hiddenCosts?:object}} options
+ */
+export const archiveCharacterPacks = async (name, options = {}) => {
+  const raw = String(name || '').trim();
+  if (!raw) return { ok: true, available: false, found: false, name: raw, packs: [], reason: '没有指定角色' };
+  const index = await archiveIndex();
+  if (!index?.modes?.length) {
+    return { ok: true, available: false, found: false, name: raw, packs: [], reason: '本地还没有数据集' };
+  }
+  const i18n = await loadI18n();
+  // 中文名 → 英文数据集键。反向表从 `i18n.characters`（英文键 → 中文名）现建：
+  //
+  // ⚠️ **不要用 `i18n.charactersById`** —— 它的键是米游社的数字 id（1407 这种），
+  // 不是英文名。当成「英文→中文」来反查会拿数字 id 去查整包表，结果恒为空
+  // （实测「遐蝶」被解析成 "1407"，found=false）。踩过一次。
+  const cnToEn = new Map();
+  for (const [en, cn] of Object.entries(i18n?.characters || {})) {
+    if (typeof cn === 'string' && cn) cnToEn.set(cn.trim(), en);
+  }
+  const key = cnToEn.get(raw) || raw;
+  // ⚠️ `conclusionEnvs` 返回 `{ envs, skipped, window }` —— 解构取 `envs`，
+  // 直接把整个对象传下去会让 `archiveFrontierAll` 拿到非数组而抛
+  // 「(envs || []) is not iterable」。
+  const { envs } = await conclusionEnvs(index, { window: options.window });
+  const frontierAll = await archiveFrontierAll(envs, {
+    window: VERSION_WINDOW,
+    ...(options.frontierWeights ? { weights: options.frontierWeights } : {}),
+  });
+  const result = buildConclusion(envs, {
+    availability: index.refs?.availability || {},
+    firstSeen: index.refs?.firstSeen || { characters: {}, lightCones: {} },
+    // 面板展示的是**纯数据集口径**（与角色池无关），所以账号持有情况传空 ——
+    // 与 `/conclusion` 里的 `frontierUnits` 同一口径，换账号分数不变。
+    account: { owned: new Set(), eidolons: new Map(), cones: new Map() },
+    frontier: Object.fromEntries(frontierAll.map((f) => [f.env, f])),
+    frontierWeights: options.frontierWeights
+      || Object.fromEntries(frontierAll.map((f) => [f.env, f.weight])),
+    // 隐金设置（用户 2026-10-11）：面板与总榜必须同一份，否则同一个整包在窗口里与榜上
+    // 会显示两个分（v4.6.69 修的正是同一类「权重没带过去」的 bug）。
+    hiddenCosts: options.hiddenCosts,
+  });
+  // ⚠️ 键不区分大小写地兜一次：形态角色（开拓者各形态、丹恒•腾荒这类）在两边
+  // 的大小写/空格写法可能不一致。
+  const table = result.frontierPacksByChar || {};
+  const hit = table[key] || Object.entries(table)
+    .find(([k]) => k.toLowerCase() === key.toLowerCase())?.[1] || [];
+  const maps = iconResolver(i18n);
+  return {
+    ok: true,
+    available: true,
+    found: hit.length > 0,
+    name: key,
+    nameCn: zhName(i18n, 'characters', key) || null,
+    // 图标表按角色/光锥维度建一次，这一整个请求里共用（下面每个整包、每个队友都要查）。
+    // 图标表按角色/光锥维度建一次，这一整个请求里共用（下面每个整包、每个队友都要查）。
+    packs: hit.map((unit) => slimCharacterPack(unit, i18n, maps)),
+    // 副本元数据随包一起给：面板要写副本中文名与权重，单独再发一份不划算。
+    envs: frontierAll.map((f) => {
+      const meta = result.frontierEnvs?.find((e) => e.id === f.env);
+      return {
+        id: f.env,
+        label: meta?.envLabel || f.env,
+        weight: Number(f.weight) || 0,
+        minCost: f.minCost ?? null,
+        // 档位在界面上的写法要**游戏内实际的量**（`0T` / `行动值 <300`，用户 2026-10-10：
+        // 「把网页上显示的『满分』『达标』改为具体的行动值」），而 `tierTextOf()` 需要
+        // `mode` / `stage` / `tierLines` 三个字段才能把内部档位键翻出来 —— 这三条判据线
+        // 只存在数据集里，必须随包下发（少一个就退回「最好一档」这种没信息量的兜底）。
+        mode: meta?.mode ?? null,
+        stage: meta?.stage ?? '',
+        tierLines: meta?.tierLines ?? null,
+        // 行动值项的区间边界：面板要按算分用的同一条尺子复现贡献值来源，
+        // 拿 `minAction` / `maxAction`（最值）算会和榜上的分对不上。
+        avLo: meta?.avLo ?? null,
+        avHi: meta?.avHi ?? null,
+        lowerIsBetter: meta?.lowerIsBetter !== false,
+        versionWindow: meta?.versionWindow ?? null,
+      };
+    }),
+    // 隐金设置：**回显服务端实际生效的那一份**（归一化后的五个布尔）。
+    // 为什么值得多带这 90 字节（载荷形状因此升到 v2）：隐金要穿过四层才生效
+    // （界面 → POST/查询串 → 路由 → buildConclusion），任何一层漏传都表现为
+    // 「勾了没反应」，而榜面数字的变化很难分辨是「没生效」还是「生效了但数据里
+    // 恰好没这些单位」。e2e 直接断言这个回显，就能把「漏传」钉死在接口层。
+    hiddenCosts: normalizeHiddenCosts(options.hiddenCosts),
+    // ⚠️ 本接口（角色面板）**不发** availability：面板是渲染服务端算好的数，
+    // 不像 `/conclusion` 那样要在浏览器里现算队伍差额。
+    payload: 2,
+  };
+};
+
+const slimPack = (pack) => ({
+  env: pack.env,
+  envLabel: pack.envLabel,
+  season: pack.season ?? null,
+  tier: pack.tier ?? null,
+  gain: pack.gain,
+  value: pack.value,
+  pulls: pack.pulls,
+  count: pack.count ?? null,
+  evidence: pack.evidence || null,
+  easy: Boolean(pack.easy),
+  costBefore: pack.costBefore ?? null,
+  costAfter: pack.costAfter ?? null,
+  pctBefore: pack.pctBefore ?? null,
+  pctAfter: pack.pctAfter ?? null,
+  rosterCn: pack.rosterCn || null,
+  items: (pack.items || []).map((item) => ({
+    kind: item.kind,
+    name: item.name,
+    nameCn: item.nameCn || null,
+    pulls: item.pulls,
+    from: item.from,
+    target: item.target,
+  })),
+});
+
+/**
+ * 成本口径表（星级 / 限定标记）的**瘦身投影**。
+ *
+ * 为什么必须随结论一起下发（2026-10-11 第 10 轮）：新的「抽卡方案」是**队伍口径**，
+ * 差额由界面现算（`teamPlan()` 在浏览器里跑，服务端不下发队伍方案）。而
+ * `marginalCostOf` 的第 1 步就是 `charCostOf(name, availability)` —— 缺这张表时
+ * 它按「星级/限定未知 → 宁可高估」的政策把 4★ 也算成 1 金，于是同一支队伍在
+ * 服务端与界面会算出两个不同的差额（实测砂金•戏浪那支队会凭空多出 2 金）。
+ *
+ * 只发星级与「是否常驻」两个字段：实测 93 + 170 条，净增约 6 KB
+ * （`limited: true` 是绝大多数，省略它本身就是压缩）。
+ *
+ * ⚠️ 键必须是**原样全名**，不能用 `baseFormKeyOf()`：那个函数会把
+ * `Dan Heng • Imbibitor Lunae` 压成 `Dan Heng`（换行符分隔的形态名也一起吃掉），
+ * 两条记录的键会互相覆盖。读取侧本来就会先试全名、再试基础名，所以放全名最准。
+ */
+const slimAvailability = (availability) => {
+  const pick = (table) => {
+    const out = {};
+    for (const [name, info] of Object.entries(table || {})) {
+      if (!name) continue;
+      const rarity = Number.isFinite(Number(info?.rarity)) ? Number(info.rarity) : null;
+      out[name] = info?.limited === true
+        ? (rarity ? { rarity } : {})
+        : { rarity, limited: false };
+    }
+    return out;
+  };
+  return {
+    characters: pick(availability?.characters),
+    lightCones: pick(availability?.lightCones),
+  };
+};
+
+/** @param {any} result buildConclusion 的返回 */
+const projectConclusion = (result) => ({
+  envs: result.envs.map((env) => ({
+    id: env.id,
+    mode: env.mode,
+    stage: env.stage,
+    label: env.label,
+    season: env.season,
+    totalRuns: env.totalRuns,
+    recentSeasons: env.recentSeasons,
+    reliable: env.reliable,
+    // 判据线与「你现在在哪一档」：界面写「≤2T → 0T」要用
+    tierLines: env.tierLines,
+    lowerIsBetter: env.lowerIsBetter,
+    baseline: { tier: env.baseline?.tier || null },
+    candidateCount: env.candidateCount,
+  })),
+  units: (result.units || []).slice(0, 60).map(slimUnit),
+  // 总榜每个副本的元数据（标签 / 权重 / 最便宜金数）：只有 5 条，界面拿它补齐
+  // 每个整包的环境名与权重，避免在 1000+ 条整包里逐条重复这些常量。
+  frontierEnvs: (result.frontierEnvs || []).map((env) => ({
+    id: env.id,
+    label: env.label,
+    mode: env.mode,
+    stage: env.stage,
+    weight: env.weight,
+    pool: env.pool,
+    // 判据线（`0T` / `积分 4000` / `行动值 <300` 那三条）：界面用它把内部档位键翻成
+    // **游戏内实际的量**（用户 2026-10-10：「把『满分』『达标』改为具体的行动值」）。
+    // ⚠️ **不能省** —— 界面手上只有 `tierLines` 这一处来源，缺了就退回
+    // 「最好一档 / 次好一档」的兜底写法（那些词读起来不比「满分」有用）。
+    // 只有 5 个副本，三条线加起来几十字节。
+    tierLines: env.tierLines || null,
+    // `minCost`（全窗口最小值）保留仅供展示/兜底：**算分用的是逐条下发的
+    // `unit.envs[].seasonMinCost`**（用户 2026-10-10 第 5 轮：金数项按版本归一，
+    // 不拿全窗口最小值当所有版本的分母 —— 那会罚「环境本身就难压金」的版本）。
+    minCost: env.minCost,
+    // 逐版本的最便宜金数（`版本 -> 金数`）：界面解释金数项、排查时用得上。
+    minCostBySeason: env.minCostBySeason || {},
+    maxCost: env.maxCost,
+    minAction: env.minAction,
+    maxAction: env.maxAction,
+    // 行动值项的区间边界与方向（5%~95% 分位，见 advice.js 的 `avTerm`）：
+    // 界面把一条贡献拆成「来源」时要按算分用的同一条尺子复现，所以必须下发 ——
+    // `minAction` / `maxAction` 是最值，拿它们算会和榜上的分对不上。
+    // 只有 5 个副本，多这两个数可以忽略不计。
+    avLo: env.avLo ?? null,
+    avHi: env.avHi ?? null,
+    lowerIsBetter: env.lowerIsBetter !== false,
+    // 版本维度（用户第 7 条）：窗口内的版本数与每个版本的权重（2:2:2:1:1:1:1）。
+    // 只有 5 个副本，带上它界面才能写清「按 N 个版本加权、缺证据的版本怎么补」，
+    // 而不必自己再抄一遍权重表。`seasons` **新的在前**（与内部权重表同序；刻意不按
+    // 字典序排 —— 版本号迟早出现 4.10，字典序会把它排到 4.2 前面）。
+    versionWindow: env.versionWindow ?? null,
+    seasons: env.seasons || [],
+    seasonWeights: env.seasonWeights || {},
+  })),
+  // 总榜的口径标记：**只发一份**（每条整包都带一份会把载荷白涨 28 KB —— 实测）。
+  frontierBasis: 'team-gold-frontier-pack',
+  // 总榜的过滤器按完整结果计数；截断会让 200 名以后的整包永远无法查询/显示。
+  frontierUnits: (result.frontierUnits || []).map((unit, i) => slimFrontierUnit(unit, i)),
+  // 逐星魂档的总榜（用户 2026-10-11 报的缺陷）：`{ "0": […], "1": […], "2": […], "6": […] }`，
+  // 每档**各自按角色收敛一条**。界面上的 E0/E1/E2/E6 筛选就切到这一份。
+  //
+  // 为什么不能省：`frontierUnits` 每角色只有一条（总分最高的整包），界面拿它过滤
+  // 就只剩「最佳成绩落在这一档」的角色 —— 实测 51 个有 E0 整包的角色里有 33 个
+  // 在 E0 页里看不到。四档合计 156 条（全量未收敛是 960 条 / 1.7 MB），
+  // 实测让 `/conclusion` 从 ~189 KB 涨到 ~330 KB，仍在 e2e 的 600 KB 硬上限内。
+  //
+  // ⚠️ 键与元素都走 `slimFrontierUnit`，与 `frontierUnits` 完全同构 —— 界面因此
+  // 可以拿同一套渲染函数吃两份数据。
+  //
+  // ⚠️ **逐档榜只带「最好的那一个关卡」的明细**（`maxEnvs = 1`）：它是「这个角色抽到
+  // 这一档值多少分」的索引，逐关卡的完整拆解以「全部」那一页为准。收尾合并时才加的
+  // 这一刀 —— 池改成「全部成绩」之后四档合计 266 条，每条都带 5 个关卡的明细会让
+  // `/conclusion` 冲到 **872 KB**、顶穿 e2e 的 600 KB 硬上限；只留最好一关之后回到
+  // ~410 KB。`envCount` 仍照发，界面照旧写「等 N 个副本」。
+  frontierTiers: Object.fromEntries(Object.entries(result.frontierTiers || {})
+    .map(([tier, rows]) => [tier, (rows || []).map((unit, i) => slimFrontierUnit(unit, i, 1))])),
+  gapUnits: (result.gapUnits || []).slice(0, 30).map((u) => ({
+    key: u.key, kind: u.kind, name: u.name, nameCn: u.nameCn || null, icon: u.icon || null,
+    total: u.total, gap: u.gap, pulls: u.pulls, from: u.from, target: u.target,
+    envCount: u.envCount, gapTarget: u.gapTarget || null,
+  })),
+  eidolonUnits: (result.eidolonUnits || []).slice(0, 40).map((u) => ({
+    key: u.key, kind: u.kind, name: u.name, nameCn: u.nameCn || null, icon: u.icon || null,
+    from: u.from, target: u.target, pulls: u.pulls, minCost: u.minCost, floorCost: u.floorCost,
+    gapToFloor: u.gapToFloor, isFloor: u.isFloor, sampleCount: u.sampleCount, envId: u.envId,
+    score: u.score,
+  })),
+  packages: (result.packages || []).slice(0, 24).map(slimPack),
+  counts: result.counts,
+});
+
+/**
+ * @param {{owned?:Set<string>|string[], eidolons?:Map<string,number>|object,
+ *          cones?:Map<string,number>|object}} account  账号持有情况（英文数据集键）
+ */
+export const archiveConclusion = async (account = {}, options = {}) => {
+  const index = await archiveIndex();
+  const i18n = await loadI18n();
+  // 环境（版本选取 + 阵容表）由 `conclusionEnvs` 统一提供，探针与生产共用同一份。
+  const { envs, skipped, window } = await conclusionEnvs(index, { window: options.window });
+
+  // 账号状态在浏览器里是一组中英混合的键，客户端已经过滤成数据集英文键，
+  // 这里只做「Map / 普通对象都收」的兼容，不再猜名字。
+  const asMap = (value) => {
+    if (value instanceof Map) return value;
+    if (value && typeof value === 'object') return new Map(Object.entries(value));
+    return new Map();
+  };
+  const asSet = (value) => {
+    if (value instanceof Set) return value;
+    if (Array.isArray(value)) return value;
+    return [];
+  };
+
+  // 压金出分前沿强度（用户 2026-10 的口径）：每个副本各自汇总，带副本权重。
+  // 这是推荐排序的主键来源 ——「绝境王棋压金出分榜单里经常出现的角色十分强力」。
+  // 读失败不让整页挂掉：没有它排序会退回旧的「档位 × 质量」口径。
+  let frontier = {};
+  try {
+    // 前沿表带的是**总榜口径**的权重（界面上「总榜权重」那一行）：
+    // 它只服务性价比总榜与「和主流强阵的差距」这两处展示，与抽卡方案各自独立。
+    //
+    // ⚠️ 前沿的版本窗口**固定用 `VERSION_WINDOW`（7 个版本）**，不吃请求里的
+    // `window`：用户第 7 条把版本权重定义成 2:2:2:1:1:1:1（近 1-3 版 2 分、
+    // 近 4-7 版 1 分），少于 7 个版本就凑不齐那张表。上面聚合层的 `window` 仍然
+    // 按请求走 —— 它服务抽卡方案的阵容表，改它会连带改方案的口径。
+    const all = await archiveFrontierAll(envs, {
+      window: VERSION_WINDOW, weights: options.frontierWeights,
+    });
+    frontier = Object.fromEntries(all.map((f) => [f.env, f]));
+  } catch (err) {
+    console.warn('[frontier] 读取压金前沿失败：', err.message);
+  }
+
+  const result = buildConclusion(envs, {
+    availability: index.refs?.availability || {},
+    // 角色 / 光锥首次登场版本（用户第 6 条）：总榜只对「早于登场」的旧版本做放大推算。
+    firstSeen: index.refs?.firstSeen || { characters: {}, lightCones: {} },
+    account: {
+      owned: new Set(asSet(account.owned)),
+      eidolons: asMap(account.eidolons),
+      cones: asMap(account.cones),
+    },
+    perEnvCandidates: options.perEnvCandidates,
+    frontier,
+    // 「够得着的强阵」允许差几金（用户在界面上自己定，见 advice-view 的「可及预算」）
+    gapMaxPulls: options.gapMaxPulls,
+    // 用户自定义的副本权重：**两套**（用户 2026-10 要求相互独立）。
+    //   planWeights     → 抽卡方案 / 差距榜 / 星魂榜
+    //   frontierWeights → 性价比总榜
+    weights: options.planWeights,
+    frontierWeights: options.frontierWeights,
+    // 「隐金设置」（用户 2026-10-11）：五个开关，只影响性价比总榜那条链
+    // （抽卡方案 / 差距榜 / 星魂榜不受影响，用户明确选了「只影响总榜」）。
+    // 不传 = 一项都不减（工具与回归测试的历史口径不变，见 `DEFAULT_HIDDEN_COSTS`）。
+    hiddenCosts: options.hiddenCosts,
+  });
+  localizeConclusion(result, i18n);
+
+  return {
+    ok: true,
+    available: true,
+    window,
+    minSeasonRuns: index.minSeasonRuns,
+    latestSeason: index.latestSeason,
+    // 只把界面真正要用的字段发给浏览器（见 `projectConclusion` 的注释）。
+    // 版本：v4 = 总榜改成「整包」口径（角色 + 星魂档 + 光锥一条），
+    // 客户端可据此识别返回形状（v3 及以前是角色/星魂/光锥三行）。
+    // v5 = 新增 `hiddenCosts` 回显（用户 2026-10-11 的「隐金设置」）。
+    // v6 = 新增 `availability`（星级 / 常驻标记）：**队伍抽卡方案**改成由界面现算
+    //      差额（用户 2026-10-11 第 10 轮），缺这张表界面会把 4★ 也算成 1 金。
+    // v7 = 新增 `frontierTiers`（总榜按 E0/E1/E2/E6 分档，每档各自按角色收敛一条）。
+    //      ⚠️ 两支并行分支各自把载荷写成 v6（一支加 `availability`、一支加 `frontierTiers`），
+    //      合并后两份都在，所以形状号必须是 **7** —— 别再改回 6。
+    payload: 7,
+    // 隐金设置：**回显服务端实际生效的那一份**（归一化后的五个布尔）。
+    // 为什么值得多带这 ~90 字节（载荷形状因此升到 v5）：隐金要穿过四层才生效
+    // （界面 → POST body → 路由 → buildConclusion），任何一层漏传都表现为
+    // 「勾了没反应」，而榜面数字的变化很难分辨是「没生效」还是「生效了但数据里
+    // 恰好没有这些单位」。e2e 直接断言这个回显，就能把「漏传」钉死在接口层。
+    hiddenCosts: normalizeHiddenCosts(options.hiddenCosts),
+    // 成本口径表：`charCostOf` / `coneCostOf` 的输入（见 `slimAvailability`）。
+    availability: slimAvailability(index.refs?.availability),
+    ...projectConclusion(result),
+    skipped,
+  };
+};

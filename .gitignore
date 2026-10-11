@@ -1,0 +1,60 @@
+# 本地凭证与缓存（等同于登录态，切勿提交）
+data/
+*.tmp
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 测试与调试产物
+probes/
+*.log
+
+# 逆向参考：Snap Hutao 源码副本、游戏文本表与实测 payload 样本
+# （体积大，可用 tools/i18n-fetch-en.mjs 等重新抓取）
+.snapref/
+# 历史上有个不带点的同名目录，也一并忽略以免误提交。
+snapref/
+
+# theherta.com 采集结果（原始投稿 + 首领排期合计约 56 MB，可用
+# `node tools/herta-fetch.mjs` 重新抓取）。
+# archive.json（约 21 MB）、i18n-zh.json 与字典文件是**界面必需**的，照常提交，
+# 这样 clone 下来就能直接跑（否则要先 fetch + build 才能看到抽卡推荐页）。
+# 想让仓库瘦身的话，把 `theherta/archive.json` 也加进来，然后跑：
+#     node tools/herta-update.mjs && node tools/herta-build.mjs
+theherta/raw/
+theherta/boss-data/
+# herta-update.mjs 每次改写 archive.json 前自动留的本地备份
+theherta/backup/
+# `node tools/herta-icons.mjs` 拉下来的图标/立绘镜像（实测约 1.9 MB 图标 + 55 MB 立绘）。
+# 不进 git 的理由：这是**可再生的派生资源**，跑一次脚本就有；而二进制塞进历史只是
+# 给所有克隆平白加体积。界面上缺了它们会自动 302 回CDN，所以新克隆的机器不跑脚本
+# 也照常显示（只是又走网络而已）。
+theherta/icons/
+
+# tools/package.mjs 产出的留档快照与 zip（本地备份，不进仓库）
+snapshots/
+
+# `git worktree add .worktrees/<名字>` 起的并行工作区（§9.2 第 2 层）——
+# 它是**同一个仓库的另一份检出**，里面的内容全在 git 里（各自的分支），
+# 所以这个目录本身不该进版本库（否则每次 `git add -A` 都会把别人的工作区带走）。
+# 注意：worktree 也可以建在仓库外（历史上就有建在 `../hsr-xxx` 与
+# `~/.codex/worktrees/` 的），那种情况不需要在这里忽略。
+.worktrees/
+
+# WorkBuddy 的项目工作记录（`.workbuddy/memory/` 下的会话记忆与本机上下文）——
+# 那是**本机数据**，不是仓库内容，不进 git（也免得 `git add -A` 顺手把它们带走）。
+# ⚠️ 若以后要让团队共享**项目级技能**（WorkBuddy 的约定是放在 `.workbuddy/skills/`，
+# 那类文件是应当提交的），把下面这一行换成：
+#     .workbuddy/*
+#     !.workbuddy/skills/
+.workbuddy/

@@ -1,0 +1,312 @@
+{
+  "source": "https://theherta.com",
+  "fetchedAt": "2026-10-05T05:32:20.053Z",
+  "elapsedMs": 71589,
+  "files": [
+    {
+      "path": "characters_config.json",
+      "bytes": 6226
+    },
+    {
+      "path": "character_paths.json",
+      "bytes": 2323
+    },
+    {
+      "path": "lightcone_paths.json",
+      "bytes": 5961
+    },
+    {
+      "path": "popular_lightcones.json",
+      "bytes": 3823
+    },
+    {
+      "path": "submission_config.json",
+      "bytes": 27813
+    },
+    {
+      "path": "raw\\stats-moc.json",
+      "bytes": 1645
+    },
+    {
+      "path": "raw\\stats-pf.json",
+      "bytes": 1239
+    },
+    {
+      "path": "raw\\stats-as.json",
+      "bytes": 1424
+    },
+    {
+      "path": "raw\\stats-aa.json",
+      "bytes": 1515
+    },
+    {
+      "path": "raw\\distinct-keys.json",
+      "bytes": 6494
+    },
+    {
+      "path": "raw\\articles.json",
+      "bytes": 12062
+    },
+    {
+      "path": "raw\\submissions\\3.0-Memory_of_Chaos.json",
+      "bytes": 108681
+    },
+    {
+      "path": "raw\\submissions\\3.0-Anomaly_Arbitration.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.0-Pure_Fiction.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.0-Apocalyptic_Shadow.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.1-Memory_of_Chaos.json",
+      "bytes": 69933
+    },
+    {
+      "path": "raw\\submissions\\3.1-Anomaly_Arbitration.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.1-Pure_Fiction.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.1-Apocalyptic_Shadow.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.2-Memory_of_Chaos.json",
+      "bytes": 66340
+    },
+    {
+      "path": "raw\\submissions\\3.2-Apocalyptic_Shadow.json",
+      "bytes": 2128
+    },
+    {
+      "path": "raw\\submissions\\3.2-Anomaly_Arbitration.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.2-Pure_Fiction.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.3-Memory_of_Chaos.json",
+      "bytes": 929543
+    },
+    {
+      "path": "raw\\submissions\\3.3-Pure_Fiction.json",
+      "bytes": 31926
+    },
+    {
+      "path": "raw\\submissions\\3.3-Anomaly_Arbitration.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.3-Apocalyptic_Shadow.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.4-Memory_of_Chaos.json",
+      "bytes": 1133282
+    },
+    {
+      "path": "raw\\submissions\\3.4-Pure_Fiction.json",
+      "bytes": 41546
+    },
+    {
+      "path": "raw\\submissions\\3.4-Apocalyptic_Shadow.json",
+      "bytes": 168408
+    },
+    {
+      "path": "raw\\submissions\\3.4-Anomaly_Arbitration.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.5-Memory_of_Chaos.json",
+      "bytes": 605537
+    },
+    {
+      "path": "raw\\submissions\\3.5-Pure_Fiction.json",
+      "bytes": 32573
+    },
+    {
+      "path": "raw\\submissions\\3.5-Apocalyptic_Shadow.json",
+      "bytes": 1430
+    },
+    {
+      "path": "raw\\submissions\\3.5-Anomaly_Arbitration.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\3.6-Memory_of_Chaos.json",
+      "bytes": 976081
+    },
+    {
+      "path": "raw\\submissions\\3.6-Pure_Fiction.json",
+      "bytes": 368583
+    },
+    {
+      "path": "raw\\submissions\\3.6-Apocalyptic_Shadow.json",
+      "bytes": 356880
+    },
+    {
+      "path": "raw\\submissions\\3.6-Anomaly_Arbitration.json",
+      "bytes": 1183736
+    },
+    {
+      "path": "raw\\submissions\\3.7-Memory_of_Chaos.json",
+      "bytes": 715706
+    },
+    {
+      "path": "raw\\submissions\\3.7-Pure_Fiction.json",
+      "bytes": 459203
+    },
+    {
+      "path": "raw\\submissions\\3.7-Apocalyptic_Shadow.json",
+      "bytes": 482802
+    },
+    {
+      "path": "raw\\submissions\\3.7-Anomaly_Arbitration.json",
+      "bytes": 1312761
+    },
+    {
+      "path": "raw\\submissions\\3.8-Memory_of_Chaos.json",
+      "bytes": 672499
+    },
+    {
+      "path": "raw\\submissions\\3.8-Pure_Fiction.json",
+      "bytes": 112143
+    },
+    {
+      "path": "raw\\submissions\\3.8-Apocalyptic_Shadow.json",
+      "bytes": 452234
+    },
+    {
+      "path": "raw\\submissions\\3.8-Anomaly_Arbitration.json",
+      "bytes": 1174372
+    },
+    {
+      "path": "raw\\submissions\\4.0-Memory_of_Chaos.json",
+      "bytes": 904690
+    },
+    {
+      "path": "raw\\submissions\\4.0-Anomaly_Arbitration.json",
+      "bytes": 1194678
+    },
+    {
+      "path": "raw\\submissions\\4.0-Apocalyptic_Shadow.json",
+      "bytes": 332345
+    },
+    {
+      "path": "raw\\submissions\\4.0-Pure_Fiction.json",
+      "bytes": 212332
+    },
+    {
+      "path": "raw\\submissions\\4.1-Pure_Fiction.json",
+      "bytes": 444928
+    },
+    {
+      "path": "raw\\submissions\\4.1-Memory_of_Chaos.json",
+      "bytes": 1369395
+    },
+    {
+      "path": "raw\\submissions\\4.1-Apocalyptic_Shadow.json",
+      "bytes": 392585
+    },
+    {
+      "path": "raw\\submissions\\4.1-Anomaly_Arbitration.json",
+      "bytes": 1152666
+    },
+    {
+      "path": "raw\\submissions\\4.2-Apocalyptic_Shadow.json",
+      "bytes": 611433
+    },
+    {
+      "path": "raw\\submissions\\4.2-Pure_Fiction.json",
+      "bytes": 376454
+    },
+    {
+      "path": "raw\\submissions\\4.2-Memory_of_Chaos.json",
+      "bytes": 1260522
+    },
+    {
+      "path": "raw\\submissions\\4.2-Anomaly_Arbitration.json",
+      "bytes": 1927413
+    },
+    {
+      "path": "raw\\submissions\\4.3-Apocalyptic_Shadow.json",
+      "bytes": 881328
+    },
+    {
+      "path": "raw\\submissions\\4.3-Anomaly_Arbitration.json",
+      "bytes": 1920831
+    },
+    {
+      "path": "raw\\submissions\\4.3-Memory_of_Chaos.json",
+      "bytes": 1685908
+    },
+    {
+      "path": "raw\\submissions\\4.3-Pure_Fiction.json",
+      "bytes": 506816
+    },
+    {
+      "path": "raw\\submissions\\4.4-Memory_of_Chaos.json",
+      "bytes": 1637434
+    },
+    {
+      "path": "raw\\submissions\\4.4-Pure_Fiction.json",
+      "bytes": 649704
+    },
+    {
+      "path": "raw\\submissions\\4.4-Anomaly_Arbitration.json",
+      "bytes": 1979647
+    },
+    {
+      "path": "raw\\submissions\\4.4-Apocalyptic_Shadow.json",
+      "bytes": 634559
+    },
+    {
+      "path": "raw\\submissions\\4.5-Pure_Fiction.json",
+      "bytes": 335528
+    },
+    {
+      "path": "raw\\submissions\\4.5-Anomaly_Arbitration.json",
+      "bytes": 2490226
+    },
+    {
+      "path": "raw\\submissions\\4.5-Apocalyptic_Shadow.json",
+      "bytes": 749077
+    },
+    {
+      "path": "raw\\submissions\\4.5-Memory_of_Chaos.json",
+      "bytes": 490313
+    },
+    {
+      "path": "raw\\submissions\\4.6-Pure_Fiction.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions\\4.6-Apocalyptic_Shadow.json",
+      "bytes": 8961
+    },
+    {
+      "path": "raw\\submissions\\4.6-Anomaly_Arbitration.json",
+      "bytes": 1120489
+    },
+    {
+      "path": "raw\\submissions\\4.6-Memory_of_Chaos.json",
+      "bytes": 31
+    },
+    {
+      "path": "raw\\submissions-index.json",
+      "bytes": 11609
+    }
+  ],
+  "distinctKeyCount": 143
+}
