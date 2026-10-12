@@ -394,8 +394,17 @@ const main = async () => {
         packsHidden.body?.hiddenCosts
         && Object.values(packsHidden.body.hiddenCosts).every((v) => v === true),
         `hiddenCosts=${JSON.stringify(packsHidden.body?.hiddenCosts)}`);
-      check('packs payload 形状升到 v2（多出 hiddenCosts 回显）',
-        packsHidden.body?.payload === 2, `payload=${packsHidden.body?.payload}`);
+      check('packs payload 形状升到 v3（hiddenCosts 回显 + env.seasonMinCost）',
+        packsHidden.body?.payload === 3, `payload=${packsHidden.body?.payload}`);
+      // ⚠️ v4.6.88 修的真 bug：面板的 env 少发 `seasonMinCost` 时，逐档榜的浮层
+      // （`enrichTierDetail()` 拿这份数据整份替换 `unit.envs` 再重画因子表）会把金数项
+      // 的分母退回 `meta.minCost`（全窗口最小值）→「跨版本发挥」算出 > 1（实测 39% 的行）。
+      // 这条断言把「面板的 env 投影必须与总榜那份在界面要现算的字段上等价」钉在接口层。
+      const panelEnvs = (packsHidden.body?.packs || []).flatMap((p) => p.envs || []);
+      check('packs 每个 env 都带 seasonMinCost（否则跨版本发挥会 > 1）',
+        panelEnvs.length > 0 && panelEnvs.every((e) => Number.isFinite(Number(e.seasonMinCost))),
+        `envs=${panelEnvs.length}`
+        + ` 缺值=${panelEnvs.filter((e) => !Number.isFinite(Number(e.seasonMinCost))).length}`);
       const bestHiddenPack = Math.max(0, ...(packsHidden.body?.packs || []).map((p) => p.total));
       check('隐金下面板与榜面同口径（最高分配装的分 = 榜上那一条的分）',
         boardTop && Math.abs(bestHiddenPack - boardTop.total) < 1e-6,

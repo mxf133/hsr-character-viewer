@@ -484,6 +484,16 @@ const slimCharacterPack = (unit, i18n, maps) => ({
     value: env.value,
     score: env.score,
     bestTeamGold: env.bestTeamGold ?? null,
+    // ⚠️ **`seasonMinCost` 必须发**（v4.6.88 修的真 bug）：界面的「贡献值来源」表是用
+    // `frontierFactorsOf(env, meta)` **现算**的，而金数项的分母是「**该版本**最便宜」
+    // ——少了这个字段它就只能退回 `meta.minCost`（**全窗口**最小值，比本版分母更小），
+    // 于是余数（跨版本发挥 = score ÷ base）会**超过 1**。
+    // 为什么这条只在**面板**这条路上炸：逐档榜的浮层只随结论载荷带 1 个 env，
+    // `enrichTierDetail()` 会拿面板这份数据**整份替换** `unit.envs` 再重画因子表
+    // （实测 305 行里 **119 行（39%）> 1**、最大 **×5.76**）。
+    // 教训：**面板的 env 投影必须与 `slimFrontierUnit()` 的 env 投影在「界面要现算的字段」
+    // 上等价** —— 少一个字段不会报错，只会静默算出一个不可能的数。
+    seasonMinCost: env.seasonMinCost ?? null,
     tier: env.tier ?? null,
     actionValue: env.actionValue ?? null,
     evidenceSeason: env.evidenceSeason ?? null,
@@ -614,7 +624,11 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     hiddenCosts: normalizeHiddenCosts(options.hiddenCosts),
     // ⚠️ 本接口（角色面板）**不发** availability：面板是渲染服务端算好的数，
     // 不像 `/conclusion` 那样要在浏览器里现算队伍差额。
-    payload: 2,
+    // v2 = 新增 `hiddenCosts` 回显（用户 2026-10-11 的「隐金设置」）。
+    // v3 = 每个 env 新增 `seasonMinCost`（金数项的分母）：逐档榜的浮层会拿面板这份数据
+    //      整份替换 `unit.envs` 再重画「贡献值来源」表，缺它就会让「跨版本发挥」算出 > 1
+    //      （实测 39% 的行、最大 ×5.76）。见 `slimCharacterPack()` 里的注释。
+    payload: 3,
   };
 };
 
