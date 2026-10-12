@@ -185,7 +185,7 @@ for (const unit of units) {
 }
 
 // ---- Q1：更低账面金数 + 相当或更好的成绩 ---------------------------------------
-// 「相当或更好」= 同副本同档位（绝境）、满分档（行动值 <300）、行动值 ≤ 首推的 286。
+// 「相当或更好」= 同副本同档位（绝境）、满分档（行动值 <300）、行动值 ≤ 首推那支的行动值。
 const HEAD_AV = Number(head.bestEnv?.actionValue) || 286;
 const HEAD_GOLD = Number(head.gold) || 16;
 const rosterRows = new Map();
