@@ -1562,6 +1562,38 @@ CDP 那两条新判据（残留 0 个 / 每格都有卡片与行线）跑 `node 
 **全绿**（含 CDP 布局套件）。换端口的完整流程见 §4.2L 的两条环境坑（URL 必须带 `?view=advice`；
 换 origin 要用 `_probe-seed-localstorage.mjs` 搬 localStorage）。
 
+### 4.2P 本轮（v4.6.88，同一支 worktree `feat/dual-weight`）—— 修「跨版本发挥 > 1」
+
+**用户追问**：「看下很多角色为什么跨版本发挥超过1」。查实是**真 bug**（不是口径）：
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `src/server/conclusion.js` | `slimCharacterPack()` 补发 **`seasonMinCost`**（金数项的分母「该版本最便宜」）；**packs 载荷 → 3** |
+| `tools/herta-test.mjs` | 新增 ⭐「面板（`/api/archive/packs`）那一路的 env 也要能还原因子：跨版本发挥恒 ≤ 1」（抽样逐档榜里被截断的角色，逐行断言字段在、因子乘回去 = 分、`seasonFactor ≤ 1 + 1e-4`） |
+| `tools/e2e-test.mjs` | packs 载荷断言 2 → 3 + 新增「每个 env 都带 `seasonMinCost`」 |
+| `tools/check-advice-layout.mjs` | 逐档榜那一节**在补齐明细之后**量第 5 列（跨版本发挥），每格必须 `×N` 且 `N ≤ 1.005` |
+| `tools/_probe-{season-factor-over1,packs-season-factor,seasonmincost-missing}.mjs` | 三个新探针（扫结论载荷 / 扫面板那一路 / 统计缺分母的行） |
+| `docs/评分模型设计.md` / `README.md` / `src/version.js` / `package.json` | 新增 **v40** 一节；README 的 packs 段补一段说明；版本 → **4.6.88** |
+
+**链路（三个环节缺一不可）**：
+
+1. 逐档榜的整包只随结论载荷下发 **1 个 env**（`slimFrontierUnit(unit, i, 1)`），
+   而 `envCount` 写着真实条数（242 条逐档榜里 **196 条**满足 `envCount > envs.length`）；
+2. 界面开浮层时 `enrichTierDetail()` 用 `/api/archive/packs` 的数据**整份替换**
+   `unit.envs` 再重画因子表；
+3. 而 `slimCharacterPack()` **没发 `seasonMinCost`** —— `frontierFactorsOf()` 退回
+   `meta.minCost`（**全窗口**最小值，比本版分母更小；实测 **334/493** 行都是这种）
+   ⇒ 金数项与 base 一起变小 ⇒ 余数 = score ÷ base **> 1**。
+
+**实测**：面板那一路 305 行里 **119 行（39%）> 1**、最大 **×5.76**；补上字段后只剩
+10 行且全部 ≤ 1.000008（载荷把 `score` 取整到 4 位小数，界面显示仍是 ×1.00）。
+
+**为什么原来的回归没拦住它**：`herta-test` 那条「因子能还原每一行的分」只扫**结论载荷**
+—— 那份一直带着 `seasonMinCost`，所以永远绿。**同一个数有两条供给路径时，每条都要钉一次。**
+
+**验证**：`CHECK_ADVICE_URL=http://127.0.0.1:8371/?view=advice node tools/run-tests.mjs`
+（服务端改动**必须重启进程**才生效 —— 这次就先对着旧进程量了一遍「修前」的 39%）。
+
 ---
 
 ## 5. 测试命令 / 如何验证

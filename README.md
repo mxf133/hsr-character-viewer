@@ -1517,7 +1517,17 @@ v8（2026-10-12）= 每个整包多一个 **`strength`（纯强度）**：抽卡
 
 按需接口 `GET /api/archive/packs`（角色面板）也吃同一份设置，但走**查询串**
 （GET 没有 body）：`?char=…&hiddenCosts=<json>`。漏传的后果与权重漏传一模一样 ——
-同一个整包在窗口里与榜上显示两个分，所以它同样要带（`payload: 2`）。
+同一个整包在窗口里与榜上显示两个分，所以它同样要带（`payload: 3`）。
+
+> ⚠️ **面板的 `envs` 投影必须与总榜那份在「界面要现算的字段」上等价**（`v4.6.88` 修的真 bug）：
+> 逐档榜的整包只随结论载荷带 **1 个 env**，界面开浮层时会用面板这份数据**整份替换**
+> `unit.envs` 再重画「贡献值来源」表（`advice-view.js` 的 `enrichTierDetail()`）。
+> 而面板当时**没发 `seasonMinCost`**（金数项的分母「**该版本**最便宜」）——
+> `frontierFactorsOf()` 于是退回 `meta.minCost`（**全窗口**最小值），base 变小，
+> 余数「跨版本发挥 = score ÷ base」就**超过 1**（实测 305 行里 119 行 = **39%**、
+> 最大 **×5.76**）。补发这个字段之后只剩 4 位小数取整带来的 ≤8e-6（界面显示 ×1.00）。
+> 回归：`herta-test` 的「面板那一路也要能还原因子」+ `check-advice-layout` 在**补齐明细
+> 之后**量第 5 列（两处都盯着「恒 ≤ 1」）。复现探针：`tools/_probe-packs-season-factor.mjs`。
 
 **为什么这一支要放在服务端算**：它要同时聚合 5 个「副本 × 关卡」的完整阵容表
 （未压缩约 1.7 MB），发到浏览器再算纯属浪费，而且两边的口径很容易算岔。算法本身是
@@ -1779,6 +1789,9 @@ tools/                     测试与调试工具
   _probe-rank.mjs            探针：把「角色总榜 / 抽卡方案」在真实数据上打出来（调参用）
   _probe-team-plan.mjs       探针：把抽卡方案（含新口径：纯强度 + 性价比得分）打出来（调参用）
   _probe-fill-steps.mjs      探针：CDP — 把「补金顺序」每张卡的名字 / 目标状态 / 已有角色打出来
+  _probe-season-factor-over1.mjs    探针：扫真载荷，找「跨版本发挥 > 1」的行（含逐档榜）
+  _probe-packs-season-factor.mjs    探针：扫**面板**那一路（逐档榜浮层会换成它），复核同一条不变量
+  _probe-seasonmincost-missing.mjs  探针：载荷里有多少行缺 seasonMinCost（唯一能让它 > 1 的机制）
   gui-shot.mjs               CDP 驱动界面并截图
   check-advice-layout.mjs    CDP 检查控件位置是否稳定
   wiki-boss-names.mjs        查中文 wiki 的首领名（研究用）
