@@ -30,7 +30,9 @@ import {
   DEFAULT_HIDDEN_COSTS, HIDDEN_COST_IDS, HIDDEN_COST_SETTINGS, NO_HIDDEN_COSTS,
   hiddenReductionOf, normalizeHiddenCosts, packGoldOf,
 } from '../public/scripts/advice.js';
-import { archiveConclusion, conclusionEnvs, listEnvs } from '../src/server/conclusion.js';
+import {
+  archiveCharacterPacks, archiveConclusion, conclusionEnvs, listEnvs,
+} from '../src/server/conclusion.js';
 import { baseName, compareRosters } from '../src/server/compare.js';
 import { normalizeBattleRecords } from '../src/server/records.js';
 
@@ -3685,6 +3687,55 @@ checkAsync('贡献值来源：真实数据集上因子能还原每一行的分�
   assert.ok(weighted > 0, '真实数据里应当有「权重 ≠ 1」的行（绝境是 10）');
   assert.ok(movedCost > 0, '真实数据里应当有「金数比 ≠ 1」的行（否则这一列是摆设）');
   assert.ok(movedAv > 0, '真实数据里应当有「行动值项 ≠ 1」的行（否则这一列是摆设）');
+});
+
+checkAsync('⭐ 面板（/api/archive/packs）那一路的 env 也要能还原因子：跨版本发挥恒 ≤ 1', async () => {
+  // ⚠️ v4.6.88 修的真 bug：**逐档榜**的浮层只随结论载荷带 1 个 env，界面会用
+  // `/api/archive/packs` 的数据**整份替换** `unit.envs` 再重画「贡献值来源」表
+  // （`advice-view.js` 的 `enrichTierDetail()`）。而 `slimCharacterPack()` 当时**没发
+  // `seasonMinCost`** —— `frontierFactorsOf()` 于是退回 `meta.minCost`（**全窗口**最小值，
+  // 比「该版本最便宜」更小），金数项与 base 一起变小，余数 = score ÷ base **超过 1**。
+  // 实测：305 行里 **119 行（39%）> 1**、最大 **×5.76**（`_probe-packs-season-factor.mjs`）。
+  //
+  // 上面那条用例只扫了**结论载荷**（它一直带着 `seasonMinCost`，所以永远绿）——
+  // 这就是它没能拦住这个 bug 的原因。这里改扫**面板载荷**，规则同上。
+  const data = await archiveConclusion({ owned: [] }, { window: 6 });
+  const metaOf = (id) => (data.frontierEnvs || []).find((e) => e.id === id);
+  // 只抽会被界面补齐的那类角色（`envCount > envs.length` 的逐档榜条目），它们最省时间。
+  const tierUnits = Object.values(data.frontierTiers || {}).flat();
+  const names = [...new Set(tierUnits
+    .filter((u) => Number(u.envCount) > (u.envs || []).length)
+    .map((u) => u.name))].slice(0, 3);
+  assert.ok(names.length > 0, '逐档榜里应当有「明细被截断」的整包（否则这条用例空跑）');
+  let rows = 0;
+  let withSeasonMinCost = 0;
+  let maxFactor = 0;
+  for (const name of names) {
+    const packs = await archiveCharacterPacks(name, { window: VERSION_WINDOW });
+    assert.equal(packs.ok, true, `${name}：面板接口应当可用`);
+    for (const pack of packs.packs || []) {
+      for (const env of pack.envs || []) {
+        rows += 1;
+        // ① 字段必须在（缺了就是上面那个 bug 的形态）
+        assert.ok(Number.isFinite(Number(env.seasonMinCost)),
+          `${name} / ${env.id}：面板的 env 必须带 seasonMinCost`);
+        withSeasonMinCost += 1;
+        // ② 因子必须能还原成榜上的分，且**恒 ≤ 1**
+        const f = frontierFactorsOf(env, metaOf(env.id));
+        if (!(f.base > 0)) continue;
+        maxFactor = Math.max(maxFactor, Number(f.seasonFactor) || 0);
+        assert.ok(f.seasonFactor <= 1 + 1e-4,
+          `${name} / ${env.id}：跨版本发挥必须 ≤ 1，实际 ${f.seasonFactor}`
+          + `（minCost ${f.minCost}/${f.cost}）`);
+        const rebuilt = 100 * f.perfFactor * (f.costFactor ?? 1) * f.seasonFactor;
+        assert.ok(Math.abs(rebuilt - f.score) < 1e-6,
+          `${name} / ${env.id}：因子乘回去要等于分（${rebuilt} vs ${f.score}）`);
+      }
+    }
+  }
+  assert.ok(rows > 20, `至少要检查到几十行面板明细，实际 ${rows}`);
+  assert.equal(withSeasonMinCost, rows, '每一行都要带 seasonMinCost');
+  assert.ok(maxFactor > 0, '这条用例不能空跑：至少要有一行算出正的跨版本发挥');
 });
 
 // ------------------------------------------------------------------- report

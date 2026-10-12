@@ -2460,7 +2460,7 @@ if (teamPlanProbe.missing) {
         + `（表头 ${JSON.stringify(scoreTip?.headers || [])}，次选 ${scoreTip?.alts ?? 0} 支，`
         + `内容块 ${(scoreTip?.blocks || []).length} 段`
         + `${tipScoreOk ? '' : `：${(scoreTip?.blocks || []).map((b) => b.slice(0, 18)).join(' / ') || '（空）'}`}）`);
-      await evaluate("document.querySelector('.advice-tip-modal .advice-tip-close')?.click(); true");
+      await evaluate("document.querySelector('#adviceTipClose')?.click(); true");
       await sleep(300);
     }
   }
@@ -2492,28 +2492,81 @@ if (!tierChipOk) {
   failures += 1;
   console.log('  ✗ 找不到 E0 那个筛选 chip（星魂档筛选器没渲染出来？）');
 } else {
+  // ⚠️ 先确保**没有别的窗口开着**：窗口开着时 `advice-view.js` 的 document 级 click 处理器会
+  //    直接 return（「关闭只归窗口管」），于是这里点不出逐档榜那张表 —— 而窗口元素里**留着
+  //    上一次的内容**（这里是抽卡方案那张 4 列的表），按行数等条件会「等到」一份陈旧数据。
+  //    这正是这个小组原先那条「表体 > 1 行」判据一直在空跑的原因（它数的是别的窗口的行）。
+  //    ⚠️ 关闭按钮的选择器是 **`#adviceTipClose`**（它的类名只有 `btn btn-ghost btn-sm`）：
+  //    这里以前写的是 `.advice-tip-close` —— 一个都匹配不到，「关窗」其实是空操作。
+  await evaluate("document.querySelector('#adviceTipClose')?.click(); true");
+  for (let i = 0; i < 10; i += 1) {
+    const stillOpen = await evaluate("(() => { const m = document.querySelector('.advice-tip-modal'); return Boolean(m) && !m.hidden; })()");
+    if (!stillOpen) break;
+    await sleep(200);
+  }
   const target = await evaluate(`(() => {
     const w = document.querySelector('#adviceConclusionUnits .advice-value-wrap');
     if (!w) return null;
     w.scrollIntoView({ block: 'center' });
-    const r = w.getBoundingClientRect();
-    return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2),
-      unit: w.closest('.advice-unit')?.querySelector('.advice-unit-name')?.textContent || '?' };
+    // ⚠️ 这里用**合成 DOM click**而不是坐标点击：坐标点击要求「量完到点下去之间页面不动」，
+    //    而切档之后还有异步渲染 / 滚动回弹，实测会点到别的地方。
+    //    advice-view.js 的处理器挂在 document 上按 closest('.advice-value-wrap') 判定，
+    //    合成事件同样能触发。（⚠️ 本段是模板字符串，注释里不能写反引号。）
+    w.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    return { unit: w.closest('.advice-unit')?.querySelector('.advice-unit-name')?.textContent || '?' };
   })()`);
   if (!target) {
     failures += 1;
     console.log('  ✗ E0 档一行都没有');
   } else {
     tierTipUnit = target.unit;
-    await mouseClick(target.x, target.y);
-    // 明细是**按需**取的（另发一次 packs 请求，实测 ~1s），所以要等它把行数补到 > 1。
+    // 等两件事：① 窗口真的**开着且是总榜那一张**（标题以「性价比得分」开头）；
+    // ② 明细被 `enrichTierDetail()` **按需补齐**（那一步另发一次 packs 请求，实测 ~1s）——
+    //    逐档榜的整包初始只带 1 个 env，补齐之后才有多行。
+    //
+    // ⚠️ v4.6.88 修的真 bug 就在这一步之后：补明细会把 `unit.envs` **整份换成面板那一路的
+    //    数据**，而面板当时少发 `seasonMinCost` → 金数项退回全窗口最小值 →「跨版本发挥」
+    //    算出 **> 1**（实测 39% 的行、最大 ×5.76，用户报的就是这个）。
+    //    所以判据必须落在**补齐之后**那一列上，而且**按表头认表**（窗口里不止一张表）。
+    //    判据：每一格都必须是 ×N，且 N ≤ 1（显示只到两位小数，给 1.005 容差）。
+    let tierFactorTable = null;
     for (let i = 0; i < 30; i += 1) {
-      tierTipRows = await evaluate("document.querySelectorAll('.advice-tip-modal .advice-value-tip-table tbody tr:not(.is-total)').length");
-      if (tierTipRows > 1) break;
+      tierFactorTable = await evaluate(`(() => {
+        const modal = document.querySelector('.advice-tip-modal');
+        const tables = [ ...(modal?.querySelectorAll('.advice-value-tip-table') || []) ];
+        const heads = tables.map((t) => [ ...t.querySelectorAll('th') ].map((h) => h.textContent));
+        const hit = tables.find((t) => [ ...t.querySelectorAll('th') ]
+          .some((h) => (h.textContent || '').includes('跨版本发挥')));
+        const title = modal?.querySelector('.advice-value-tip-head')?.textContent || '';
+        if (!hit) return { open: Boolean(modal && !modal.hidden), title, heads, cells: [] };
+        const col = [ ...hit.querySelectorAll('th') ]
+          .findIndex((h) => (h.textContent || '').includes('跨版本发挥')) + 1;
+        return {
+          open: Boolean(modal && !modal.hidden),
+          title,
+          heads,
+          col,
+          cells: [ ...hit.querySelectorAll('tbody tr:not(.is-total)') ]
+            .map((tr) => (tr.children[col - 1]?.textContent || '').trim()),
+        };
+      })()`);
+      if (tierFactorTable?.open && tierFactorTable.cells?.length > 1) break;
       await sleep(400);
     }
+    tierTipRows = (tierFactorTable?.cells || []).length;
+    const tierFactors = (tierFactorTable?.cells || []).map((t) => Number(String(t).replace(/[^0-9.]/g, '')));
+    const tierFactorOk = Boolean(tierFactorTable?.cells?.length > 1)
+      && tierFactorTable.cells.every((t) => t.startsWith('×'))
+      && tierFactors.every((n) => Number.isFinite(n) && n <= 1.005);
+    if (!tierFactorOk) failures += 1;
+    console.log(`  ${tierFactorOk ? '✓' : '✗'} 补齐明细后的「跨版本发挥」恒 ≤ 1：`
+      + `${JSON.stringify(tierFactorTable?.cells || null)}`);
+    if (!tierFactorOk) {
+      console.log(`      ⚠️ 窗口「${tierFactorTable?.title || '?'}」的表头：`
+        + `${JSON.stringify(tierFactorTable?.heads || null)}（第 ${tierFactorTable?.col} 列）`);
+    }
     // 收尾：关掉窗口 + 切回「全部」，别把状态留给后面的统计与下一次运行。
-    await evaluate("document.querySelector('.advice-tip-modal .advice-tip-close')?.click(); true");
+    await evaluate("document.querySelector('#adviceTipClose')?.click(); true");
     await sleep(300);
     await evaluate(`(() => {
       const chip = [ ...document.querySelectorAll('#adviceUnitFilter .advice-filter') ]
