@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { charactersOf, statsOf, lightConeOf, elementName, pathName } from '../src/core/format.js';
+import { charactersOf, statsOf, lightConeOf, elementName, pathName } from '../public/scripts/format.js';
 
 // Resolve against the repo root, not the caller's cwd, so the sample is found
 // no matter which directory the suite is launched from.

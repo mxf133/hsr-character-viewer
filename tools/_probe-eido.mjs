@@ -7,7 +7,7 @@
 // 用来确认改动只咬星魂条目、没有顺手动到别的东西。
 import { readFileSync } from 'node:fs';
 import { loadArchive, archiveIndex, archiveTeams } from '../src/server/archive.js';
-import { buildConclusion } from '../src/core/advice.js';
+import { buildConclusion } from '../public/scripts/advice.js';
 
 // ---- 账号状态（与 GUI 同源：data/accounts.json 里的星铁快照）
 const store = JSON.parse(readFileSync('data/accounts.json', 'utf8'));

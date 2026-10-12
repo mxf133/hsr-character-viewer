@@ -8,7 +8,7 @@
 // 用法：node tools/_probe-seasons.mjs [--window=7]
 import { archiveFrontier, archiveIndex } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
-import { SCORING, envWeightOf, eidolonTierOf, charCostOf, coneCostOf, eidolonGoldOf } from '../src/core/advice.js';
+import { SCORING, envWeightOf, eidolonTierOf, charCostOf, coneCostOf, eidolonGoldOf } from '../public/scripts/advice.js';
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));

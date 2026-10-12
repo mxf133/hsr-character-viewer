@@ -3,11 +3,20 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-// ⚠️ v4.6.85：界面整体重做中，原先那条「抽卡推荐界面布局 (CDP)」套件
-// （`check-advice-layout.mjs` —— 靠 DevTools Protocol 在真浏览器里量几何）随旧界面一起
-// 删除了，所以这里不再需要「9222 上有没有调试浏览器」那段探测（它当年只为让这一套在
-// 没有浏览器时**跳过**而不是报红）。新界面落地后若要恢复几何回归，按新结构重写那一套
-// 再把这层探测加回来 —— 别照抄旧 DOM id。
+// The layout suite drives a real browser over the DevTools Protocol, so it only
+// runs when one is already listening on the debug port. Without it the suite
+// reports the skip instead of failing, because a missing browser is an
+// environment fact rather than a defect in the page.
+const cdpAvailable = async (port = 9222) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/json/version`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+};
 
 const suites = [
   ['凭证加密与明文迁移', 'credential-vault-test.mjs'],
@@ -28,6 +37,7 @@ const suites = [
   ['端到端 HTTP / 静态资源 / 会话', 'e2e-test.mjs'],
   ['启动器 start.bat 自检', 'launcher-test.mjs'],
   ['启动后自动打开浏览器', 'launcher-open-test.mjs'],
+  ['抽卡推荐界面布局 (CDP)', 'check-advice-layout.mjs'],
 ];
 
 const usage = `Usage: node tools/run-tests.mjs [options]
@@ -78,13 +88,41 @@ if (unknownFiles.length) {
   process.exit(2);
 }
 
-const suitesToRun = requested.size
-  ? suites.filter(([, file]) => requested.has(file))
-  : suites;
+let suitesToRun;
+if (requested.size) {
+  suitesToRun = suites.filter(([, file]) => requested.has(file));
+} else {
+  suitesToRun = suites.filter(([, file]) => file !== 'check-advice-layout.mjs');
+  if (await cdpAvailable()) {
+    suitesToRun.push(suites.find(([, file]) => file === 'check-advice-layout.mjs'));
+  } else {
+    console.log('\n▶ 抽卡推荐界面布局 (CDP)\n   跳过：9222 端口没有可用的调试浏览器');
+  }
+}
+
+/**
+ * 让 CDP 套件能指向**别的端口**（在 worktree 里验证自己的改动时必须这样）。
+ *
+ * 背景：`check-advice-layout.mjs` 默认打 `http://127.0.0.1:8360/?view=advice` ——
+ * 那是 `main` 的常驻服务。在 worktree 里跑全套时，如果不指路，测的其实是 **main 的代码**，
+ * 要么假绿、要么报一堆与本次改动无关的错。
+ *
+ * ⚠️ 两个坑（都实测踩过）：
+ *   1. URL **必须带 `?view=advice`**（套件默认值里就带着）。传裸 `http://…:8390/` 的话
+ *      抽卡推荐页根本不会打开，`#adviceConclusionUnits` / 权重输入框 / 队伍方案全是空的 ——
+ *      看起来像「4 项布局回归」，其实只是页面没切过去；
+ *   2. 换个端口就是换个 **origin**，localStorage 里的权重存档是空的。想复现 main 上的
+ *      表现，得先把那边 `hsr.*` 的键搬过来（`tools/_probe-seed-localstorage.mjs`）。
+ *
+ *   CHECK_ADVICE_URL='http://127.0.0.1:8390/?view=advice' node tools/run-tests.mjs
+ */
+const ADVICE_URL = process.env.CHECK_ADVICE_URL || '';
 
 const run = (file) => new Promise((resolve) => {
   const path = fileURLToPath(new URL(file, import.meta.url));
-  const child = spawn(process.execPath, [path], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const args = [path];
+  if (ADVICE_URL && file === 'check-advice-layout.mjs') args.push(`--url=${ADVICE_URL}`);
+  const child = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   child.stdout.on('data', (d) => { output += d; });
   child.stderr.on('data', (d) => { output += d; });

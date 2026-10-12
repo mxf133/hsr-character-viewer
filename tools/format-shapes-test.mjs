@@ -4,7 +4,7 @@ import {
   challengeSummary, charactersOf, displayName, lightConeOf, playerInfoOf,
   effectiveSubstatHits, relicsOf, rogueSummary, skillsOf, slotName, statValue, statsOf, cardStats,
   elementName,
-} from '../src/core/format.js';
+} from '../public/scripts/format.js';
 
 let passed = 0;
 let failed = 0;

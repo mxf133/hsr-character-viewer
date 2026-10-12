@@ -8,7 +8,7 @@
 //
 //   node tools/_probe-weight-source.mjs
 import { AccountStore } from '../src/server/store.js';
-import { buildConclusion, VERSION_WINDOW } from '../src/core/advice.js';
+import { buildConclusion, VERSION_WINDOW } from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
 
@@ -21,7 +21,7 @@ const role = (account?.roles || [])[0];
 const snap = await store.getSnapshot(account.id, role.uid);
 
 // 账号持有：这里只需要一个稳定的非空角色池（不关心具体谁），直接用快照现建。
-const { ownedCharacters, eidolonsOf, lightConeRanksOf } = await import('../src/core/advice.js');
+const { ownedCharacters, eidolonsOf, lightConeRanksOf } = await import('../public/scripts/advice.js');
 const zhToEn = {}; const allNames = [];
 for (const c of index.refs?.characters || []) {
   if (c.nameCn && c.name) zhToEn[c.nameCn] = c.name;

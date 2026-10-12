@@ -91,36 +91,53 @@ const main = async () => {
   };
 
   try {
-    // ---- 占位页（v4.6.85 起界面整体重做中）--------------------------------
-    //
-    // 旧界面（index.html 版面 + /scripts/*.js + /styles/app.css）已于 v4.6.85 删除，
-    // 现在 `/` 只发一页「程序还在更新中，敬请期待」。这一组断言因此改成钉**占位页**
-    // 那几条性质：真的发出来了、没有任何脚本、不引旧资源、且明确写着「敬请期待」。
-    // 重做界面时这一组要跟着换回真界面的断言。
+    // ---- static GUI -----------------------------------------------------
     console.log('[static files]');
     const index = await get('/');
     check('GET / returns HTML', index.status === 200 && index.type.includes('text/html'),
       `status=${index.status} type=${index.type}`);
-    check('index.html is the 开发中 placeholder',
-      String(index.body).includes('程序还在更新中') && String(index.body).includes('敬请期待'));
-    check('index.html loads no scripts at all (placeholder is deliberately inert)',
-      !/<script/i.test(String(index.body)));
-    check('index.html does not reference the removed UI assets',
-      !/\/scripts\/(app|advice|advice-view|battle-record|character-panel|character-modal)\.js/.test(String(index.body))
-      && !/\/styles\/app\.css/.test(String(index.body)));
+    check('index.html has the app root', String(index.body).includes('id="qrImage"'));
+    check('index.html has no inline script (would break CSP-less setups)',
+      !/<script(?![^>]*src=)/.test(String(index.body)));
 
-    const css = await get('/styles/placeholder.css');
-    check('GET /styles/placeholder.css', css.status === 200 && css.type.includes('text/css'),
-      `status=${css.status}`);
-    // 旧界面的静态资源必须真的没了（不是留在仓库里没人引）——否则「删掉界面」只是句口号。
-    for (const gone of ['/scripts/app.js', '/scripts/advice-view.js', '/scripts/format.js', '/styles/app.css']) {
-      const res = await get(gone);
-      check(`removed UI asset ${gone} is not served`, res.status === 404, `status=${res.status}`);
+    const css = await get('/styles/app.css');
+    check('GET /styles/app.css', css.status === 200 && css.type.includes('text/css'), `status=${css.status}`);
+    const js = await get('/scripts/app.js');
+    check('GET /scripts/app.js', js.status === 200 && js.type.includes('javascript'), `status=${js.status}`);
+    const fmt = await get('/scripts/format.js');
+    check('GET /scripts/format.js', fmt.status === 200 && fmt.type.includes('javascript'), `status=${fmt.status}`);
+    const advice = await get('/scripts/advice.js');
+    check('GET /scripts/advice.js', advice.status === 200 && advice.type.includes('javascript'),
+      `status=${advice.status}`);
+    const adviceView = await get('/scripts/advice-view.js');
+    check('GET /scripts/advice-view.js', adviceView.status === 200 && adviceView.type.includes('javascript'),
+      `status=${adviceView.status}`);
+    check('index.html has the 抽卡推荐 tab', String(index.body).includes('id="tabAdvice"'));
+    check('index.html has the advice layout', String(index.body).includes('id="layoutAdvice"'));
+
+    // ---- 数据状态（用户 2026-10-11）：三份缓存的记录整合在一块，就在标题下方 -------
+    //
+    // 这一组量的是**服务端真的发出去的那份 HTML**（不是源文件）：结构与顺序一起钉住，
+    // 免得以后有人把某一格挪回它原来待的那一节（角色快照曾在正文最上面、战斗记录曾在
+    // ①那一节里、黑塔网数据曾是标题栏右侧一行小字）。
+    {
+      const served = String(index.body);
+      const blockAt = served.indexOf('id="adviceDataStatus"');
+      const gridAt = served.indexOf('class="data-status-grid"');
+      const snapAt = served.indexOf('id="adviceSnapshotFreshness"');
+      const recordAt = served.indexOf('id="recordFreshness"');
+      const datasetAt = served.indexOf('id="adviceDatasetFreshness"');
+      const recordSectionAt = served.indexOf('id="adviceRecord"');
+      check('data status block keeps the three caches in one grid, above ① 战斗记录',
+        blockAt > 0 && gridAt > blockAt && snapAt > gridAt && snapAt < recordAt
+          && recordAt < datasetAt && recordAt < recordSectionAt,
+        `block=${blockAt} grid=${gridAt} snapshot=${snapAt} record=${recordAt} dataset=${datasetAt} recordSection=${recordSectionAt}`);
+      check('the dataset time line is no longer a separate header node',
+        !served.includes('id="adviceDataUpdated"'));
+      const recordSlice = served.slice(recordSectionAt, served.indexOf('<!-- 跨模式综合结论'));
+      check('① 战斗记录 no longer carries its own .data-freshness block',
+        !recordSlice.includes('class="data-freshness"'));
     }
-    // 算分核心搬进 src/core/ 之后**不再**作为浏览器脚本下发（服务端 import 它）。
-    const movedCore = await get('/scripts/advice.js');
-    check('advice.js is no longer served as a browser script', movedCore.status === 404,
-      `status=${movedCore.status}`);
 
     // ---- archive (offline theherta dataset) -----------------------------
     console.log('\n[archive]');

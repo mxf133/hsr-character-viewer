@@ -16,7 +16,7 @@
 // 同一支队伍的成员必然同分 —— 那是口径本身的性质，不是 bug。
 import { archiveIndex, archiveFrontierAll, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
-import { buildConclusion, envWeightOf, VERSION_WINDOW } from '../src/core/advice.js';
+import { buildConclusion, envWeightOf, VERSION_WINDOW } from '../public/scripts/advice.js';
 
 const arg = (name, dflt) => {
   const eq = process.argv.find((a) => a.startsWith(`--${name}=`));

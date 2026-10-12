@@ -6,7 +6,7 @@
 //
 //   node tools/_probe-tier-superset.mjs
 import { createApp } from '../src/server/app.js';
-import { SCORING, teamPlan } from '../src/core/advice.js';
+import { SCORING, teamPlan } from '../public/scripts/advice.js';
 
 const fakeStore = {
   load: async () => {}, listAccounts: async () => [], getAccount: async () => null,
