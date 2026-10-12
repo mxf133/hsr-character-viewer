@@ -8,7 +8,7 @@
 import { AccountStore } from '../src/server/store.js';
 import {
   buildConclusion, eidolonTierOf, frontierCostTermOf, normalizeDrawWeights, ownedCharacters,
-  eidolonsOf, lightConeRanksOf, perfFactorOf, perfLineWeightsOf, packStrengthOf, teamPlan,
+  eidolonsOf, lightConeRanksOf, perfFactorOf, perfLineWeightsOf, teamPlan,
   VERSION_WINDOW, versionWeightOf,
 } from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
@@ -92,10 +92,12 @@ const envLedger = (envId) => {
     return perfect.length ? Math.min(...perfect)
       : (all.length ? Math.min(...all) : (global.length ? Math.min(...global) : null));
   };
+  // ⚠️ 只有这一个分：v4.6.87~v4.6.90 还复算过一份「纯强度」（不含金数项，`packStrengthOf`），
+  // 已按用户 2026-10-12 第 8 条删除 —— 抽卡方案的 ① 现在就是这里的 `score` 的版本加权平均。
   const scoreOfRow = (r) => {
     const perf = perfFactorOf(r.actionValue, envDef?.tierLines, envDef?.lowerIsBetter !== false, r.tier, perfW);
     const cf = frontierCostTermOf(denomOf(r.season), r.cost);
-    return { perf, costFactor: cf, score: 100 * perf * (cf ?? 1), strength: packStrengthOf(perf) };
+    return { perf, costFactor: cf, score: 100 * perf * (cf ?? 1) };
   };
   return { f, envDef, seasonsDesc, weightOf, rows, denomOf, scoreOfRow, perfW };
 };
@@ -117,13 +119,13 @@ const packLedger = (led, packKey) => {
   const born = known.length
     ? known.reduce((a, b) => (cmpVersion(a, b) >= 0 ? a : b))
     : ([...bySeason.keys()].sort(cmpVersion)[0] || null);
-  let num = 0; let den = 0; let sNum = 0; let dropped = 0; let absent = 0;
+  let num = 0; let den = 0; let dropped = 0; let absent = 0;
   const lines = [];
   for (const season of led.seasonsDesc) {
     const w = led.weightOf(season);
     const hit = bySeason.get(season);
     if (hit) {
-      num += w * hit.s.score; sNum += w * hit.s.strength; den += w;
+      num += w * hit.s.score; den += w;
       lines.push({ season, w, hit }); continue;
     }
     if (born !== null && cmpVersion(season, born) < 0) {
@@ -133,7 +135,7 @@ const packLedger = (led, packKey) => {
   }
   return {
     bySeason, born, lines, den, dropped, absent,
-    score: den ? num / den : null, strength: den ? sNum / den : null,
+    score: den ? num / den : null,
   };
 };
 
@@ -143,7 +145,7 @@ const printLedger = (title, envId, packKey, unitEnvScore) => {
   console.log(`\n=== ${title} ===`);
   console.log(`  整包 ${packKey}｜登场版本 ${p.born}｜权重和 ${p.den}`
     + `（已登场无证据 ${p.dropped} 版 / 早于登场 ${p.absent} 版）`);
-  console.log('  版本     权重  金数  行动值  档位     表现分  金数项  单版本分  纯强度   贡献占比');
+  console.log('  版本     权重  金数  行动值  档位     表现分  金数项  单版本分   贡献占比');
   for (const l of p.lines) {
     if (!l.hit) {
       console.log(`  ${String(l.season).padEnd(7)} ${String(l.w).padStart(4)}   `
@@ -155,13 +157,12 @@ const printLedger = (title, envId, packKey, unitEnvScore) => {
       + ` ${String(l.hit.r.actionValue).padStart(7)}  ${String(l.hit.r.tier).padEnd(8)}`
       + ` ${l.hit.s.perf.toFixed(4).padStart(7)}`
       + ` ${String(l.hit.s.costFactor === null ? '—' : l.hit.s.costFactor.toFixed(3)).padStart(7)}`
-      + ` ${l.hit.s.score.toFixed(2).padStart(9)} ${l.hit.s.strength.toFixed(2).padStart(8)}`
+      + ` ${l.hit.s.score.toFixed(2).padStart(9)}`
       + ` ${contrib.toFixed(1).padStart(8)}%`);
   }
   const ok = unitEnvScore && p.score !== null
     && Math.abs(Number(unitEnvScore.score) - p.score) < 0.01;
-  console.log(`  复算版本加权平均：分 ${p.score === null ? '—' : p.score.toFixed(4)}`
-    + `｜纯强度 ${p.strength === null ? '—' : p.strength.toFixed(4)}`);
+  console.log(`  复算版本加权平均：分 ${p.score === null ? '—' : p.score.toFixed(4)}`);
   console.log(`  生产同一条目：${envId} score=${unitEnvScore?.score ?? '—'}`
     + `（本地复算${ok ? '一致 ✓' : '不一致 ✗'}）`);
 };
@@ -174,7 +175,7 @@ const headUnit = (conclusion.frontierUnits || []).find((u) => {
 });
 const headPackKey = headUnit ? packKeyOfUnit(headUnit) : null;
 console.log(`当前首推 #1（账面 ${head.gold} 金 / 补金 ${head.gap}）：${teamText(head.members)}`);
-console.log(`  它在总榜上的代表整包：${headPackKey}（总榜分 ${headUnit?.total} / 强度 ${headUnit?.strength}）`);
+console.log(`  它在总榜上的代表整包：${headPackKey}（总榜分 ${headUnit?.total}）`);
 const headEnvMap = new Map((headUnit?.envs || []).map((e) => [e.id, e]));
 
 for (const envId of ['aa/plight', 'aa', 'as', 'moc', 'pf']) {

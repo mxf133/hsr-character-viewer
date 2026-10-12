@@ -248,16 +248,18 @@ const main = async () => {
         && junkHidden.body?.hiddenCosts?.gift === true
         && junkHidden.body?.hiddenCosts?.bogus === undefined,
         `status=${junkHidden.status} hiddenCosts=${JSON.stringify(junkHidden.body?.hiddenCosts)}`);
-      check('conclusion payload 形状升到 v8（hiddenCosts + availability + frontierTiers + strength）',
-        hiddenOn.body?.payload === 8, `payload=${hiddenOn.body?.payload}`);
-      // 抽卡方案的「强度得分」= 服务端下发的**纯强度**归一化（用户 2026-10-12 第 3 条）：
-      // 界面自己反推不出来（`total = 强度 × 金数项` 而金数项要逐条查证据），所以必须实测它在。
-      check('conclusion 每个整包都带 strength（纯强度，不含金数项）',
+      check('conclusion payload 形状是 v7（hiddenCosts + availability + frontierTiers）',
+        hiddenOn.body?.payload === 7, `payload=${hiddenOn.body?.payload}`);
+      // ⚠️ v4.6.87 曾在每个整包上多发一个 `strength`（纯强度，不含金数项）供抽卡方案的
+      // 「强度得分」用；用户 2026-10-12 第 8 条改回「含金数项的整包分」（同为 0T，9 金队
+      // 要比 16 金队强得多），那个字段已删除 —— 所以这里**反向**断言它不该再出现，
+      // 载荷形状也因此回到 v7。
+      check('conclusion 整包与逐副本都不再带 strength（v4.6.91 撤销）',
         (hiddenOn.body?.frontierUnits || []).length > 0
-        && (hiddenOn.body?.frontierUnits || []).every((u) => Number.isFinite(Number(u.strength)))
-        && (hiddenOn.body?.frontierTiers?.['0'] || []).every((u) => Number.isFinite(Number(u.strength))),
+        && (hiddenOn.body?.frontierUnits || []).every((u) => !('strength' in u))
+        && (hiddenOn.body?.frontierUnits || []).every((u) => (u.envs || []).every((e) => !('strength' in e))),
         `frontierUnits=${(hiddenOn.body?.frontierUnits || []).length}`
-        + ` 缺 strength=${(hiddenOn.body?.frontierUnits || []).filter((u) => !Number.isFinite(Number(u.strength))).length}`);
+        + ` 多带 strength=${(hiddenOn.body?.frontierUnits || []).filter((u) => 'strength' in u).length}`);
       // 队伍口径的抽卡方案在**界面**现算差额，所以 availability 必须真的发过去；
       // 缺它时界面会把 4★ 也算成 1 金（见 conclusion.js 的 slimAvailability 注释）。
       check('conclusion 带成本口径表 availability（星级 / 常驻标记）',

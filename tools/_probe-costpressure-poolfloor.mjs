@@ -63,11 +63,12 @@ for (const unit of units) {
   const ev = (unit.envs || []).find((e) => (e.members || []).length) || null;
   if (!ev?.members?.length) continue;
   const key = rosterKeyOf(ev.members);
-  const strength = Number.isFinite(Number(unit.strength)) ? Number(unit.strength) : Number(unit.total) || 0;
+  // ⚠️ ① 就是角色总榜的整包分（`unit.total`，含金数项）：v4.6.87~v4.6.90 那个独立的
+  // `unit.strength`（纯强度）已按用户 2026-10-12 第 8 条删除，所以这里直接按 `total` 收敛。
   const total = Number(unit.total) || 0;
   const prev = byRoster.get(key);
-  if (prev && !(strength > prev.strength || (strength === prev.strength && total > prev.total))) continue;
-  byRoster.set(key, { key, members: ev.members, strength, total });
+  if (prev && !(total > prev.total)) continue;
+  byRoster.set(key, { key, members: ev.members, total });
 }
 const pool = [];
 for (const t of byRoster.values()) {
@@ -97,13 +98,13 @@ const bestOf = (key) => [...(rowsByRoster.get(key) || [])]
   .sort((a, b) => a.cost - b.cost || a.actionValue - b.actionValue)[0] || null;
 
 console.log(`\n=== 池里最便宜的 12 支（及其绝境最便宜证据）===`);
-console.log('  #  账面 补金  绝境最便宜证据(金/AV/档位/版本)  总榜分  强度   队伍');
+console.log('  #  账面 补金  绝境最便宜证据(金/AV/档位/版本)  总榜分   队伍');
 [...pool].sort((a, b) => a.gold - b.gold).slice(0, 12).forEach((t, i) => {
   const b = bestOf(t.key);
   console.log(`  ${String(i + 1).padStart(2)} ${String(t.gold).padStart(4)} ${String(t.gap).padStart(4)}`
     + `  ${b ? `${String(b.cost).padStart(2)}金/${String(b.actionValue).padStart(3)}AV/${b.tier.padEnd(7)}/${String(b.season).padEnd(4)}`
       : '—                        '}`
-    + ` ${t.total.toFixed(0).padStart(6)} ${t.strength.toFixed(0).padStart(5)}   ${teamText(t.members)}`);
+    + ` ${t.total.toFixed(0).padStart(6)}   ${teamText(t.members)}`);
 });
 
 console.log(`\n=== 「数据集最便宜的满分配置」是否有资格进池（逐条核对）===`);
@@ -121,7 +122,7 @@ for (const r of cheapest) {
   shown += 1;
   const inPool = pool.find((t) => t.key === k);
   console.log(`  ${String(r.cost).padStart(2)}金/${String(r.actionValue).padStart(3)}AV  在候选池：`
-    + `${inPool ? `是（账面 ${inPool.gold} / 总榜分 ${inPool.total.toFixed(0)} / 强度 ${inPool.strength.toFixed(0)}）` : '否'}`
+    + `${inPool ? `是（账面 ${inPool.gold} / 总榜分 ${inPool.total.toFixed(0)}）` : '否'}`
     + `  ${teamText(r.members)}`);
 }
 const cheapestGold = cheapest.length ? cheapest[0].cost : null;
@@ -135,5 +136,6 @@ console.log(`  最新版本最便宜的满分 = ${cheapestGold} 金；候选池�
     const b = bestOf(t.key);
     return b && b.tier === 'perfect' && b.actionValue < 300;
   }).map((t) => t.gold))} 金`);
-console.log(`  16 金首推队伍 = 池内第 ${[...pool].sort((a, b) => b.gold - a.gold)
+// ⚠️ 别再写死「16 金首推队伍」：v4.6.91 起 ① 含金数项，生产首推换成 11 金那支了（见 docs v43）。
+console.log(`  生产首推队伍（${plan.rows[0].gold} 金）= 池内第 ${[...pool].sort((a, b) => b.gold - a.gold)
   .findIndex((t) => t.key === plan.rows[0].key) + 1} 贵（共 ${pool.length} 支）`);

@@ -1601,10 +1601,11 @@ checkAsync('综合结论：每个副本都挑样本足够的版本，并在各�
   const index = await archiveIndex();
   const empty = await archiveConclusion({ owned: [] }, { window: 6 });
   assert.equal(empty.ok, true);
-  assert.equal(empty.payload, 8,
+  assert.equal(empty.payload, 7,
     'v4 = 整包口径；v5 = hiddenCosts 回显；v6 = availability（队伍方案在界面现算差额）；'
-    + 'v7 = 逐星魂档的 frontierTiers（两支并行分支各占过 v6，合并后形状号取 7）；'
-    + 'v8 = 整包新增 strength（纯强度，抽卡方案的强度得分读它）');
+    + 'v7 = 逐星魂档的 frontierTiers（两支并行分支各占过 v6，合并后形状号取 7）。'
+    + '⚠️ **没有 v8**：v4.6.87 曾写过 8（整包多一个 strength = 纯强度），'
+    + 'v4.6.91 按用户 2026-10-12 第 8 条删掉了那个字段，形状回到 7。');
   assert.ok(empty.envs.length >= 4, `至少要覆盖 4 个副本，实际 ${empty.envs.length}`);
   const minRuns = index.minSeasonRuns ?? 20;
   for (const env of empty.envs) {
@@ -3019,7 +3020,7 @@ check('金数项：封顶 ×1、0 金通关 ×1.2（用户 2026-10-11 第 3 条�
   assert.equal(frontierCostTermOf(null, 3), null, '分母缺失同样给 null');
 });
 
-await checkAsync('金数项封顶 ×1 + 纯强度（不含金数项）：真实数据集上的两条口径', async () => {
+await checkAsync('金数项封顶 ×1 + 0 金通关 ×1.2：真实数据集上的两条口径', async () => {
   const index = await archiveIndex();
   const { envs } = await conclusionEnvs(index);
   const frontierAll = await archiveFrontierAll(envs, { window: VERSION_WINDOW });
@@ -3061,28 +3062,20 @@ await checkAsync('金数项封顶 ×1 + 纯强度（不含金数项）：真实�
   assert.ok(capped > 0, `当前数据集上应有被封顶的行（实测 19 条），实际 ${capped}`);
   assert.ok(zeroGold > 0, `界面默认（隐金全勾）下应有 0 金通关的行（实测 7 条），实际 ${zeroGold}`);
 
-  // ---- 纯强度（用户 2026-10-12 第 3 条）----------------------------------------
+  // ---- 撤销检查：整包上**不该**再有 `strength`（纯强度，v4.6.91 已按用户第 8 条删除）----
   //
-  // `strength` = Σ_副本 副本权重 × (100 × 表现)，**不乘金数项**。所以：
-  //   * 非 0 金的行上 `金数项 ≤ 1` ⇒ `total ≤ strength`；
-  //   * 逐副本的 `envs[].strength` 之和必须 **逐位等于** 顶层那个数（同一条版本加权，
-  //     分开算两次就会分叉 —— 那正是「界面上的强度得分与榜上的分对不上」）。
-  // 这份用例必须能区分「真的换了口径」与「只是把 total 抄了一遍」：所以断言
-  // 「至少有一批整包 strength 严格大于 total」。
-  let stronger = 0;
-  let units = 0;
+  // v4.6.87 曾在每个整包上多发一个 `strength` = Σ_副本 副本权重 × (100 × 表现)（不乘金数项），
+  // 供抽卡方案的「强度得分」用。用户 2026-10-12 第 8 条把它改回「含金数项的整包分」
+  // （「同样是绝境 0T，9 金队要比 16 金队强得多」），那个字段与 `packStrengthOf()` 一并删除。
+  // 这条断言钉住「别让它悄悄复活」——载荷里多一个没人读的字段，下一个人就会拿它当口径。
+  let withStrength = 0;
   for (const unit of result.frontierUnits || []) {
-    units += 1;
-    const sum = (unit.envs || []).reduce((n, e) => n + (Number(e.strength) || 0), 0);
-    assert.ok(Math.abs(sum - Number(unit.strength)) < 1e-6,
-      `${unit.name}: Σ envs[].strength = ${sum} ≠ 顶层 ${unit.strength}`);
-    assert.ok(Number(unit.strength) >= Number(unit.total) - 1e-6,
-      `${unit.name}: 纯强度 ${unit.strength} 不该低于总榜分 ${unit.total}`);
-    if (Number(unit.strength) > Number(unit.total) + 1e-6) stronger += 1;
+    if ('strength' in unit) withStrength += 1;
+    for (const env of unit.envs || []) if ('strength' in env) withStrength += 1;
   }
-  assert.ok(units > 0, '总榜不该为空（纯强度那条断言空跑会让人误以为它过了）');
-  assert.ok(stronger > 0,
-    `当前数据集上应有整包的纯强度严格高于总榜分（金数项 < 1），实际 ${stronger}/${units}`);
+  assert.equal(withStrength, 0,
+    `整包与逐副本都不该再带 strength（实际 ${withStrength} 处）`);
+  assert.ok((result.frontierUnits || []).length > 0, '总榜不该为空（上面那条断言空跑会让人误以为它过了）');
 });
 
 check('性价比总榜：证据广度只展示，不压低单条记录', () => {
@@ -3439,8 +3432,8 @@ check('数据状态：角色快照 / 战斗记录 / 黑塔网数据三份缓存�
 checkAsync('隐金：真实数据集上确实改变了总榜，且**只**动总榜（抽卡方案一字不变）', async () => {
   const off = await archiveConclusion({ owned: [] }, { window: 6, hiddenCosts: NO_HIDDEN_COSTS });
   const on = await archiveConclusion({ owned: [] }, { window: 6, hiddenCosts: DEFAULT_HIDDEN_COSTS });
-  assert.equal(on.payload, 8,
-    '载荷形状应升到 v8（hiddenCosts 回显 + availability + frontierTiers + strength）');
+  assert.equal(on.payload, 7,
+    '载荷形状是 v7（hiddenCosts 回显 + availability + frontierTiers；strength 已撤销）');
   assert.ok(on.frontierTiers && ['0', '1', '2', '6'].every((t) => Array.isArray(on.frontierTiers[t])),
     '逐星魂档的总榜 frontierTiers 必须四档都在（界面 E0/E1/E2/E6 筛选器靠它）');
   assert.deepEqual(on.hiddenCosts, { ...DEFAULT_HIDDEN_COSTS }, '服务端要回显归一化后的隐金设置');

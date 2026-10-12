@@ -1,5 +1,5 @@
-// ⚠️ 口径变更：本探针写于旧口径（①=总榜分含金数项归一化）；v4.6.87 起 ① 换成**纯强度**
-// （`rows[].strengthPct`，原始值 `rows[].strength`），这里已经跟着改。
+// ⚠️ 口径变更：① 在 v4.6.87~v4.6.90 一度是**纯强度**（不含金数项）；v4.6.91 回到
+// **总榜分含金数项**归一化（`rows[].strengthPct` 是池内位置，原始值 `rows[].teamScore`）。
 //
 // 决定性实验：把候选池从「每个角色只留**最强**整包」换成「每个角色 × 每个星魂档各留一条」
 // （= 现成的 `concl.frontierTiers`），看**便宜但稍弱的队伍**会不会冲上来。
@@ -20,9 +20,6 @@ import {
 } from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
-
-/** 本池的「纯强度」原始值：优先读生产下发的 `strength`（v4.6.87 起），缺失才退回 `total`。 */
-const strengthOf = (r) => (Number.isFinite(Number(r.strength)) ? Number(r.strength) : Number(r.total));
 
 const index = await archiveIndex();
 const i18n = await loadI18n();
@@ -71,15 +68,13 @@ const teamsOf = (units) => {
     const key = rosterKeyOf(best.members);
     const total = Number(u.total) || 0;
     if (!by.has(key) || total > by.get(key).total) {
-      // ⚠️ 必须把 `strength` 一起带过来：每档池的行是这里自建的，`strengthOf()` 只有
-      // 拿得到纯强度原始值才不会退回总榜分（否则 ① 又变回含金数项的旧口径）。
-      by.set(key, { key, members: best.members, total, strength: Number(u.strength), name: u.name });
+      by.set(key, { key, members: best.members, total, name: u.name });
     }
   }
   return [...by.values()];
 };
 
-/** 用「纯强度 + 差额接近度」各半给一批队伍打分（刻度按这批现算，与产品同口径）。 */
+/** 用「两个指标各半」给一批队伍打分（刻度按这批现算，与产品同口径）。 */
 const scoreTeams = (teams, capPct = SCORING.teamPlanGapCapPct) => {
   const rows = [];
   for (const t of teams) {
@@ -87,12 +82,12 @@ const scoreTeams = (teams, capPct = SCORING.teamPlanGapCapPct) => {
     if (gap <= 0) continue; // 用户第 3 条：差额 0 金的队伍不进候选
     rows.push({ ...t, gap });
   }
-  const lo = Math.min(...rows.map((r) => strengthOf(r)));
-  const hi = Math.max(...rows.map((r) => strengthOf(r)));
+  const lo = Math.min(...rows.map((r) => r.total));
+  const hi = Math.max(...rows.map((r) => r.total));
   const gaps = rows.map((r) => r.gap).sort((a, b) => a - b);
   const cap = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * capPct))];
   for (const r of rows) {
-    r.strengthPct = hi - lo < 1e-9 ? 100 : 100 * (strengthOf(r) - lo) / (hi - lo);
+    r.strengthPct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
     r.gapPct = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap)));
     // 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。
     r.total_score = 0.5 * r.strengthPct + 0.5 * r.gapPct;

@@ -1,5 +1,5 @@
-// ⚠️ 口径变更：本探针写于旧口径（①=总榜分含金数项归一化）；v4.6.87 起 ① 换成**纯强度**
-// （`rows[].strengthPct`，原始值 `rows[].strength`），这里已经跟着改。
+// ⚠️ 口径变更：① 在 v4.6.87~v4.6.90 一度是**纯强度**（不含金数项）；v4.6.91 回到
+// **总榜分含金数项**归一化（`rows[].strengthPct` 是池内位置，原始值 `rows[].teamScore`）。
 //
 // 复现截图 + 扫「补金推荐分为什么只有 50 多」。
 //
@@ -64,9 +64,8 @@ const show = (label, concl, opts = {}) => {
   console.log(`\n${'─'.repeat(100)}\n${label}`);
   console.log(`  总榜 ${concl.frontierUnits.length} 条 · 候选池 ${plan.pool} 支（去重 ${plan.poolAll}）`
     + ` · 展示 ${plan.rows.length} 条 · ②封顶 ${plan.gapMax} 金（真实最大 ${plan.gapRealMax}）`);
-  console.log(`  ① 刻度（纯强度）：${plan.strengthLo.toFixed(0)}~${plan.strengthHi.toFixed(0)}`
-    + `　→ ① 落在 ${Math.min(...strengths).toFixed(1)} ~ ${Math.max(...strengths).toFixed(1)}`
-    + `　（总榜分刻度 ${plan.scoreLo.toFixed(0)}~${plan.scoreHi.toFixed(0)}，仅展示）`);
+  console.log(`  ① 刻度（角色总榜整包分）：${plan.strengthLo.toFixed(0)}~${plan.strengthHi.toFixed(0)}`
+    + `　→ ① 落在 ${Math.min(...strengths).toFixed(1)} ~ ${Math.max(...strengths).toFixed(1)}`);
   console.log(`  ② 落在 ${Math.min(...plan.rows.map((r) => r.gapPct)).toFixed(1)}`
     + ` ~ ${Math.max(...plan.rows.map((r) => r.gapPct)).toFixed(1)}`
     + `　② 归 0 的 ${plan.rows.filter((r) => r.gapPct === 0).length}/${plan.rows.length} 支`);
