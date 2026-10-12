@@ -1810,7 +1810,9 @@ tools/                     测试与调试工具
   data/hsr-bosses-zh.mjs     首领中文名（唯一需要人工维护的部分）
   herta-test.mjs             数据集 + 中文名 + 推荐算法 + 综合结论
   _probe-rank.mjs            探针：把「角色总榜 / 抽卡方案」在真实数据上打出来（调参用）
-  _probe-team-plan.mjs       探针：把抽卡方案（含新口径：纯强度 + 差额接近度）打出来（调参用）
+  _probe-team-plan.mjs       探针：把抽卡方案（含新口径：整包分 + 差额接近度）打出来（调参用）
+  _probe-team-lookup.mjs     探针：查一支指定队伍（--chars=白厄,昔涟,刻律德菈）的全池名次 / 两个分项 / 补金顺序
+  _probe-phainon.mjs         探针：追白厄那支队的口径变化（候选池 vs 刻度基准的分离）
   _probe-fill-steps.mjs      探针：CDP — 把「补金顺序」每张卡的名字 / 目标状态 / 已有角色打出来
   _probe-season-factor-over1.mjs    探针：扫真载荷，找「跨版本发挥 > 1」的行（含逐档榜）
   _probe-packs-season-factor.mjs    探针：扫**面板**那一路（逐档榜浮层会换成它），复核同一条不变量
