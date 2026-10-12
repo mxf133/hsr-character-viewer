@@ -1273,13 +1273,15 @@ CDP 那两条新判据（残留 0 个 / 每格都有卡片与行线）跑 `node 
   （**归一化只此一处**，只认相对大小；两个框都清空时退回等权）。它**不进服务端请求**
   ——`teamPlan()` 在浏览器里跑，所以界面改它只重画抽卡方案那一块，不进 `conclusionKey()`。
   存档键 `hsr.advice.drawWeights`。
-- **抽卡方案的分项只有一处定义**（用户 2026-10-12 第 3、4、5 条）：
-  `补金推荐分 = 强度得分 × ws + 性价比得分 × wc`，其中
+- **抽卡方案的分项只有一处定义**（用户 2026-10-12 第 3、4、6 条）：
+  `补金推荐分 = 强度得分 × ws + 差额接近度 × wc`，其中
   ① **强度得分** = `strengthPct`，来自整包的 `strength`（`packStrengthOf()`，**不含金数项**）；
-  ② **性价比得分** = `costPct` = `差额接近度 × teamPlanCostMix + 压金度 × (1 − teamPlanCostMix)`。
-  ⚠️ `rows[].scorePct` **已删除**（它是旧 ① 的名字）：界面要印分项就读 `strengthPct` / `costPct`，
-  别再引入第三个「得分」字段。载荷里缺 `strength` 时 `teamPlan` 退回 `total`（旧服务端/夹具），
-  这条兜底只写一次（`strengthOfUnit()`）。
+  ② **差额接近度** = `gapPct`（`1 − 补金差额 ÷ 候选池差额 p75`）——**性价比就是它，没有第二层**。
+  ⚠️ `rows[].scorePct` / `costPct` / `goldPct` **都已删除**（前两个是旧名字、第三个是
+  v4.6.87 那个被用户否掉的「压金度」）：界面要印分项就读 `strengthPct` / `gapPct`，
+  **不要再引入第三个「得分」字段或第二个金数刻度** —— 用户第 6 条明确说那三者「过于重叠」，
+  而「这支队总共几金」按设计**不进分数**（只在卡片明面上显示）。
+  载荷里缺 `strength` 时 `teamPlan` 退回 `total`（旧服务端/夹具），这条兜底只写一次（`strengthOfUnit()`）。
 - **版本窗口 = 3 版**（用户 2026-10-12 第 5 条：「把角色总榜的版本窗口收到 3 版」）：
   `VERSION_WEIGHTS = [2,2,2]`、`VERSION_WINDOW = 3`，窗口外权重 **0**（不进分子也不进分母）。
   权重表按下标现算，别写死版本号；界面那条脚注的比例**从下发的 `seasonWeights` 现算**
@@ -1593,6 +1595,27 @@ CDP 那两条新判据（残留 0 个 / 每格都有卡片与行线）跑 `node 
 
 **验证**：`CHECK_ADVICE_URL=http://127.0.0.1:8371/?view=advice node tools/run-tests.mjs`
 （服务端改动**必须重启进程**才生效 —— 这次就先对着旧进程量了一遍「修前」的 39%）。
+
+### 4.2Q 本轮（v4.6.89）—— 抽卡方案的性价比收回到**单一刻度**（删掉「压金度」与中间的「性价比得分」）
+
+**用户原话**：「在补金推荐分里面，性价比得分、差额接近分、压金度，三者是不是过于重叠了，
+我只想保留差额接近度的得分」。
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `public/scripts/advice.js` | 删除 `SCORING.teamPlanCostMix` / `teamPlanGoldCapPct`；`teamPlan()` 里去掉 `goldCap` / `goldMax` / `costMix` 与逐行的 `goldPct` / `costPct`（**性价比 == 差额接近度**）；总分改 `ws × strengthPct + wc × gapPct`；排序第二顺位改 `gapPct`；计划不再下发 `goldMax` / `goldCapPct` / `costMix` |
+| `public/scripts/advice-view.js` | 等式 / 量表 / 脚注都写**差额接近度**；「分数来源」表从 4 行缩到 **2 行**；提示里删掉「压金度」那一段 |
+| `public/index.html` | 抽卡方案的说明与权重提示同步（「性价比越高越推**你还要补得越少**的队伍」），并写明「总共几金不进分数」 |
+| `tools/team-plan-test.mjs` | 原 ⭐「差额相同时更压金的排前面」**反向**成「差额与纯强度都相同时必须同分、且不再下发 `costPct` / `goldPct`」；真载荷那条的注释改成「靠版本窗口压下去」 |
+| `tools/check-advice-layout.mjs` | 抽卡方案等式解析改标签；新增「分数来源表只有『强度得分 / 差额接近度』两行、全文不出现『压金度 / 性价比得分』」 |
+| `tools/_probe-team-plan.mjs` | 打印口径同步 + 新增「不再下发 costPct / goldPct」的不变量 |
+| `docs/评分模型设计.md` / `README.md` / `src/version.js` / `package.json` | 新增 **v41**；README 那一节整段重写（含新的实测前 8）；版本 → **4.6.89** |
+
+**代价（一定要记住，别当成回归）**：那支被点名「过时」的 16 金队伍从 **#8 回到 #2**
+（85.1 分，第 1 名是同样补 4 金、账面 11 金的那支）。它不再排第 1 **现在完全由版本窗口
+7 → 3 版承担**（纯强度 1390.8 → 1378.5）；本轮之后它**不会再因为「总共 16 金」被扣分**。
+想让「总共几金」重新进公式就得加回第二个金数刻度 —— 那正是用户这次否掉的方案。
+复算：`node tools/_probe-team-plan.mjs --account=1 --rows=8`。
 
 ---
 
