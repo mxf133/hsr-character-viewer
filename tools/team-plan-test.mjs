@@ -143,8 +143,9 @@ check('两个指标按**抽卡权重**合成，默认 1:1 = 旧的等权', () =>
   const draw = plan.drawWeights;
   assert.deepEqual(draw, { strength: 0.5, cost: 0.5 }, '默认抽卡权重应是 1:1 归一化后的等权');
   for (const r of plan.rows) {
-    assert.ok(Math.abs(r.total - (draw.strength * r.strengthPct + draw.cost * r.costPct)) < 1e-4,
-      `${r.key}: ${r.total} ≠ ${draw.strength}×${r.strengthPct} + ${draw.cost}×${r.costPct}`);
+    // ⚠️ 第二项是 `gapPct`（用户 2026-10-12 第 6 条：性价比这一侧只有差额接近度）。
+    assert.ok(Math.abs(r.total - (draw.strength * r.strengthPct + draw.cost * r.gapPct)) < 1e-4,
+      `${r.key}: ${r.total} ≠ ${draw.strength}×${r.strengthPct} + ${draw.cost}×${r.gapPct}`);
   }
 });
 
@@ -283,11 +284,13 @@ check('抽卡权重的边界：两侧都清空 / 非法值 → 退回默认等�
     '不给参数时用默认值（默认 1:1 → 等权）');
 });
 
-check('⭐ 补金差额相同时，**账面金数更少**的队伍排前面（用户 2026-10-12 第 5 条）', () => {
-  // 这就是用户报的那个缺陷的合成版：实测他点名那支（账面 16 金）与第 2 名（11 金）的
-  // **补金差额完全相同（都是 4 金）**，所以「差额接近度」一分不差；而强度得分刻意不含
-  // 金数项 —— 于是「这支队总共要几金」在排序里权重为 0，16 金那支反而靠纯强度赢了 1.2 分。
-  // 修法：性价比得分里除了差额接近度，还要有**压金度**（= 1 − 账面金数 ÷ 池内 p75）。
+check('⭐ 性价比只有**差额接近度**一个刻度：差额与强度都相同时同分（用户 2026-10-12 第 6 条）', () => {
+  // 用户原话：「性价比得分、差额接近分、压金度，三者是不是过于重叠了，我只想保留差额接近度
+  // 的得分」。所以：**账面金数不进分数**，也不再有「性价比得分」这个中间量。
+  //
+  // 这条用例是原来那条「差额相同时更压金的排前面」（v4.6.87）的**反向钉法**：
+  // 同差额 + 同纯强度的两支，现在必须**同分**，名次只由确定性兜底键（rosterKey）决定。
+  // 一旦有人把第二个金数刻度加回来，这两支就会分出高下 —— 这条断言立刻红。
   const pairs = [
     // P：账面 4 金（charA E1 + coneA + charB），补金 2 金（charA E0→E1 + coneA）
     { key: 'k-pricey', name: 'charA', eidolon: 1, lc: 'coneA', superimp: 1, total: 400, strength: 500,
@@ -304,23 +307,21 @@ check('⭐ 补金差额相同时，**账面金数更少**的队伍排前面（�
     { availability });
   assert.equal(plan.rows.length, 2, '两支都该进结果');
   assert.deepEqual(plan.rows.map((r) => r.gap), [2, 2],
-    '两支的补金差额必须相同 —— 否则这条用例测的是差额而不是压金度');
-  // 纯强度也一样（都是 500 → 都拿 100 分），所以胜负只能由性价比里的压金度决定。
+    '两支的补金差额必须相同 —— 否则这条用例测的是差额');
+  // 纯强度也一样（都是 500 → 都拿 100 分），所以总分只可能由**差额**那一侧决定。
   assert.deepEqual(plan.rows.map((r) => Math.round(r.strengthPct)), [100, 100]);
-  assert.deepEqual(plan.rows.map((r) => r.gold), [3, 4],
-    `账面更少的那支应排前面（实际 #1 账面 ${plan.rows[0].gold} 金 / #2 账面 ${plan.rows[1].gold} 金）`);
-  assert.ok(plan.rows[0].goldPct > plan.rows[1].goldPct, '压金度必须真的拉开了差距');
-  // 反证：把压金度从性价比里拿掉（costMix = 1 = 只看差额接近度）就分不出高下。
-  const keepMix = SCORING.teamPlanCostMix;
-  SCORING.teamPlanCostMix = 1;
-  try {
-    const blind = teamPlan({ ...conclusionFixture, frontierUnits: pairs }, accountFixture,
-      { availability });
-    assert.ok(Math.abs(blind.rows[0].total - blind.rows[1].total) < 1e-9,
-      '只看差额接近度时两队应当同分（这正是本轮修的缺陷）');
-  } finally {
-    SCORING.teamPlanCostMix = keepMix;
-  }
+  // 账面金数确实不同（4 vs 3）—— 它**不再**影响名次，这正是本条要钉的点。
+  assert.deepEqual(plan.rows.map((r) => r.gold).sort((a, b) => a - b), [3, 4],
+    '夹具的两支账面金数必须不同，否则这条用例空跑');
+  assert.ok(Math.abs(plan.rows[0].total - plan.rows[1].total) < 1e-9,
+    `只看差额接近度时两队应当同分（实际 ${plan.rows[0].total} vs ${plan.rows[1].total}）`);
+  assert.deepEqual(plan.rows.map((r) => r.gapPct), [plan.rows[0].gapPct, plan.rows[0].gapPct],
+    '两队的差额接近度也应当相同');
+  // 同分之后名次仍必须可复现（两支的 rosterKey 不同，靠它兜底）。
+  const again = teamPlan({ ...conclusionFixture, frontierUnits: pairs }, accountFixture,
+    { availability });
+  assert.deepEqual(again.rows.map((r) => r.key), plan.rows.map((r) => r.key),
+    '同分时的名次必须可复现');
 });
 
 check('指标②是**分位封顶**：达到/超过封顶值一律 0 分，以下线性展开', () => {
@@ -703,11 +704,15 @@ check('账面金数与「最佳证据 N 金」是同一个尺子（数据集口�
   }
 });
 
-check('⭐⭐ 真载荷：把「这支队总共要几金」纳入性价比之后，前几名换成更压金的队伍', () => {
+check('⭐⭐ 真载荷：那支 16 金的队伍不再排第 1（v4.6.89 起靠版本窗口，不靠金数刻度）', () => {
   // 用户 2026-10-12 第 5 条的原话：「目前我的账号的抽卡方案，优先推荐的队伍是
   // 遐蝶E2S1、风堇E2、昔涟E2S1、长夜月E2，这个队伍已经过时了，已被更能压成本的队伍
   // 取代」。实测那支在真数据集上是 **16 金**（4.6 要 20 金才满分），而 4.6 最便宜的满分
-  // 只要 9 金。这一条钉「修完之后它不再排第 1」。
+  // 只要 9 金。这一条钉「它不再排第 1」。
+  //
+  // ⚠️ v4.6.89 起把它压下去的**不是金数刻度**（那个已被用户第 6 条删掉），而是
+  // **版本窗口 7 → 3**：它的代表性整包有 32.1% 的分来自窗口外的旧版本，收窗后它的
+  // 纯强度 1390.8 → 1378.5，靠纯强度就压不过 11 金那支了（账号 1 实测它落在 #2）。
   //
   // ⚠️ 判定用**成员名单**（`key` 是 roster 键，读不出人话）：那支队四个成员是
   // 遐蝶 / 昔涟 / 长夜月 / 风堇，且账面 16 金、补金 4 金。
@@ -732,8 +737,11 @@ check('⭐⭐ 真载荷：把「这支队总共要几金」纳入性价比之后
   // 修之前 #1 = 16 金；修之后 #1 应当是明显更便宜的队伍。
   assert.ok(plan.rows[0].gold <= 13,
     `第 1 名的账面金数应当明显低于那支 16 金（实际 ${plan.rows[0].gold} 金）`);
-  assert.ok(plan.rows.every((r) => Number.isFinite(r.goldPct) && Number.isFinite(r.costPct)),
-    '每一行都要带压金度与性价比得分');
+  // ⚠️ 用户 2026-10-12 第 6 条：性价比那一侧**只有**差额接近度，中间量已删除。
+  //    这里把「不再有第二个金数刻度」钉住 —— 加回来就是用户否掉的「三者重叠」。
+  assert.ok(plan.rows.every((r) => Number.isFinite(r.gapPct)
+    && r.costPct === undefined && r.goldPct === undefined),
+    '每一行带 gapPct，且不再下发 costPct / goldPct');
 });
 
 // ---- 用户 2026-10-11 的两条新要求（数据层）------------------------------------

@@ -2270,10 +2270,11 @@ const teamPlanProbe = await evaluate(`(() => {
       const seg = eq.slice(eq.indexOf(label));
       return Number((seg.match(/×\\s*([0-9]+(?:\\.[0-9]+)?)/) || [])[1]);
     };
-    // ⚠️ 第二项在 2026-10-12 第 5 条从「差额接近度」换成了**性价比得分**
-    //    （差额接近度 与 压金度 合成）—— 标签不跟着改，numAfter 会取到 NaN。
-    const parts = [numAfter('强度得分'), numAfter('性价比得分')];
-    const coefs = [coefAfter('强度得分'), coefAfter('性价比得分')];
+    // ⚠️ 第二项在 2026-10-12 第 6 条**回到**「差额接近度」：v4.6.87 一度叫「性价比得分」
+    //    （差额接近度 与 压金度 合成），用户说这三者重叠、只要差额接近度，于是删掉中间层。
+    //    标签不跟着改，numAfter 会取到 NaN（这条断言就是这么被绊到的）。
+    const parts = [numAfter('强度得分'), numAfter('差额接近度')];
+    const coefs = [coefAfter('强度得分'), coefAfter('差额接近度')];
     const fills = [ ...card.querySelectorAll('.advice-plan-team-fill .advice-fill-item') ];
     // 一笔补金可能是**多金**（例：遐蝶 E0→E2 一笔 2 金），所以条数 ≠ 补金金数 ——
     // 正确的判据是「各条的金数之和 = 补金金数」。每条的 .advice-fill-cost 以「N 金」开头。
@@ -2439,10 +2440,17 @@ if (teamPlanProbe.missing) {
         if (!modal || modal.hidden || !card) return { open: false };
         const headers = [ ...card.querySelectorAll('.advice-value-tip-table th') ].map((n) => n.textContent);
         const blocks = [ ...card.querySelectorAll('.advice-plan-tip-block') ].map((n) => n.textContent);
+        // ⚠️ 用户 2026-10-12 第 6 条：「性价比得分、差额接近分、压金度，三者是不是过于重叠了，
+        //    我只想保留差额接近度的得分」—— 所以这张「分数来源」表**只有两行**
+        //    （强度得分 / 差额接近度），中间那层「性价比得分」与「压金度」都不许再出现。
+        const rowLabels = [ ...card.querySelectorAll('.advice-value-tip-table tbody tr') ]
+          .map((tr) => (tr.children[0]?.textContent || '').trim());
         return {
           open: true,
           title: card.querySelector('.advice-value-tip-head')?.textContent || '',
           headers,
+          rowLabels,
+          text: card.textContent || '',
           blocks,
           alts: card.querySelectorAll('.advice-plan-tip-alt').length,
         };
@@ -2460,6 +2468,13 @@ if (teamPlanProbe.missing) {
         + `（表头 ${JSON.stringify(scoreTip?.headers || [])}，次选 ${scoreTip?.alts ?? 0} 支，`
         + `内容块 ${(scoreTip?.blocks || []).length} 段`
         + `${tipScoreOk ? '' : `：${(scoreTip?.blocks || []).map((b) => b.slice(0, 18)).join(' / ') || '（空）'}`}）`);
+      // ⚠️ 用户 2026-10-12 第 6 条：分数来源表只有两个刻度，且不许再出现「压金度 / 性价比得分」。
+      const scoreScaleOk = JSON.stringify(scoreTip?.rowLabels) === JSON.stringify(['强度得分', '差额接近度'])
+        && !scoreTip.text.includes('压金度')
+        && !scoreTip.text.includes('性价比得分');
+      if (!scoreScaleOk) failures += 1;
+      console.log(`  ${scoreScaleOk ? '✓' : '✗'} 分数来源表只有「强度得分 / 差额接近度」两行、`
+        + `全文不出现「压金度 / 性价比得分」（实际 ${JSON.stringify(scoreTip?.rowLabels || [])}）`);
       await evaluate("document.querySelector('#adviceTipClose')?.click(); true");
       await sleep(300);
     }

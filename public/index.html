@@ -241,7 +241,7 @@
               哪些副本算数（角色总榜与抽卡方案都吃它，调成 0 = 这个副本不进榜）；
               <strong>抽卡权重</strong>决定抽卡方案里<strong>强度得分</strong>与
               <strong>差额接近度</strong>各占多少（强度越高越推高金、低行动值的队伍，
-              性价比越高越推尽量压金通关的队伍）。两组都只有<strong>相对大小</strong>有意义。</span>
+              性价比越高越推<strong>你还要补得越少</strong>的队伍）。两组都只有<strong>相对大小</strong>有意义。</span>
             <button type="button" id="adviceFrontierWeightsReset" class="btn btn-ghost btn-sm">恢复默认</button>
             <div class="advice-weights-groups">
               <div class="advice-weights-group">
@@ -288,7 +288,9 @@
             再看<strong>下一步最适合补什么</strong>。候选来自<strong>角色总榜里的真实队伍</strong>，
             同一支队伍只留一条；补金推荐分 = <strong>强度得分 × 抽卡权重</strong>
             + <strong>差额接近度 × 抽卡权重</strong>，
-            「强度」那一档偏强队（高金、低行动值），「性价比」那一档偏尽量压金通关的队伍。
+            「强度」那一档偏强队（高金、低行动值），「性价比」那一档偏
+            <strong>你还要补得越少</strong>的队伍（差额接近度 = 1 − 补金 ÷ 候选池封顶值）；
+            这支队总共几金只写在每张卡的明面上，<strong>不进分数</strong>。
             每张卡都带角色 / 光锥图片、补金顺序与过渡档位，
             点分数还能展开刻度来源和相近的次选配队。
           </p>

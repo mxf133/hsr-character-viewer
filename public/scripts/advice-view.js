@@ -2596,9 +2596,14 @@ const planTipTeam = (members, className = '') => {
  * 「补金推荐分」的详情（用户 2026-10-11 第 8 条原话：「点击补金推荐分按钮可以查看
  * 补金推荐分的来源，以及**其他类似的次选的配队**（至多 3 个）」）。
  *
- * 内容 = **三个刻度与折算**（强度得分、性价比得分、以及性价比自己的两个来源 —— 这就是
- * 「分数的来源」）+ 过渡档位 + 次选配队。
+ * 内容 = **两个刻度与折算**（强度得分、差额接近度 —— 这就是「分数的来源」）
+ * + 过渡档位 + 次选配队。
  * 度量口径全部来自 `plan`（`teamPlan()` 的返回值），界面不重算任何一个数。
+ *
+ * ⚠️ 用户 2026-10-12 第 6 条（「性价比得分、差额接近分、压金度，三者是不是过于重叠了，
+ * 我只想保留差额接近度的得分」）之后，这里**只剩两行**：中间那层「性价比得分」已删除
+ * （它曾 = 差额接近度 与 压金度 各半）。别再把它加回来 —— 同一个数套两个名字正是
+ * 用户说的「重叠」。
  */
 const teamPlanTip = (row, plan) => {
   const num = (v) => Number(v || 0).toFixed(1);
@@ -2629,11 +2634,11 @@ const teamPlanTip = (row, plan) => {
     }
     extra.push(box);
   }
-  const mix = Math.max(0, Math.min(1, Number(plan.costMix) || 0.5));
-  const goldShare = formatShare(1 - mix);
   return tipBox({
     head: `补金推荐分 +${num(row.total)}`,
-    eq: `= 强度得分 ${num(row.strengthPct)} × ${ws} + 性价比得分 ${num(row.costPct)} × ${wc}`,
+    // ⚠️ 第二项写成**差额接近度**（不是「性价比得分」）：v4.6.89 起它俩就是同一个数，
+    // 印两个名字会让读者以为还有别的成分（用户第 6 条要的就是去掉这一层）。
+    eq: `= 强度得分 ${num(row.strengthPct)} × ${ws} + 差额接近度 ${num(row.gapPct)} × ${wc}`,
     headers: ['分项', '本队取值', '刻度（按候选池现算）', '折算'],
     rows: [
       // ⚠️ 「本队取值」是**纯强度**的原始值（2026-10-12 第 3 条起 ① 换了口径）：
@@ -2641,22 +2646,18 @@ const teamPlanTip = (row, plan) => {
       ['强度得分', `强度 ${Math.round(Number(row.strength) || 0)}`,
         `${Math.round(Number(plan.strengthLo) || 0)} ~ ${Math.round(Number(plan.strengthHi) || 0)}`,
         `${num(row.strengthPct)} × ${ws}`],
-      // ② 是**合成**出来的（用户 2026-10-12 第 5 条）：下面两行是它的两个来源。
-      ['性价比得分', `差额 ${row.gap} 金｜账面 ${row.gold} 金`,
-        `差额封顶 ${plan.gapMax} 金 · 账面封顶 ${plan.goldMax} 金（都是池内 p75）`,
-        `${num(row.costPct)} × ${wc}`],
-      ['· 差额接近度', `补金 ${row.gap} 金`,
-        `1 − 补金 ÷ ${plan.gapMax} 金`,
-        `${num(row.gapPct)} × ${formatShare(mix)}`],
-      ['· 压金度', `账面 ${row.gold} 金`,
-        `1 − 账面 ÷ ${plan.goldMax} 金`,
-        `${num(row.goldPct)} × ${goldShare}`],
+      // ② 只有这一个刻度（用户 2026-10-12 第 6 条）。「账面 N 金」放在「本队取值」里当
+      // 参考信息，**不进公式** —— 它已经不参与任何折算（想让它参与就是 v4.6.87 那个
+      // 被用户否掉的「压金度」）。
+      ['差额接近度', `补金 ${row.gap} 金｜账面 ${row.gold} 金`,
+        `1 − 补金 ÷ ${plan.gapMax} 金（池内 p75）`,
+        `${num(row.gapPct)} × ${wc}`],
     ],
     extra,
     notes: [
       // ⚠️ v4.6.81 起刻度取自**整个候选池**，所以「只显示前 N 条」不影响分数。
       // 这句话改前写的是「按要下发的那批现算」——那正是那个 bug 的说明。
-      '三个刻度都按**候选池**现算（不是按下面这几条），所以换账号 / 换数据之后分数不可直接比较。',
+      '两个刻度都按**候选池**现算（不是按下面这几条），所以换账号 / 换数据之后分数不可直接比较。',
       // ⚠️ 2026-10-12 第 3、4 条：① 从「队伍在角色总榜上的分」换成**纯强度**，
       // 两个系数也从写死的 0.5 改成用户可调的抽卡权重。这一句必须写清楚，
       // 否则读者会拿「队分」（含压金项）去对「强度得分」。
@@ -2664,11 +2665,9 @@ const teamPlanTip = (row, plan) => {
       + `本队总榜整包分 ${Math.round(Number(row.teamScore) || 0)} 只作参考；`
       + `两个系数来自「抽卡权重」（强度 ${(draw.strength * 100).toFixed(0)}% / `
       + `性价比 ${(draw.cost * 100).toFixed(0)}%），改它不用重算数据集。`,
-      // ⚠️ 用户 2026-10-12 第 5 条：性价比得分**必须**写清它是两个来源合成的，
-      // 否则读者会把它当成旧版那个「差额接近度」，看不懂「为什么 16 金那支掉到后面」。
-      `性价比得分 = 差额接近度 × ${formatShare(mix)} + 压金度 × ${goldShare}：`
-      + '前者量**你还要补几金**，后者量**这支队总共要几金**'
-      + '（实测两支队的补金差额曾经完全相同，只算前者会让 16 金那支压过 11 金那支）。',
+      // ⚠️ 用户 2026-10-12 第 6 条：性价比这一侧**只有**差额接近度。
+      `性价比 = 差额接近度（1 − 补金 ÷ ${plan.gapMax} 金）：它量的是**你还要补几金**。`
+      + '「这支队总共要几金」（账面金数）只写在每张卡的明面上，**不进分数**。',
       // ⚠️ 候选池在 v4.6.83 从「角色总榜」放宽到「逐档榜 ∪ 总榜」
       // （每角色 × 每星魂档各留一条，再加每角色的总最佳），所以这里不能再说「总榜 N 支」
       // —— 两个数已经不是同一个集合了。
@@ -2750,7 +2749,7 @@ const planRecommendation = (row) => {
  * 口径全部在 `advice.js` 的 `teamPlan()` 里（候选池、两个指标、归一化上下限、补金顺序），
  * 界面**不重算**任何一个数 —— 这里只负责画：
  *
- *   #名次  补金推荐分 xx.x = 强度得分 xx.x × ws + 性价比得分 xx.x × wc
+ *   #名次  补金推荐分 xx.x = 强度得分 xx.x × ws + 差额接近度 xx.x × wc
  *   队伍 4 个位置（角色 E档 + 光锥 S档，带图标，标出「已有 / 缺」）
  *   账面 N 金｜补金 M 金｜最佳证据：<副本> <金> 金 · <行动值> 行动值
  *   补金顺序（有序列表）：1. 名字 目标状态（N 金）
@@ -2758,9 +2757,9 @@ const planRecommendation = (row) => {
  * ⚠️ 用户 2026-10-11 的抽卡方案改动：**不显示抽数**、补金顺序里不写「性价比」、
  * 一行只留「名字 + 目标状态 + 几金」；「总分 / 性价比」两个词改成
  * **「补金推荐分 / 强度得分」**；条数上限 40 → **15**。
- * ⚠️ 2026-10-12 第 3、4、5 条之后：两个系数 `ws / wc` 来自界面上的**抽卡权重**，
- * 第二项由「差额接近度」换成合成的**性价比得分**（差额接近度 与 压金度 各半）
- * —— 等式结构与文案位置都没变，只有那一项的名字与口径换了。
+ * ⚠️ 2026-10-12 第 3、4、6 条之后：两个系数 `ws / wc` 来自界面上的**抽卡权重**，
+ * 第二项就写它本来的名字**差额接近度** —— 中间那层「性价比得分」在 v4.6.89 删掉了
+ * （它只等于差额接近度 与 压金度 的合成），等式结构与文案位置都没变。
  */
 const renderTeamPlan = (conclusion) => {
   if (!el.teamPlanBody) return;
@@ -2824,13 +2823,14 @@ const renderTeamPlan = (conclusion) => {
     // 用户 2026-10-11（抽卡方案第 2 条）：「改为：补金推荐分 + 75.7 = 强度得分 68.0 × 0.5
     // + 差额接近度 83.3 × 0.5，注意空格不要离得太远」——所以徽标的标签改成「补金推荐分」、
     // 后面那句用普通空格（改前是 `　+　` 全角空格，实测两处各多出 ~8px）。
-    // ⚠️ 2026-10-12 第 3、5 条之后第二项叫**性价比得分**（差额接近度 与 压金度 合成）：
-    // 它仍然是 0~100 的一个分项，等式结构没变，只是名字与口径换了。
+    // ⚠️ 2026-10-12 第 3、4、6 条之后第二项叫**差额接近度**（它本来就是那句原话里的名字）：
+    // v4.6.87 一度改成合成的「性价比得分」，v4.6.89 按用户要求收回成单一刻度 ——
+    // 所以这里印的是 `gapPct`，不是中间量。
     head.appendChild(valueBadge(row.total, teamPlanTip(row, plan),
       (v) => Number(v || 0).toFixed(1), '补金推荐分'));
     head.appendChild(text('span', 'advice-plan-team-eq',
       `= 强度得分 ${Number(row.strengthPct).toFixed(1)} × ${ws}`
-      + ` + 性价比得分 ${Number(row.costPct).toFixed(1)} × ${wc}`));
+      + ` + 差额接近度 ${Number(row.gapPct).toFixed(1)} × ${wc}`));
     card.appendChild(head);
 
     // ---- 队伍四个位置 --------------------------------------------------------
@@ -2894,9 +2894,9 @@ const renderTeamPlan = (conclusion) => {
     for (const [label, value, tone] of [
       // ① 在 v4.6.87 换成了**纯强度**（用户 2026-10-12 第 3 条），条宽与徽标同源。
       ['强度', row.strengthPct, 'strength'],
-      // ② 在 v4.6.87 从「差额接近度」换成合成的**性价比得分**（第 5 条）：
-      // 条宽仍与徽标同一套数，否则「条比徽标长」会让人以为界面算错了。
-      ['性价比', row.costPct, 'gap'],
+      // ② 就是徽标里那一项本身（用户第 6 条：只要差额接近度），条宽同一套数 ——
+      // 否则「条比徽标长」会让人以为界面算错了。
+      ['差额接近度', row.gapPct, 'gap'],
     ]) {
       const meter = text('div', 'advice-plan-team-meter');
       const meterHead = text('div', 'advice-plan-team-meter-head');
@@ -2956,30 +2956,28 @@ const renderTeamPlan = (conclusion) => {
   // ⚠️ v4.6.83 起候选池的来源是**逐档榜**（每角色 × 每星魂档各一条），不再是总榜 ——
   //    文案必须跟着改，否则读者会拿「总榜 84 支」去对「候选 245 支」，以为算错了。
   const capPct = Math.round((Number(plan.gapCapPct) || 0.75) * 100);
-  const goldCapPct = Math.round((Number(plan.goldCapPct) || 0.75) * 100);
-  const costMix = Math.max(0, Math.min(1, Number(plan.costMix) || 0.5));
   const capped = plan.rows.filter((r) => r.gap >= plan.gapMax).length;
-  const cappedGold = plan.rows.filter((r) => r.gold >= plan.goldMax).length;
   const drawFoot = plan.drawWeights || normalizeDrawWeights(state.drawWeights || {});
   el.teamPlanBody.appendChild(text('p', 'muted small advice-plan-team-foot',
     `口径：候选 = 角色**逐档榜 ∪ 总榜**按队伍去重`
     + `（逐档榜 = 每个角色在 E0/E1/E2/E6 各收敛一条，再并上每个角色的总最佳，共 ${plan.poolAll} 支），`
     + `去掉补金 0 金的之后剩 ${plan.pool} 支 —— `
-    + '**这样同一支队伍的低配档位也在池内**，便宜但强度略低的队伍能靠性价比得分拉分；'
+    + '**这样同一支队伍的低配档位也在池内**，便宜但强度略低的队伍能靠补金少拉分；'
     + `**下面这 ${plan.rows.length} 条是其中最靠前的**（按补金推荐分排，截断只影响显示）；`
     + `强度得分 = **纯强度**（档位 × 行动值 × 版本加权，不含金数项）按**候选池**归一`
     + `（${Math.round(plan.strengthLo)} ~ ${Math.round(plan.strengthHi)} → 0~100）；`
-    + `性价比得分 = 差额接近度 × ${formatShare(costMix)} + 压金度 × ${formatShare(1 - costMix)}，`
-    + `其中差额接近度 = 1 − 补金 ÷ ${plan.gapMax} 金（**候选池**差额的 ${capPct} 分位，`
-    + `达到或超过就 0 分，下面这批有 ${capped} 支落在这一档`
+    // ⚠️ 用户 2026-10-12 第 6 条之后这里**只有一个刻度**（差额接近度）——
+    //    别再写成「差额 × a + 压金 × b」：那层合成已删（它等于同一个数的两种名字）。
+    + `性价比（差额接近度）= 1 − 补金 ÷ ${plan.gapMax} 金`
+    + `（**候选池**差额的 ${capPct} 分位，达到或超过就 0 分，`
+    + `下面这批有 ${capped} 支落在这一档`
     + `${Number(plan.gapRealMax) > Number(plan.gapMax)
-      ? `、补金最多的是 ${plan.gapRealMax} 金` : ''}），`
-    + `压金度 = 1 − 账面金数 ÷ ${plan.goldMax} 金（**候选池**账面金数的 ${goldCapPct} 分位，`
-    + `下面这批有 ${cappedGold} 支落在这一档）；`
+      ? `、补金最多的是 ${plan.gapRealMax} 金` : ''}）；`
+    + '「这支队总共几金」（卡片上的账面金数）只作参考，**不进分数**；'
     + `补金推荐分 = 强度得分 × ${formatShare(drawFoot.strength)}`
-    + ` + 性价比得分 × ${formatShare(drawFoot.cost)}（抽卡权重，上面可调）；`
+    + ` + 差额接近度 × ${formatShare(drawFoot.cost)}（抽卡权重，上面可调）；`
     + '补金顺序按每抽收益（性价比 ÷ 期望抽数）从高到低，光锥一定排在它自己的角色之后。'
-    + '三个指标的上下限都随账号与数据现算，换账号后数值不可直接比较。'));
+    + '两个指标的上下限都随账号与数据现算，换账号后数值不可直接比较。'));
 };
 
 // ------------------------------------------------------- 跨模式综合结论（渲染）
