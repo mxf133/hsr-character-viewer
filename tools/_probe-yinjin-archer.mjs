@@ -8,7 +8,7 @@
 
 import {
   DEFAULT_HIDDEN_COSTS, hiddenReductionOf, packGoldOf, VERSION_WINDOW,
-} from '../public/scripts/advice.js';
+} from '../src/core/advice.js';
 import { archiveFrontierAll, archiveIndex } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
 

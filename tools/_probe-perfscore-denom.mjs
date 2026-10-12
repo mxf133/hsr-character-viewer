@@ -6,7 +6,7 @@
 // 再按同样的版本权重（服务端下发的 seasonWeights）与三态规则汇总，比较名次。
 import { archiveIndex, archiveFrontier, archiveFrontierAll } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
-import { buildConclusion, SCORING, VERSION_WINDOW, VERSION_WEIGHTS } from '../public/scripts/advice.js';
+import { buildConclusion, SCORING, VERSION_WINDOW, VERSION_WEIGHTS } from '../src/core/advice.js';
 
 const clamp01 = (n) => Math.max(0, Math.min(1, n));
 

@@ -3,7 +3,9 @@
 //   2. the theherta.com dataset is readable and the recommendation maths works.
 //
 // Run directly (node tools/herta-test.mjs) or through tools/run-tests.mjs.
-import { readFile, stat } from 'node:fs/promises';
+//
+// ⚠️ v4.6.85：原来还有一条「界面无其他游戏入口」（读 `public/index.html`），随界面删除
+// 一起删掉了。上面那句 “(server + GUI)” 里的 GUI 那半边要等新界面落地后重新钉。
 import { existsSync, readFileSync } from 'node:fs';
 import { strict as assert } from 'node:assert';
 import { resolve } from 'node:path';
@@ -29,7 +31,7 @@ import {
   // 隐金设置（用户 2026-10-11）
   DEFAULT_HIDDEN_COSTS, HIDDEN_COST_IDS, HIDDEN_COST_SETTINGS, NO_HIDDEN_COSTS,
   hiddenReductionOf, normalizeHiddenCosts, packGoldOf,
-} from '../public/scripts/advice.js';
+} from '../src/core/advice.js';
 import { archiveConclusion, conclusionEnvs, listEnvs } from '../src/server/conclusion.js';
 import { baseName, compareRosters } from '../src/server/compare.js';
 import { normalizeBattleRecords } from '../src/server/records.js';
@@ -88,10 +90,11 @@ await checkAsync('AccountStore.toPublic 过滤已退役游戏角色', async () =
   assert.equal(pub.roles[0].game, 'hsr');
 });
 
-check('界面与客户端无其他游戏入口', async () => {
-  const html = await readFile(resolve(ROOT, 'public/index.html'), 'utf8');
-  assert.ok(!/data-game=|game-switch/i.test(html));
-});
+// ⚠️ 这里原有两条**界面源码级**护栏（「界面无其他游戏入口」读的是 `public/index.html`
+// 的 `data-game` / `game-switch`）。v4.6.85 界面整体删除（`public/` 只剩一页「开发中」
+// 占位页）后它们失去了对象：上面那两条 `enabledGames()` / `isGameEnabled()` 仍然钉住
+// 「只开放星铁」这个口径，而「界面上不许出现别的游戏入口」要等新界面落地时**按新结构**
+// 重写 —— 别照抄旧 DOM id，那正是这轮删掉的东西。
 
 // ------------------------------------------------------------ 2. 数据集
 // 数据集与推荐算法测试（v2 数据模型）。
@@ -925,13 +928,16 @@ check('tierTextOf：档位在界面上写成游戏内实际的量（用户 2026-
   }
 });
 
-check('界面源码里不许再出现「满分 / 达标 / 及格」这类自造词（用户 2026-10-10 点名）', () => {
+check('源码里不许再出现「满分 / 达标 / 及格」这类自造词（用户 2026-10-10 点名）', () => {
   // 这条是**源码级**护栏：以前只在函数返回值上断言（上面那条），于是
   // `advice-view.js` 里手写的 `env.tier === 'perfect' ? '满分' : '达标'` 一直活着 ——
   // 那几处恰恰是用户一眼能看到的地方（总榜行的最佳证据 / 配品清单的档位标签）。
   // 扫的是**字符串字面量**，注释里保留这些词是为了解释历史（「改前写的是满分」），
   // 所以先剥掉 `//` 与 `*` 注释行再查。
-  const files = ['public/scripts/advice.js', 'public/scripts/advice-view.js'];
+  //
+  // ⚠️ v4.6.85：`advice-view.js` 随界面删除，这份名单只剩算分核心 `src/core/advice.js`
+  // （`tierTextOf()` 就在里面，它是这些写法的唯一来源）。新界面落地后要把它重新加回来。
+  const files = ['src/core/advice.js'];
   const strip = (line) => line
     .replace(/\/\/.*$/, '')
     .replace(/^\s*\/\*[\s\S]*$/, '')
@@ -1923,64 +1929,16 @@ checkAsync('compareRosters：编造的阵容如实报告「没找到」，参数
   assert.deepEqual((await compareRosters(null, {})).results, []);
 });
 
-check('战斗记录四个副本按钮不再显示「新鲜」，只在异常时才挂状态字', () => {
-  // 用户 2026-10-10：「把战斗记录的新鲜两字去掉」。数据正常时不挂任何状态字，
-  // 只有 partial / failed / stale 才提示 —— 理由同 v4.6.58 拿掉「分区·新鲜」那一行：
-  // 数据整份一起抓，正常态的绿字是噪音。这条是护栏，别再画回去。
-  const src = readFileSync(resolve('public/scripts/battle-record.js'), 'utf8');
-  assert.ok(!/['"`]新鲜['"`]/.test(src),
-    'battle-record.js 不该再出现「新鲜」这个字面量');
-  assert.ok(/section\.status !== 'fresh'/.test(src),
-    '正常态（fresh）必须被排除在渲染之外');
-  assert.ok(/'部分'/.test(src), '异常态（部分/失败/旧数据）仍要保留');
-});
-
-check('战斗记录的角色 chip 外框统一白色（用户 2026-10-11「不要按属性上色」）', () => {
-  // 用户原话：「战斗记录的角色的外框颜色统一为白色」。改前每张 chip 按角色属性上边框色
-  // （`ELEMENT_CLASS` → `is-fire` / `is-quantum` …，同一支队伍四五种颜色）。
-  // 这条是**源码级护栏**：颜色映射与那七条 CSS 都已经删掉，别再搬回来；
-  // 边框色的**唯一来源**是 app.css 的 `.record-chip`，而且必须是白色。
-  // 属性信息没丢：它仍然在 chip 的悬停提示（`chip.title` 里的 `member.elementCn`）。
-  //
-  // ⚠️ 判据前先把注释剥掉：**注释里允许提旧的属性 class**（讲清为什么删掉，
-  //    那正是本仓库最值钱的资产），要拦的是「代码/样式里又长出属性配色」。
-  //    不剥的话，下面这条会先被自己的说明文字绊倒（写这一轮时踩过一次）。
-  const stripComments = (s) => s
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/^[ \t]*\/\/.*$/gm, '');
-  const js = stripComments(readFileSync(resolve('public/scripts/battle-record.js'), 'utf8'));
-  const css = stripComments(readFileSync(resolve('public/styles/app.css'), 'utf8'));
-  assert.ok(!/const ELEMENT_CLASS/.test(js), 'battle-record.js 不该再有 ELEMENT_CLASS 映射');
-  for (const key of ['is-fire', 'is-ice', 'is-lightning', 'is-wind', 'is-quantum', 'is-imaginary', 'is-physical']) {
-    assert.ok(!js.includes(key), `battle-record.js 不该再挂 ${key} 这个 class`);
-    assert.ok(!css.includes(`.record-chip.${key}`), `app.css 不该再有 .record-chip.${key} 规则`);
-  }
-  // chip 的 class 只剩 `record-chip`（`is-clickable` 等状态类由后面按需加）
-  assert.ok(/text\('span', 'record-chip'\)/.test(js), 'chip 必须建成裸的 record-chip（不带属性 class）');
-  // 边框色必须是显式白色：`.record-chip` 那一条里 r = g = b 且够亮
-  const block = css.slice(css.indexOf('.record-chip {'), css.indexOf('.record-chip-avatar'));
-  const hit = block.match(/border:\s*1px solid rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-  assert.ok(hit, '.record-chip 必须显式写出边框色（不要再回退到 var(--border) 那种偏蓝的底色）');
-  assert.equal(hit[1], hit[2], 'chip 边框色必须是白的（r = g）');
-  assert.equal(hit[2], hit[3], 'chip 边框色必须是白的（g = b）');
-  assert.ok(Number(hit[1]) >= 200, `chip 边框要够亮（实测 r=${hit[1]}，应当 ≥ 200）`);
-  // 悬停也不许换彩色边框（改前是青色）
-  assert.ok(!/is-clickable:hover\s*\{[^}]*border-color:\s*rgba\(111, 211, 232/.test(css),
-    '悬停不该把边框换成青色 —— 外框要始终是白的（只调亮一档）');
-  // 属性信息仍然在悬停提示里
-  assert.ok(/member\.elementCn/.test(js), 'chip 的 title 里仍要带属性中文名（颜色没了，信息不能一起没）');
-});
-
-check('金数不再进界面：战斗记录里不给队伍算金（限定/常驻会随版本变）', () => {
-  // 这条是「护栏」：`teamCostOf` / `equippedConesOf` 已按用户要求删除
-  // （理由：限定 / 常驻的划分会随版本更新变化，绝对金数印在战绩旁边会误导）。
-  // 谁再往战斗记录里加金数，先来看一眼这段。
-  const adviceSrc = readFileSync(resolve('public/scripts/advice.js'), 'utf8');
-  const recordSrc = readFileSync(resolve('public/scripts/battle-record.js'), 'utf8');
+// ⚠️ 这里原有三条**界面源码级**护栏：战斗记录不写「新鲜」、角色 chip 外框统一白色、
+// 战斗记录不给队伍算金。v4.6.85 界面整体删除后 `battle-record.js` 与 `app.css` 都已不在，
+// 前两条失去对象（新界面落地时按新结构重写，别照抄旧 class）；第三条里「绝对金数不进
+// 画面」这个**口径**没变，它落在 `src/core/advice.js` 的导出面上，所以留下来。
+check('金数不再进界面：不给队伍算绝对金（限定/常驻会随版本变）', () => {
+  // 用户口径：限定 / 常驻的划分会随版本更新变化，绝对金数印在战绩旁边会误导，
+  // 所以 `teamCostOf` / `equippedConesOf` 已删除。谁再把它加回来，先来看这一段。
+  const adviceSrc = readFileSync(resolve('src/core/advice.js'), 'utf8');
   assert.ok(!/export const (teamCostOf|equippedConesOf)/.test(adviceSrc),
     'advice.js 不该再导出 teamCostOf / equippedConesOf');
-  assert.ok(!/record-team-cost|成本 \$\{/.test(recordSrc),
-    '战斗记录不该再渲染队伍金数');
   // 推荐榜那边的**相对**成本口径仍然在（「用到的限定越少越强」），它不依赖绝对金数
   const availability = {
     characters: { A: { rarity: 5, limited: true }, B: { rarity: 5, limited: false } },
@@ -3328,76 +3286,12 @@ check('隐金：Archer 单独 -2、与吉尔伽美什同队各自 -1；七人组
     { char: 'Sparkle', eidolon: 0 }]), 3, '三笔独立赠送叠加：角色 1 + 光锥 1 + 自选组 1 = 3');
 });
 
-check('隐金设置：按钮排在「总榜权重」之后、「总榜列表」之前（用户要求「放置于总榜权重下方」）', () => {
-  const html = readFileSync(resolve(ROOT, 'public/index.html'), 'utf8');
-  const weightAt = html.indexOf('id="adviceFrontierWeights"');
-  const buttonAt = html.indexOf('id="adviceHiddenCostsOpen"');
-  const listAt = html.indexOf('id="adviceConclusionUnits"');
-  assert.ok(weightAt > 0 && buttonAt > 0 && listAt > 0, '三个节点都必须写在 index.html 里');
-  assert.ok(weightAt < buttonAt, '按钮必须在「总榜权重」之后（用户指定位置）');
-  assert.ok(buttonAt < listAt, '按钮必须在总榜列表之前');
-  assert.ok(html.includes('>隐金设置<'), '按钮文案必须是「隐金设置」');
-});
-
-check('数据状态：角色快照 / 战斗记录 / 黑塔网数据三份缓存的记录整合在一块（用户 2026-10-11）', () => {
-  // 用户原话：「将角色快照、战斗记录、黑塔网数据三者的缓存记录整合在一起，共同放置于
-  // 抽卡推荐下方，保持界面美观」。改前这三件事分在三处（正文最上面一行 / ①那一节里 /
-  // 标题栏右侧一行小字），写法还各不相同。这一条是**源码级护栏**：结构与文案一起钉住，
-  // 免得以后有人把某一格挪回它原来待的位置、或者把重复的时间再写一遍。
-  const html = readFileSync(resolve(ROOT, 'public/index.html'), 'utf8');
-  const view = readFileSync(resolve(ROOT, 'public/scripts/advice-view.js'), 'utf8');
-  const css = readFileSync(resolve(ROOT, 'public/styles/app.css'), 'utf8');
-
-  // ① 三格在同一个块里，顺序固定（快照 / 战斗记录 / 黑塔网数据），且在 ① 那一节之前。
-  const blockAt = html.indexOf('id="adviceDataStatus"');
-  const snapAt = html.indexOf('id="adviceSnapshotFreshness"');
-  const recordAt = html.indexOf('id="recordFreshness"');
-  const datasetAt = html.indexOf('id="adviceDatasetFreshness"');
-  const recordSectionAt = html.indexOf('id="adviceRecord"');
-  assert.ok(blockAt > 0 && snapAt > 0 && recordAt > 0 && datasetAt > 0 && recordSectionAt > 0,
-    '四个节点都必须写在 index.html 里');
-  assert.ok(blockAt < snapAt && snapAt < recordAt && recordAt < datasetAt,
-    '三格必须按「角色快照 / 战斗记录 / 黑塔网数据」的顺序写在 #adviceDataStatus 里');
-  assert.ok(datasetAt < recordSectionAt,
-    '这一块必须在 ① 战斗记录那一节之前（用户要求「放置于抽卡推荐下方」）');
-  assert.ok(!html.includes('id="adviceDataUpdated"'),
-    '黑塔网数据那行右侧小字（#adviceDataUpdated）已并进三格，别再写回去');
-  // ② ① 那一节里不能再留一份（改前 #recordFreshness 就在它里面）
-  const recordSection = html.slice(recordSectionAt, html.indexOf('<!-- 跨模式综合结论'));
-  assert.ok(!recordSection.includes('data-freshness'),
-    '① 战斗记录那一节里不该再有 .data-freshness 方块（已并到顶部「数据状态」）');
-
-  // ③ 三格的名字 / 状态词 / 时间标签只有 `advice.js`-style 的一处定义（在 advice-view.js）
-  assert.ok(/const dataStatusCells = \(\) => \[/.test(view), '三格必须由 dataStatusCells() 一处定义');
-  for (const label of ["label: '角色快照'", "label: '战斗记录'", "label: '黑塔网数据'"]) {
-    assert.ok(view.includes(label), `dataStatusCells() 里缺 ${label}`);
-  }
-  assert.ok(view.includes("statusText: '本机数据集 · 黑塔网聚合'") && view.includes("timeLabel: '生成于'"),
-    '黑塔网那一格要用它自己的词（本机数据集 · 黑塔网聚合 / 生成于），不能套米游社缓存的词');
-  assert.ok(view.includes("if (freshness.cached) return '本机缓存 · 米游社数据';"),
-    '角色快照和战斗记录要明确写成本机缓存，并标出米游社来源');
-  assert.ok(view.includes("'还没有数据'"), '空态也要有状态词，不能是个空盒子');
-  // ④ 旧的三处与它们重复的文案不能留残影
-  assert.ok(!/renderFreshness\s*\(/.test(view) && !/renderDatasetMeta\s*\(/.test(view)
-    && !/const agoText/.test(view),
-    'renderFreshness / renderDatasetMeta / agoText 都已并入或删除，别再留着');
-  assert.ok(!view.includes('黑塔网数据更新于'), '「黑塔网数据更新于」那行小字已并进三格');
-  // ⚠️ 这一条只看**代码**里还有没有 `parts.push('这一节读的是…')`：那句被删掉的原文
-  // 仍留在 `advice-view.js` 的注释里（讲清为什么删），用 `includes()` 会把注释也算上。
-  assert.ok(!/parts\.push\(['"`]这一节读的是/.test(view),
-    '「打开页面不联网」现在写在数据状态块的标题行里，不再由 ① 那一节重复');
-  assert.ok(!/meta\.push\(['"`]读取于/.test(view),
-    '#recordMeta 不该再写「读取于」（与上方那一格是同一件事）');
-
-  // ⑤ 排版：宽屏三格一行、窄屏竖排；旧的 `#adviceDataUpdated` 规则清干净
-  assert.ok(/\.data-status-grid\s*\{[^}]*repeat\(3, minmax\(0, 1fr\)\)/.test(css),
-    '.data-status-grid 必须是三列等宽（minmax(0, 1fr)）');
-  assert.ok(/\.data-status-grid > \.data-freshness\s*\{[^}]*margin: 0/.test(css),
-    '格子本身是 .data-freshness，外间距要交给 grid 的 gap');
-  assert.ok(/@media \(max-width: 900px\)[\s\S]{0,200}\.data-status-grid\s*\{[^}]*minmax\(0, 1fr\)/.test(css),
-    '窄屏（≤900px）三格要竖排成单列');
-  assert.ok(!/#adviceDataUpdated\s*\{/.test(css), '#adviceDataUpdated 的样式已是死代码，应删掉');
-});
+// ⚠️ 这里原有两条**界面源码级**护栏：「隐金设置按钮排在总榜权重之后」与「三份缓存的
+// 数据状态整合成一块」（读 `public/index.html` / `advice-view.js` / `app.css` 的节点顺序与
+// 文案）。v4.6.85 界面整体删除后这三个文件都不在了，护栏失去对象。
+// 两条规则本身**没有被推翻**（用户 2026-10-11 明确要求过位置与合并），新界面落地时
+// 要按新结构重新钉住 —— 但别照抄旧 DOM id（`adviceDataStatus` / `adviceHiddenCostsOpen`
+// 都是这轮删掉的东西）。口径侧的不变量仍由下面那条隐金用例（真实数据集）守着。
 
 checkAsync('隐金：真实数据集上确实改变了总榜，且**只**动总榜（抽卡方案一字不变）', async () => {
   const off = await archiveConclusion({ owned: [] }, { window: 6, hiddenCosts: NO_HIDDEN_COSTS });

@@ -3,13 +3,13 @@
 // 为什么单独一个模块而不是塞进 archive.js：它要**同时**看四个副本（异相仲裁
 // 还要拆成骑士关/绝境两档），而 archive.js 的职责是「一个副本一个版本」的读数。
 // 两个模块共用同一套聚合口径（archive.js 的 archiveTeams）和同一套算法
-// （public/scripts/advice.js 的 buildConclusion），所以两边给出的
+// （src/core/advice.js 的 buildConclusion），所以两边给出的
 // 「这套作业要几发」「这套阵容什么档」永远一致。
 //
 // 算法本身写在 advice.js 里（纯函数，浏览器与服务端共用），这里只负责
 // 「按副本把数据取齐 + 把中文名补上」。
 import { archiveFrontierAll, archiveIndex, archiveTeams, loadI18n, zhName } from './archive.js';
-import { buildConclusion, normalizeHiddenCosts, VERSION_WINDOW } from '../../public/scripts/advice.js';
+import { buildConclusion, normalizeHiddenCosts, VERSION_WINDOW } from '../core/advice.js';
 
 /** 结论覆盖的副本顺序（按游戏解锁顺序）。 */
 const MODE_ORDER = ['moc', 'pf', 'as', 'aa'];
@@ -223,7 +223,8 @@ const localizeConclusion = (result, i18n) => {
  * 环境表里有 `candidates`、`units` 里每个环境又带一次 `companions`、`best` 再
  * 带一次同一份环境条目。
  *
- * 这里按「界面实际用到什么」投影一遍：`public/scripts/advice-view.js` 只读
+ * 这里按「界面实际用到什么」投影一遍：旧界面的 `public/scripts/advice-view.js`
+ * （⚠️ v4.6.85 已随界面整体删除，新界面落地后请对照**新**的读取方重核这份投影）只读
  * `envs[].{id,mode,stage,label,season,reliable,tierLines,baseline.tier}`、
  * `frontierUnits`、`units`（抽卡方案）与 `counts`。差距榜 / 星魂榜 / 作业榜
  * （`gapUnits` / `eidolonUnits` / `packages`）目前界面不渲染，但它们是公开 API
@@ -322,8 +323,8 @@ const FRONTIER_DETAIL_ROWS = 200;
  *   * 标点差异：数据集写 `Dance Dance Dance`，图标表写 `Dance! Dance! Dance!`，
  *     以及光锥 `To Say Goodbye` vs `Make Farewells More Beautiful` 这类**译名不同**。
  *
- * ⚠️ 与 `public/scripts/advice-view.js` 的 `iconUrlOf()` **同一套规则**（那边是给总榜行
- * 与浮层配队用的，那边早就发现过这三类差异）。这里另写一份是因为角色面板在**另一个
+ * ⚠️ 与旧界面 `public/scripts/advice-view.js` 的 `iconUrlOf()` **同一套规则**（那边是给总榜行
+ * 与浮层配队用的；⚠️ v4.6.85 那份随界面一起删除了）。这里另写一份是因为角色面板在**另一个
  * 分页**、拿不到 advice-view 的模块级状态；改一处两边都改的成本低于接一个跨模块依赖。
  * ⚠️ **不要在这里自己拼 CDN URL**：图标表里没有的键就是真的没有，拼出来的地址只 404。
  */

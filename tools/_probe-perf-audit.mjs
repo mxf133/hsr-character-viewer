@@ -26,7 +26,7 @@ import { conclusionEnvs } from '../src/server/conclusion.js';
 import {
   avLinesOf, buildConclusion, frontierFactorsOf, metricShortText, perfAnchorsOf, perfFactorOf,
   perfLineWeightsOf, SCORING, tierTextOf, VERSION_WINDOW,
-} from '../public/scripts/advice.js';
+} from '../src/core/advice.js';
 
 /**
  * v4.6.78 起表现曲线**按副本取值**（`SCORING.frontierPerfLineByEnv`：绝境满分线以内 1.00、

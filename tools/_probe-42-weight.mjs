@@ -14,7 +14,7 @@ import { archiveIndex, archiveFrontierAll, loadI18n, zhName } from '../src/serve
 import { conclusionEnvs } from '../src/server/conclusion.js';
 import {
   buildConclusion, VERSION_WINDOW, VERSION_WEIGHTS, frontierFactorsOf,
-} from '../public/scripts/advice.js';
+} from '../src/core/advice.js';
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));

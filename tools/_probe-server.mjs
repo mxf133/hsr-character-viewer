@@ -11,7 +11,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { archiveConclusion } from '../src/server/conclusion.js';
 import { archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
-import { ownedCharacters, eidolonsOf, lightConeRanksOf } from '../public/scripts/advice.js';
+import { ownedCharacters, eidolonsOf, lightConeRanksOf } from '../src/core/advice.js';
 
 const arg = (name, dflt) => {
   const eq = process.argv.find((a) => a.startsWith(`--${name}=`));

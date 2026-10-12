@@ -13,7 +13,7 @@
 import {
   HIDDEN_COST_SETTINGS, NO_HIDDEN_COSTS, DEFAULT_HIDDEN_COSTS, buildConclusion, charCostOf,
   coneCostOf, eidolonGoldOf, hiddenReductionOf, packGoldOf, VERSION_WINDOW,
-} from '../public/scripts/advice.js';
+} from '../src/core/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
 

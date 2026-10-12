@@ -9,7 +9,7 @@
 //   node tools/_probe-tier-board.mjs --rows 12  # 每档再印前 N 名
 import {
   buildConclusion, EIDOLON_TIERS, VERSION_WINDOW,
-} from '../public/scripts/advice.js';
+} from '../src/core/advice.js';
 import { archiveFrontierAll, archiveIndex } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
 

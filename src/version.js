@@ -1456,13 +1456,67 @@
 //              浏览器）；它那条脚注正则不写死数字，但界面上绝境那三格的实际文案
 //              （`行动值 0 1.00 → <300 1.00 → <500 0.60`）**未在浏览器里验证过**。
 //
+//   v4.6.85 用户 2026-10-11 看过 GitHub 仓库之后的一条要求（原话）：
+//           「看下我的 GitHub，目前此项目的网页界面写的十分的糟糕，删掉，我还没定好
+//           最终版本呢，就先说明此程序还在更新，敬请期待就行」。
+//
+//           ⚠️ 这一版**没有一个字**动算法口径（算分、权重、隐金、成本、载荷形状全不变），
+//           动的是「对外长什么样」：把**整个网页界面**删掉，只留一页「程序还在更新中，
+//           敬请期待」的占位页，README/AGENTS/HANDOFF 同步改成「界面重做中」。
+//
+//           ① **为什么不能直接 `rm -rf public/`**：`public/scripts/advice.js`（302 KB，
+//              抽卡推荐算分核心）与 `public/scripts/format.js` 被 `src/server/archive.js`、
+//              `src/server/conclusion.js` 以及 **30 多个 `tools/*.mjs`** import。整目录一删，
+//              服务与整个测试套件一起跑不起来。所以这轮是「界面删掉、**共用逻辑**搬家」：
+//              `git mv public/scripts/advice.js src/core/advice.js`、
+//              `git mv public/scripts/format.js src/core/format.js`，48 个文件的 import
+//              改路径（`src/version.js` 自己的历史 changelog **不动** —— 那里面每一行
+//              都是「当时那个文件在哪」的留档，改了等于篡改历史）。
+//
+//           ② **删掉的界面**：`public/scripts/{app,access,advice-view,battle-record,
+//              character-panel,character-modal,advice-tip-window,advice-gold-modal}.js`、
+//              `public/styles/{app,advice-tip-window}.css`、`docs/screenshots/*.png`。
+//              新的 `public/index.html` 只写「程序还在更新中，敬请期待」+「现在能做什么」，
+//              **一个 `<script>` 都没有**、不读缓存、不发任何 `/api/*` 请求
+//              （`e2e-test.mjs` 把这三条钉住）；样式只有 `public/styles/placeholder.css`。
+//
+//           ③ **删掉的界面专用工具**（对象已不存在）：`check-advice-layout.mjs`
+//              （157 KB 的 CDP 几何套件）、`gui-shot.mjs`、`gui-fixture.mjs`、以及
+//              `_probe-{tip-shot,tip-structure,packs-tip,panel-shot,data-status,icon-health,
+//              weights,tier-text,yinjin-toggle,record-tabs,42-cone-side,seed-localstorage}.mjs`
+//              与 `_shot-record-tabs.mjs`。`run-tests.mjs` 随之去掉那一套与「9222 有没有
+//              调试浏览器」的探测。需要它们时从 git 历史取（§9.3 的留档思路）。
+//
+//           ④ **测试同步**（这一步才是本轮真正的工作量）：`herta-test.mjs` 里六组
+//              **读前端文件**的源码级护栏随之删除（界面无其他游戏入口 / 战斗记录不写
+//              「新鲜」/ chip 白色边框 / 数据状态三格 / 隐金按钮位置），禁词表
+//              （及格·达标·满分）改为只扫 `src/core/advice.js` —— `tierTextOf()` 就在
+//              那里，它仍是这些写法的唯一来源；`e2e-test.mjs` 的静态资源那组改写成对
+//              **占位页**的断言：真的写着这两句、**一个 `<script>` 都没有**、不引旧资源，
+//              且 `/scripts/{app,advice-view,format}.js`、`/styles/app.css`、
+//              `/scripts/advice.js` 必须返 **404**（界面删了却还把资源服务出去就会红）。
+//              ⚠️ 那几条被删的护栏**没有被推翻**（位置、颜色、三格合并都是用户当年拍的板），
+//              新界面落地时要按新结构重新钉 —— 但别照抄旧 DOM id。
+//
+//           ⑤ 对外：README 顶部换成「🚧 程序还在更新中，敬请期待」+「现在能做什么」表，
+//              删掉三张旧界面截图与「直接下载」（GitHub 上 v4.6.84 那个带旧界面的
+//              公开便携包已同时下线，避免「说在重做、却还能下到旧界面」自相矛盾）；
+//              「功能」「抽卡推荐分页」两节加了横幅：它们讲的是**服务与算法**，
+//              界面细节待重做（口径一个字没改）。
+//
+//           ⑥ 回归：`node tools/run-tests.mjs` **16/16 套件全绿**，其中 `e2e-test.mjs`
+//              **133 项通过**（含上面那几条占位页断言）、`herta-test.mjs` 与
+//              `team-plan-test.mjs` 全绿 —— 也就是「删掉界面」没有碰坏任何算法不变量。
+//              ⚠️ 该脚本用管道抓子进程输出，在受限文件沙箱里 `spawn` 会 EPERM，需要
+//              放开沙箱才跑得动（这是环境限制，不是本版引入的）。
+//
 // 游戏换版本（4.7）时主版本跟着换；工具在同一游戏版本内继续改动就只加末位。
 //
 // 注意与 src/mihoyo/constants.js 的 APP_VERSION 区分：那个是**米游社客户端**的
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.84';
+export const PROGRAM_VERSION = '4.6.85';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';
