@@ -2598,9 +2598,10 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 /* 推荐原因：一行灰字，讲清改善了哪个副本的哪一档 */
 .advice-unit-why { margin-top: 4px; line-height: 1.5; }
 
-/* 副本权重：**两个口径各一行**（用户 2026-10 要求「性价比总榜和抽卡方案的权重
-   应相互独立」）。总榜那一行只影响性价比总榜，方案那一行只影响抽卡方案，所以
-   两块各自贴在自己的小节里，不再共用一个大方块。 */
+/* 副本权重：**两大类**（用户 2026-10-12 第 2 条「总榜权重改名为权重，权重分为两大类，
+   分别为关卡权重和抽卡权重」）——① 关卡权重（五个副本，角色总榜与抽卡方案都吃它）；
+   ② 抽卡权重（强度 / 性价比，只作用于抽卡方案）。两块合成一张卡，标题行共用、
+   「恢复默认」也共用（它本来就是一整块设置）。 */
 .advice-weights {
   margin: 8px 0 14px;
   padding: 10px 12px 11px;
@@ -2608,6 +2609,51 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.025);
 }
+/* 两大类：宽屏并排两列，窄屏自动换成一列（`auto-fit`，与 `.advice-weights-grid` 同套路）。 */
+.advice-weights-groups {
+  grid-area: grid;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px 18px;
+  min-width: 0;
+}
+/* 每一类自己是「小标题 / 输入框网格 / 摘要」三行；组内的 `.advice-weights-grid` 必须
+   **取消**外层的 `grid-area: grid`（那个名字是给 `.advice-weights.is-compact` 用的，
+   这里没有同名区域，留着会退化成自动放置、位置随内容漂）。 */
+.advice-weights-group {
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 7px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+}
+/* ⚠️ 选择器要带 `.advice-weights.is-compact`（三个类），否则特异性低于
+   `.advice-weights.is-compact .advice-weights-meta { grid-area: meta }`，
+   覆盖不掉 —— 表现是摘要行被挤到网格第一格去。 */
+.advice-weights.is-compact .advice-weights-group > .advice-weights-grid { grid-area: auto; }
+.advice-weights.is-compact .advice-weights-group > .advice-weights-meta { grid-area: auto; }
+.advice-weights-subtitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+.advice-weights-subtitle::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--cyan);
+  vertical-align: middle;
+}
+.advice-weights .advice-weights-group:last-child .advice-weights-subtitle::before {
+  background: var(--violet);
+}
+/* 抽卡权重只有两个旋钮，按两列摊开（不要跟着关卡权重那五列走）。 */
+.advice-weights-grid.is-draw { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 /* 紧凑版：标题 / 五个输入框 / 恢复默认挤在同一行，「已改」摘要单独一行。
    摘要用 100% flex-basis 固定换行 —— 让行数只由「改没改」决定，不会因为
    文案长短一会儿一行一会儿两行（页面高度会跟着抖）。 */

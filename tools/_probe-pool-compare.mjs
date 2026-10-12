@@ -1,3 +1,6 @@
+// ⚠️ 口径变更：本探针写于旧口径（①=总榜分含金数项归一化）；v4.6.87 起 ① 换成**纯强度**
+// （`rows[].strengthPct`，原始值 `rows[].strength`），这里已经跟着改。
+//
 // B（每档 245 支）与 C（全量 1869 支）的**并排比较**，顺带把 A（现状 78 支）当基准。
 //
 // 同一套两个指标、同一套刻度规则；三池只在「池」上不同，所以：
@@ -11,6 +14,9 @@ import {
 } from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
+
+/** 本池的「纯强度」原始值：优先读生产下发的 `strength`（v4.6.87 起），缺失才退回 `total`。 */
+const strengthOf = (r) => (Number.isFinite(Number(r.strength)) ? Number(r.strength) : Number(r.total));
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -63,7 +69,11 @@ const teamsOf = (units) => {
     if (!best?.members?.length) continue;
     const key = rosterKeyOf(best.members);
     const total = Number(u.total) || 0;
-    if (!by.has(key) || total > by.get(key).total) by.set(key, { key, members: best.members, total });
+    if (!by.has(key) || total > by.get(key).total) {
+      // ⚠️ 必须把 `strength` 一起带过来：B / C 池的行是这里自建的，`strengthOf()` 只有
+      // 拿得到纯强度原始值才不会退回总榜分（否则 ① 又变回含金数项的旧口径）。
+      by.set(key, { key, members: best.members, total, strength: Number(u.strength) });
+    }
   }
   return [...by.values()];
 };
@@ -77,14 +87,15 @@ const scoreTeams = (teams) => {
     rows.push({ ...t, gap });
   }
   if (!rows.length) return { rows: [], lo: 0, hi: 0, cap: 0, zeroGap };
-  const lo = Math.min(...rows.map((r) => r.total));
-  const hi = Math.max(...rows.map((r) => r.total));
+  const lo = Math.min(...rows.map((r) => strengthOf(r)));
+  const hi = Math.max(...rows.map((r) => strengthOf(r)));
   const gaps = rows.map((r) => r.gap).sort((a, b) => a - b);
   const cap = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * SCORING.teamPlanGapCapPct))];
   for (const r of rows) {
-    r.scorePct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
+    r.strengthPct = hi - lo < 1e-9 ? 100 : 100 * (strengthOf(r) - lo) / (hi - lo);
     r.gapPct = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap)));
-    r.total_score = 0.5 * r.scorePct + 0.5 * r.gapPct;
+    // 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。
+    r.total_score = 0.5 * r.strengthPct + 0.5 * r.gapPct;
   }
   return { rows: rows.sort((a, b) => b.total_score - a.total_score), lo, hi, cap, zeroGap };
 };
@@ -97,7 +108,7 @@ SCORING.teamPlanMaxRows = keepRows;
 const POOLS = [
   ['A 现在（每角色最强整包）', teamsOf(concl.frontierUnits),
     { rows: nowPlan.rows.map((r) => ({ ...r, total_score: r.total })),
-      lo: nowPlan.scoreLo, hi: nowPlan.scoreHi, cap: nowPlan.gapMax, zeroGap: null }],
+      lo: nowPlan.strengthLo, hi: nowPlan.strengthHi, cap: nowPlan.gapMax, zeroGap: null }],
   ['B 每档（每角色 × 每星魂档）', teamsOf(Object.values(concl.frontierTiers || {}).flat()), null],
   ['C 全量（收敛前全部整包）', teamsOf(Object.values(concl.frontierPacksByChar || {}).flat()), null],
 ];
@@ -126,7 +137,7 @@ console.log(`${'B 每档'.padEnd(52)}│ ${'C 全量'}`);
 for (let i = 0; i < 15; i += 1) {
   const b = built[1].rows[i]; const c = built[2].rows[i];
   const cell = (r) => (r ? `#${String(i + 1).padStart(2)} ${r.total_score.toFixed(1).padStart(5)}`
-    + ` = ①${r.scorePct.toFixed(0).padStart(3)} + ②${r.gapPct.toFixed(0).padStart(3)}`
+    + ` = ①${r.strengthPct.toFixed(0).padStart(3)} + ②${r.gapPct.toFixed(0).padStart(3)}`
     + `｜补${String(r.gap).padStart(2)}金｜${nameOf(r.members).slice(0, 17)}` : '（无）');
   console.log(`${cell(b).padEnd(52)}│ ${cell(c)}`);
 }

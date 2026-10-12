@@ -1,3 +1,6 @@
+// ⚠️ 口径变更：本探针写于旧口径（分项① = 总榜分含金数项归一化）；v4.6.87 起该分项
+// 换成**纯强度**（`rows[].strengthPct`，原始值 `rows[].strength`），这里已经跟着改。
+//
 // ① 量当前结论载荷的余量（e2e 的硬断言是 < 600 KB）；
 // ② 在 **B 池**（每角色 × 每星魂档）上对照几种 ② 封顶规则，看哪一种既不压死强队、
 //    又给便宜队机会。
@@ -11,6 +14,9 @@ import {
 import { AccountStore } from '../src/server/store.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
+
+/** 本池的「纯强度」原始值：优先读生产下发的 `strength`（v4.6.87 起），缺失才退回 `total`。 */
+const strengthOf = (r) => (Number.isFinite(Number(r.strength)) ? Number(r.strength) : Number(r.total));
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -84,7 +90,11 @@ const teamsOf = (units) => {
     if (!best?.members?.length) continue;
     const key = rosterKeyOf(best.members);
     const total = Number(u.total) || 0;
-    if (!by.has(key) || total > by.get(key).total) by.set(key, { key, members: best.members, total });
+    if (!by.has(key) || total > by.get(key).total) {
+      // ⚠️ 必须把 `strength` 一起带过来：B 池的行是这里自建的，`strengthOf()` 只有
+      // 拿得到纯强度原始值才不会退回总榜分（否则 ① 又变回含金数项的旧口径）。
+      by.set(key, { key, members: best.members, total, strength: Number(u.strength) });
+    }
   }
   return [...by.values()];
 };
@@ -96,11 +106,11 @@ for (const t of B) {
   if (gap <= 0) continue;
   rows.push({ ...t, gap });
 }
-const lo = Math.min(...rows.map((r) => r.total));
-const hi = Math.max(...rows.map((r) => r.total));
+const lo = Math.min(...rows.map((r) => strengthOf(r)));
+const hi = Math.max(...rows.map((r) => strengthOf(r)));
 const gaps = rows.map((r) => r.gap).sort((a, b) => a - b);
 const quantile = (p) => gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * p))];
-for (const r of rows) r.scorePct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
+for (const r of rows) r.strengthPct = hi - lo < 1e-9 ? 100 : 100 * (strengthOf(r) - lo) / (hi - lo);
 
 /** 几种 ② 封顶规则。 */
 const RULES = [
@@ -121,7 +131,8 @@ console.log(`池内差额分位：min ${gaps[0]} / p25 ${quantile(0.25)} / p50 $
 /** 反推规则：先按 p50 排一遍，取第 15 名的 gap，令它的 ② 为 50 分 ⇒ 封顶 = 2×gap。 */
 const scoreWith = (cap) => rows.map((r) => {
   const gapPct = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap)));
-  return { ...r, gapPct, total_score: 0.5 * r.scorePct + 0.5 * gapPct };
+  // 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。
+  return { ...r, gapPct, total_score: 0.5 * r.strengthPct + 0.5 * gapPct };
 }).sort((a, b) => b.total_score - a.total_score);
 const p50Sorted = scoreWith(quantile(0.5));
 const midGap = p50Sorted[14]?.gap ?? 1;
@@ -135,7 +146,7 @@ for (const [label, cap] of RULES) {
     + `\n${'─'.repeat(92)}`);
   ranked.slice(0, 10).forEach((r, i) => {
     console.log(`  #${String(i + 1).padStart(2)} ${r.total_score.toFixed(1)}`
-      + ` = ①${r.scorePct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
+      + ` = ①${r.strengthPct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
       + `｜补 ${String(r.gap).padStart(2)} 金｜${nameOf(r.members)}`);
   });
 }

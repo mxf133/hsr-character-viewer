@@ -1,3 +1,7 @@
+// ⚠️ 口径变更：本探针写于旧口径（①=总榜分含金数项归一化）；v4.6.87 起 ① 换成**纯强度**
+// （`rows[].strengthPct`，原始值 `rows[].strength`），这里已经跟着改。
+// 下面「修前复算」那一段是**故意**保留的旧口径复算，不要跟着改。
+//
 // 验证第七轮修：**展示条数不再影响分数水位**。
 //
 // 关键不变量：同一条队伍在「展示 15 条」与「展示 40 条」下的 ①/②/总分**必须逐位相同**。
@@ -87,7 +91,7 @@ let same = 0; const diff = [];
 for (const r of a.rows) {
   const o = byKey.get(r.key);
   if (!o) { diff.push(`${nameOf(r)}: 只在 15 条里`); continue; }
-  if (r.total === o.total && r.scorePct === o.scorePct && r.gapPct === o.gapPct) same += 1;
+  if (r.total === o.total && r.strengthPct === o.strengthPct && r.gapPct === o.gapPct) same += 1;
   else diff.push(`${nameOf(r)}: 15条 ${r.total} vs 40条 ${o.total}`);
 }
 console.log(`\n【不变量 2】15 条里的 ${a.rows.length} 支，在 40 条里分数逐位相同的：${same}`);
@@ -140,15 +144,15 @@ legacy.scored.slice(0, 5).forEach((r, i) => {
   const first = legacy.scored[0];
   const now = plan.rows.find((r) => r.key === first.key);
   console.log(`  → 修前第 1 名那支队伍，修后是 `
-    + `${now ? `${now.total.toFixed(1)}（①${now.scorePct.toFixed(1)} + ②${now.gapPct.toFixed(1)}）` : '（不在前 15）'}`);
+    + `${now ? `${now.total.toFixed(1)}（①${now.strengthPct.toFixed(1)} + ②${now.gapPct.toFixed(1)}）` : '（不在前 15）'}`);
 }
 
-console.log(`\n候选池 ${plan.pool} 支（去重 ${plan.poolAll}）· ① 刻度 ${plan.scoreLo.toFixed(1)}~${plan.scoreHi.toFixed(1)}`
+console.log(`\n候选池 ${plan.pool} 支（去重 ${plan.poolAll}）· ① 刻度 ${plan.strengthLo.toFixed(1)}~${plan.strengthHi.toFixed(1)}`
   + ` · ② 封顶 ${plan.gapMax} 金（p${Math.round(plan.gapCapPct * 100)}）`
   + ` · ② 归 0 的 ${plan.rows.filter((r) => r.gapPct === 0).length}/${plan.rows.length}`);
 plan.rows.slice(0, 10).forEach((r, i) => {
   console.log(`  #${String(i + 1).padStart(2)} ${r.total.toFixed(1).padStart(5)}`
-    + ` = ①${r.scorePct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
+    + ` = ①${r.strengthPct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
     + `｜补 ${String(r.gap).padStart(2)} 金｜${nameOf(r)}`);
 });
 

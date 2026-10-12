@@ -1014,6 +1014,56 @@ export const SCORING = {
    * 否则「展示条数」会变成分数的隐藏输入（第七轮修的，详见 `teamPlan` 的注释）。
    */
   teamPlanGapCapPct: 0.75,
+  /**
+   * **抽卡权重**（用户 2026-10-12 第 3 条）：`{ strength, cost }` 两个数的**相对大小**，
+   * 决定抽卡方案「补金推荐分」里两个分项各占多少。
+   *
+   * ```
+   *   补金推荐分 = 强度得分 × ws + 差额接近度 × wc      （ws + wc 归一化成 1）
+   * ```
+   *
+   * 旋钮手感（用户原话）：
+   *   * **强度** 越高 → 越倾向于推荐**高金、低行动值**的队伍；
+   *   * **性价比** 越高 → 越倾向于推荐**尽量压金通关**的队伍。
+   *
+   * ⚠️ 为让上面那句话成立，**强度得分在 v4.6.87 换了口径**：它是**纯强度**
+   * （`frontierPackScale × 表现`，只含档位/行动值与版本加权，**不再乘金数项**）。
+   * 旧的 ① 是「队伍在总榜上的分」—— 那个分里乘了 `minCost / 本队金数`，所以它其实
+   * 是性价比：实测用户的 16 金那支（行动值 286）只有 81 分，而 9 金那支拿了满分，
+   * 「强度拉高 → 更推高金队伍」根本不成立。纯强度见 `packStrengthOf()`。
+   * 金数那一侧只剩**差额接近度**（你要补几金），这正是「性价比」那一档要表达的事。
+   *
+   * 默认 `1 : 1`（等权）—— 与 v4.6.78~v4.6.86 写死的 `0.5 × ① + 0.5 × ②` 同权，
+   * 所以不动输入框时名次的手感是连续的，不会因为这次改造突然换榜。
+   */
+  drawWeight: { strength: 1, cost: 1 },
+  /**
+   * **性价比得分**里「差额接近度」占多少（其余给「压金度」）—— 用户 2026-10-12 第 5 条。
+   *
+   * ```
+   *   性价比得分 = 差额接近度 × teamPlanCostMix + 压金度 × (1 − teamPlanCostMix)
+   * ```
+   *
+   * 为什么性价比里必须再有「压金度」这一项（**这是第 5 条实测出来的根因**）：
+   * 用户报「优先推荐的那支队（遐蝶E2S1/风堇E2/昔涟E2S1/长夜月E2，账面 16 金）已经过时，
+   * 已被更能压成本的队伍取代」。查下来，它与实测第 2 名（11 金那支）的**补金差额完全
+   * 相同（都是 4 金）**，所以「差额接近度」一分不差；而「强度」那一侧刻意不含金数项
+   * —— 于是「这支队总共要 16 金」在排序里**权重为 0**，16 金那支反而靠纯强度赢了 1.2 分。
+   * 实测数据集里 4.6 最便宜的满分只要 9 金，而它要 20 金。
+   *
+   * 取 0.5（等权）：单独用「压金度」太猛（实测榜首会变成 7 金、纯强度只有 90 分的队，
+   * 原 #1 直接掉到 #22），单独用「差额」就是本轮之前的毛病。等权之后原 #1 落到 **#4**，
+   * 前 5 名由 7~16 金的队伍占据（明细见 docs/评分模型设计.md 的 v39）。
+   */
+  teamPlanCostMix: 0.5,
+  /**
+   * 「压金度」的**封顶分位**（候选池里账面金数的 p75）：达到/超过它的队伍拿 0 分。
+   *
+   * 与 `teamPlanGapCapPct` 同一套路、同一个道理：不能拿 max 当刻度 —— 池里有「要 48 金」
+   * 的冷门队，用 max 会把所有正常队伍挤进高分区（实测账号 1：账面金数 p50 = 13、
+   * p75 = 19、max = 48）。取 p75 让「强队也够得着」。
+   */
+  teamPlanGoldCapPct: 0.75,
 };
 
 /** 性价比的显示值：内部比值 × 100，四舍五入到整数（总榜与抽卡方案共用）。
@@ -1024,17 +1074,21 @@ export const scorePercent = (value) => Math.round((Number(value) || 0) * 100);
 
 /**
  * 权重口径：**两套输入各自独立**（用户 2026-10 要求「性价比总榜和抽卡方案的
- * 权重应相互独立」）。
+ * 权重应相互独立」；那个榜在 2026-10-12 第 1 条已改名为**角色总榜**）。
  *
  *   plan      抽卡方案 / 和主流强阵的差距 / 星魂榜 —— 都看「你的账号」
- *   frontier  性价比总榜 —— 纯黑塔网投稿口径
+ *   frontier  角色总榜 —— 纯黑塔网投稿口径（界面上的**关卡权重**那一类）
  *
  * 为什么必须拆开：这两个榜回答的是**不同的问题**（「数据里谁强」vs「我该补谁」），
  * 原来只有一张表，于是在总榜上调完自己的副本倾向，抽卡方案跟着一起变，
  * 反之亦然 —— 用户想「只看绝境的性价比」时，方案也被迫只看绝境。
  *
+ * ⚠️ 界面从 2026-10-11 第 10 轮起**只画 `frontier` 这一套**（「去掉方案权重那一行」），
+ * 所以 `plan` 这一侧现在只有旧接口调用方还在用。抽卡方案的另一类旋钮
+ * （**抽卡权重** 强度/性价比）与这张表无关，见 `SCORING.drawWeight`。
+ *
  * 默认值仍然**共用同一张表**（`SCORING.envWeight`），所以不动输入框时两个榜的
- * 默认口径完全一致；界面上的两个「恢复默认」也回到同一组数。
+ * 默认口径完全一致；界面上的「恢复默认」也回到同一组数。
  */
 export const WEIGHT_SCOPES = ['plan', 'frontier'];
 
@@ -1051,6 +1105,62 @@ export const ENV_WEIGHT_ROWS = [
 export const envWeightDefaults = () => Object.fromEntries(
   ENV_WEIGHT_ROWS.map((row) => [`${row.mode}|${row.stage}`, envWeightOf(row.mode, row.stage)]),
 );
+
+/**
+ * **抽卡权重**的两个旋钮（用户 2026-10-12 第 2、3 条）——`SCORING.drawWeight` 是默认值，
+ * 界面的输入框按这张表渲染（与 `ENV_WEIGHT_ROWS` 同一套路：旋钮清单只有一份）。
+ *
+ * ⚠️ 它与**关卡权重**（`ENV_WEIGHT_ROWS`，5 个副本）没有关系，两者合起来才是界面上
+ * 那个「权重」区块的两大类：关卡权重决定「哪些副本算数」，抽卡权重决定「抽卡方案里
+ * 强度与性价比各占多少」。
+ */
+export const DRAW_WEIGHT_ROWS = [
+  { key: 'strength', label: '强度' },
+  { key: 'cost', label: '性价比' },
+];
+
+/** 抽卡权重的默认值（界面「恢复默认」用）。 */
+export const drawWeightDefaults = () => ({
+  strength: finiteOrNull(SCORING.drawWeight?.strength) ?? 1,
+  cost: finiteOrNull(SCORING.drawWeight?.cost) ?? 1,
+});
+
+/**
+ * 归一化抽卡权重：只认**有限非负数**，并把两个数**归一到和为 1**。
+ *
+ * 为什么归一：这两个数只有**相对大小**有意义（与副本权重同一条约定），所以
+ * 「强度 3 / 性价比 1」与「强度 0.75 / 性价比 0.25」必须是同一个榜 —— 归一之后
+ * 补金推荐分仍在 0~100 体系里，界面上那句「= 强度得分 × 0.75 + 差额接近度 × 0.25」
+ * 才写得下去、也才能像旧版那样把两个系数直接印出来。
+ *
+ * 边界（都有回归用例）：
+ *   * 只给一个键 / 另一个是 `null` → 缺的那个按**默认值**补齐（界面永远两个一起发，
+ *     这条兜的是探针与旧调用方）；
+ *   * 空串 = 用户清空了输入框 → 按 0 算（与 `weightInputOf` 同一条约定）；
+ *   * 非法值（负数 / NaN）→ 忽略，退回默认；
+ *   * 两个都是 0 → **退回默认等权**，而不是让整列分数塌成 0。用户把两个框都清空
+ *     显然不是「什么都别推荐」——那是「我没有偏好」。
+ */
+export const normalizeDrawWeights = (input) => {
+  const defaults = drawWeightDefaults();
+  const pick = (key, fallback) => {
+    const raw = input?.[key];
+    if (raw === null || raw === undefined) return fallback;
+    const raw2 = String(raw).trim();
+    const n = raw2 === '' ? 0 : Number(raw2);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  };
+  let strength = pick('strength', defaults.strength);
+  let cost = pick('cost', defaults.cost);
+  if (!(strength + cost > 0)) {
+    strength = defaults.strength;
+    cost = defaults.cost;
+  }
+  const sum = strength + cost;
+  // `sum > 0` 在默认值本身也是 0 的极端配置下才不成立；那时如实给等权，不出现除零。
+  if (!(sum > 0)) return { strength: 0.5, cost: 0.5 };
+  return { strength: strength / sum, cost: cost / sum };
+};
 
 /**
  * 站点全名 ↔ 短码。`SCORING.envWeight` 按站点全名写（读起来就是「哪个副本」），
@@ -1197,28 +1307,35 @@ const lineWeightOf = (weights, key, fallback, hardDefault) => {
 };
 
 /**
- * **版本权重表**（用户 2026-10 第 7 条，原话）：
+ * **版本权重表**（用户 2026-10 第 7 条的原话 + 2026-10-12 第 5 条的收窗）：
  *
  *   「近 1-3 版本等权重，近 4-7 版本等权重，权重比例为 2:2:2:1:1:1:1，
  *     黑塔网投稿的版本更新后仍然能确保程序更新权重」
  *
- * 台阶：最新 3 个版本各 2 分，第 4-7 个版本各 1 分，**第 8 个版本起 0 分**
- * （0 = 不进窗口，不是「权重很小」）。窗口因此就是 7 个版本（`VERSION_WINDOW`）。
+ * ⚠️ **2026-10-12 第 5 条把这扇窗从 7 个版本收到 3 个**：原话是「把角色总榜的版本
+ * 窗口收到 3 版」。原因是实测出来的 —— 用户点名那支（遐蝶E2S1/风堇E2/昔涟E2S1/长夜月E2）
+ * 的分数有 **32.1% 来自权重 1 的那四个旧版本**（它的最佳证据甚至停在 4.1），
+ * 而它那四个人一起上场在 **4.6 根本没有投稿**（最新满分证据是 4.5）；收窗之后它的纯强度
+ * 1390.8 → 1378.5、总分 85.7 → 85.1，直接让出第 1。
+ * 「近 4-7 版本各 1 分」那一档因此从表里消失（`VERSION_WEIGHTS` 变回三档等权 2:2:2）。
+ *
+ * 台阶：最新 3 个版本各 2 分，**第 4 个版本起 0 分**（0 = 不进窗口，不是「权重很小」）。
+ * 窗口因此就是 3 个版本（`VERSION_WINDOW`）。
  *
  * ⚠️ **按下标查表，不按版本号写死**：黑塔网每加一个新版本，整套权重必须整体前移
  * 一档 —— 用户第 7 条后半句要的就是这件事自动发生。下标 = 「距该副本最新版本几个
- * 版本」，由数据现算，所以 4.6 上线之后 4.5 / 4.4 / 4.3 自动升到 2 分那一档。
+ * 版本」，由数据现算，所以 4.7 上线之后 4.6 / 4.5 / 4.4 自动进入窗口。
  *
  * 历史：这里以前是 `2 ** (-idx / 3)` 的指数半衰期（连续衰减、永不归零，由
  * `options.halfLife` 调）。用户给了明确的三档台阶之后它就不再是调参旋钮了，
- * 留着只会让代码里的「2:2:2:1:1:1:1」对不上，所以换成查表。
+ * 留着只会让代码里的「2:2:2」对不上，所以换成查表。
  *
  * 放在这个文件（而不是 `src/server/archive.js`）：本文件是浏览器与服务端**共用**
  * 的那一份，总榜在客户端按版本加权时读的就是这张表，服务端只是 import 它。
  */
-export const VERSION_WEIGHTS = [2, 2, 2, 1, 1, 1, 1];
+export const VERSION_WEIGHTS = [2, 2, 2];
 
-/** 版本窗口 = 权重表的长度（7 个版本）。 */
+/** 版本窗口 = 权重表的长度（3 个版本）。 */
 export const VERSION_WINDOW = VERSION_WEIGHTS.length;
 
 /** 距最新版本第 `index` 个（0 = 最新）的版本权重；超出表长给 0（不进窗口）。 */
@@ -1899,7 +2016,7 @@ export const budgetPlan = (conclusion, budget = null) => {
 /**
  * 队伍抽卡方案的**候选池来源**（用户 2026-10-11 第八轮放宽）。
  *
- * 取「性价比**逐档榜**」的全部条目，**并上**「性价比总榜」——
+ * 取「性价比**逐档榜**」的全部条目，**并上**「角色总榜」——
  * 两者都是「每个角色收敛成一条」，区别只在收敛时按不按星魂档分组：
  *
  *   * `frontierUnits`（总榜）    —— 每个角色只留**总分最高**的那一个整包（任意档位）；
@@ -1986,8 +2103,13 @@ export const teamPoolUnits = (conclusion) => {
  * ---------------------------------------------------------------------------
  * 两个指标与归一化（用户第 2 条：上下限也由程序现算，不写死）
  *
- *   ① 性价比得分 = 该队伍在总榜上的分（Σ_副本 权重 × 分，与总榜**同一条链**）。
+ *   ① **强度得分** = 该队伍的**纯强度**（`Σ_副本 副本权重 × packStrengthOf(表现)`，
+ *      **不乘金数项**，见 `packStrengthOf()`）。
  *      归一：`(分 − 最低) ÷ (最高 − 最低) × 100`，刻度取自**整个候选池**。
+ *      ⚠️ 口径在 v4.6.87 换过（用户 2026-10-12 第 3、4 条）：以前 ① 是「队伍在角色总榜
+ *      上的分」，而那个分里乘了 `本版本最便宜金数 ÷ 本队金数` —— 它其实是性价比，实测
+ *      16 金、行动值 286 的那支只有 81 分，9 金那支却 100 分，于是「强度权重拉高 →
+ *      更推荐高金低行动值的队伍」根本不成立。换掉之后那句话才为真。
  *   ② 差额接近度 = `(1 − 补金差额 ÷ 封顶值) × 100`，夹在 0~100。
  *      封顶值 = **候选池里补金差额的 p75**（`SCORING.teamPlanGapCapPct = 0.75`）——
  *      达到或超过它就 0 分。用户 2026-10-11 第六轮在四条曲线里选了「p50 封顶」，
@@ -1995,7 +2117,17 @@ export const teamPoolUnits = (conclusion) => {
  *      （两次换挡的实测数字都在 `SCORING.teamPlanGapCapPct` 的注释里）。
  *      ⚠️ 差额 = 0 的队伍**不进候选**（用户第 3 条：没有抽卡必要，不值得显示），
  *      所以 ② 的理论上界是 `(1 − 1 ÷ 封顶值) × 100`，永远拿不到 100。
- *   总分 = 0.5 × ① + 0.5 × ②（用户指定的等权）。
+ *   ②′ **性价比得分**（用户 2026-10-12 第 5 条）= 差额接近度 与 **压金度** 按
+ *      `SCORING.teamPlanCostMix`（0.5）合成：
+ *
+ *        压金度 = `(1 − 账面金数 ÷ 候选池账面金数的 p75) × 100`
+ *
+ *      为什么要加它：实测用户点名那支（16 金）与第 2 名（11 金）的**补金差额完全相同**
+ *      （都是 4 金），差额接近度一分不差；而强度得分刻意不含金数项 —— 于是「这支队总共
+ *      要几金」在排序里权重为 0。加上压金度之后原 #1 落到 #4，前 5 名由 7~16 金的队伍
+ *      占据（明细见 `SCORING.teamPlanCostMix` 与 docs 的 v39）。
+ *   总分 = **强度得分 × ws + 性价比得分 × wc**，权重由用户在界面上定
+ *      （`SCORING.drawWeight`，默认 1:1 = 旧版的等权系数）。
  *
  * ⚠️ **三个刻度都取自整个候选池，与「展示几条」完全无关**（2026-10-11 第七轮定稿）。
  *
@@ -2035,7 +2167,9 @@ export const teamPoolUnits = (conclusion) => {
  * ---------------------------------------------------------------------------
  * @param {any} conclusion  `/api/archive/conclusion` 的返回（或 `buildConclusion` 的结果）
  * @param {object} account   账号持有：`{ owned:Set, eidolons:Map, cones:Map }`
- * @param {object} options   `availability` 成本口径表；`maxRows` 下发上限
+ * @param {object} options   `availability` 成本口径表；`maxRows` 下发上限；
+ *                           `drawWeights` 抽卡权重（`{ strength, cost }`，只认相对大小，
+ *                           缺省 = `SCORING.drawWeight`）
  */
 export const teamPlan = (conclusion, account = {}, options = {}) => {
   const availability = options.availability || {};
@@ -2044,6 +2178,22 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   const eidolons = account?.eidolons instanceof Map ? account.eidolons : new Map();
   const cones = account?.cones instanceof Map ? account.cones : new Map();
   const units = teamPoolUnits(conclusion);
+  // 抽卡权重（用户 2026-10-12 第 3、4 条）：只认**相对大小**，归一到和为 1。
+  const draw = normalizeDrawWeights(options.drawWeights);
+  /**
+   * 一个整包的**纯强度**（用户 2026-10-12 第 3 条）：载荷里带 `strength` 就用它。
+   *
+   * 缺 `strength` 时退回 `total`（= 改造前的 ① 口径），这是**刻意的兼容**：合成夹具、
+   * 旧服务端载荷、以及历史探针都只有 `total`，硬要 0 会让整列强度得分塌成 0 分。
+   * 只在这里兜一次 —— 别把这个兜底抄到别处去，那会让「载荷没带 strength」这件事
+   * 彻底查不出来（`slimFrontierUnit` 因此把缺值原样发成 `null`，而不是 0）。
+   */
+  const strengthOfUnit = (unit) => {
+    const raw = unit?.strength;
+    if (raw === null || raw === undefined) return Number(unit?.total) || 0;
+    const n = Number(raw);
+    return Number.isFinite(n) ? n : (Number(unit?.total) || 0);
+  };
   const envMeta = new Map((conclusion?.frontierEnvs || []).map((env) => [env.id, env]));
 
   /** 一支队伍的身份：成员的整包键（排序后拼接）——同一支队伍只留一条。 */
@@ -2067,9 +2217,15 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     const members = best?.members || [];
     if (!members.length) continue;
     const rosterKey = rosterKeyOf(members);
+    const strength = strengthOfUnit(unit);
+    const total = Number(unit.total) || 0;
     const prev = byRoster.get(rosterKey);
-    if (prev && !(Number(unit.total) > Number(prev.total))) continue;
-    byRoster.set(rosterKey, { rosterKey, members, total: Number(unit.total) || 0, best, unit });
+    // ⚠️ 同一支队伍取哪个整包当代表：**先比强度、再比总榜分**（用户 2026-10-12 第 4 条）。
+    // 抽卡方案的 ① 换成了纯强度，而总榜分里含金数项 —— 只按总榜分挑代表，会把同一支队
+    // 里「更贵、压金项更低」的那个整包选成代表，强度分反而被压下去。
+    if (prev && !(strength > prev.strength
+      || (strength === prev.strength && total > prev.total))) continue;
+    byRoster.set(rosterKey, { rosterKey, members, total, strength, best, unit });
   }
 
   const candidates = [];
@@ -2132,6 +2288,15 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   const scoreLo = candidates.length ? Math.min(...candidates.map((t) => t.total)) : 0;
   const scoreHi = candidates.length ? Math.max(...candidates.map((t) => t.total)) : 0;
   /**
+   * ① **强度得分**的刻度：候选池里**纯强度**的最小 / 最大值（用户 2026-10-12 第 3 条）。
+   *
+   * ⚠️ 与 `scoreLo` / `scoreHi`（总榜分的刻度，只用于浮层里解释「队分 N」）**不是**
+   * 同一对数：总榜分含金数项。以前 ① 直接用总榜分，本轮起 ① 换成纯强度
+   * —— 两个刻度都留在返回值里，界面各写各的那一列。
+   */
+  const strengthLo = candidates.length ? Math.min(...candidates.map((t) => t.strength)) : 0;
+  const strengthHi = candidates.length ? Math.max(...candidates.map((t) => t.strength)) : 0;
+  /**
    * ② 的**封顶值**：候选池里补金差额的 `SCORING.teamPlanGapCapPct` 分位（现在是 p75）。
    *
    * 差额 0 金的队伍**不进候选**（用户第 3 条：没有抽卡必要，不值得显示），
@@ -2146,23 +2311,55 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   /** ② 的刻度上界（用于展示与断言）：封顶值取不到时退回最大值，不出现除零。 */
   const gapMax = gapCap > 0 ? gapCap
     : (candidates.length ? Math.max(...candidates.map((t) => t.gap)) : 0);
+  /**
+   * 「压金度」的**封顶值**：候选池里**账面金数**的 `SCORING.teamPlanGoldCapPct` 分位（p75）。
+   *
+   * 这是用户 2026-10-12 第 5 条的修法（实测根因：16 金那支与 11 金那支的补金差额**完全相同**，
+   * 所以「差额接近度」打平，而强度侧刻意不含金数项 ⇒「这支队总共要几金」在排序里权重为 0）。
+   * 与 `gapCap` 同一套路：分位而不是 max，否则池里「要 48 金」的冷门队会把刻度撑开。
+   */
+  const goldCap = (() => {
+    if (!candidates.length) return 0;
+    const sorted = candidates.map((t) => t.gold).sort((a, b) => a - b);
+    const p = Math.max(0, Math.min(1, Number(SCORING.teamPlanGoldCapPct) || 0.75));
+    return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
+  })();
+  /** 压金度的刻度上界（用于展示与断言）：封顶值取不到时退回最大值，不出现除零。 */
+  const goldMax = goldCap > 0 ? goldCap
+    : (candidates.length ? Math.max(...candidates.map((t) => t.gold)) : 0);
+  /**
+   * 「性价比得分」里「差额接近度」占的比重（其余给「压金度」）。
+   * 口径与实测明细见 `SCORING.teamPlanCostMix`。
+   */
+  const costMix = Math.max(0, Math.min(1, Number(SCORING.teamPlanCostMix) || 0.5));
   const span = (v, lo, hi) => (hi - lo < 1e-9 ? 1 : (v - lo) / (hi - lo));
   // ⚠️ 不要叫 `clamp01`：模块顶上已经有一个同名的（那一个在模块作用域里），
   // 这里遮蔽它会让人以为改的是同一个函数。
   const clampUnit = (v) => Math.max(0, Math.min(1, v));
 
   for (const t of candidates) {
-    t.scorePct = Number((100 * clampUnit(span(t.total, scoreLo, scoreHi))).toFixed(4));
+    // ① **强度得分** = 纯强度在候选池里的位置（0~100）—— 用户 2026-10-12 第 3、4 条：
+    // 它不含金数项，所以「强度权重拉高 → 高金、低行动值的队伍排上来」才成立。
+    t.strengthPct = Number((100 * clampUnit(span(t.strength, strengthLo, strengthHi))).toFixed(4));
     // 「差额接近度」= 1 − 差额 ÷ 封顶值：差额 0 金 = 100 分，达到/超过封顶值 = 0 分。
     t.gapPct = Number((100 * clampUnit(1 - span(t.gap, 0, gapMax))).toFixed(4));
-    t.total_score = Number((0.5 * t.scorePct + 0.5 * t.gapPct).toFixed(4));
+    // 「压金度」= 1 − 账面金数 ÷ 封顶值（用户 2026-10-12 第 5 条）：**这支队自己**要几金，
+    // 与「你还要补几金」是两件事 —— 以前只有后者进公式，所以 16 金那支与 11 金那支打平。
+    // ⚠️ 用的是**账面金数**（数据集口径，与卡片上「账面 N 金」同源、**不含隐金减免**）：
+    // 隐金设置按用户既有要求只影响角色总榜，抽卡方案这一侧连差额都不吃它，两处保持同一口径。
+    t.goldPct = Number((100 * clampUnit(1 - span(t.gold, 0, goldMax))).toFixed(4));
+    // 「性价比得分」= 差额接近度 与 压金度 按 `teamPlanCostMix` 合成。
+    t.costPct = Number((costMix * t.gapPct + (1 - costMix) * t.goldPct).toFixed(4));
+    // 总分 = 强度得分 × ws + 性价比得分 × wc（用户 2026-10-12 第 3、4、5 条；ws + wc = 1）。
+    // ⚠️ 默认 `1:1` 时它**不再**等价于旧版写死的 0.5/0.5：① 换成了纯强度、② 换成了性价比得分。
+    t.total_score = Number((draw.strength * t.strengthPct + draw.cost * t.costPct).toFixed(4));
   }
 
   // ---- 排序与截断 ------------------------------------------------------------
   //
   // 用户第 10 轮原话：「再根据队伍总分排序结果，将结果显示在抽卡方案界面」——
-  // 所以排序键就是**总分**（同分依次比队分 → 补金更少 → 队伍键，保证确定性），
-  // 截断到 `maxRows` 只是展示层的事，**不参与任何计算**。
+  // 所以排序键就是**总分**（同分依次比强度得分 → 性价比得分 → 补金更少 → 队伍键，
+  // 保证确定性），截断到 `maxRows` 只是展示层的事，**不参与任何计算**。
   // 两阶段（先按原始量纲初选、再按总分重排）在第七轮被删掉了：它当初存在的唯一理由
   // 是「刻度依赖截断结果」，而那个依赖本身就是要修掉的毛病。
   const maxRows = Math.max(1, Math.min(
@@ -2170,7 +2367,8 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     Number(options.maxRows) || SCORING.teamPlanMaxRows,
   ));
   const ranked = [...candidates].sort((a, b) => b.total_score - a.total_score
-    || b.total - a.total
+    || b.strengthPct - a.strengthPct
+    || b.costPct - a.costPct
     || a.gap - b.gap
     || String(a.rosterKey).localeCompare(String(b.rosterKey)));
   const delivered = ranked.slice(0, maxRows);
@@ -2261,8 +2459,14 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     // 两个分项与总分（0~100 体系）。
     total: t.total_score,
     teamScore: t.total,
-    scorePct: t.scorePct,
+    // ① 强度得分（**纯强度**归一化，用户 2026-10-12 第 3 条）与它的原始值。
+    strengthPct: t.strengthPct,
+    strength: t.strength,
+    // ② 性价比得分（用户 2026-10-12 第 5 条）＝ 差额接近度 与 压金度 的合成，
+    // 两个分项都下发 —— 界面要能拆开讲「为什么它性价比高」。
+    costPct: t.costPct,
     gapPct: t.gapPct,
+    goldPct: t.goldPct,
     // 补金
     gap: t.gap,
     pullsExpected: t.pullsExpected,
@@ -2382,9 +2586,19 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     //   只会改展示条数，分数与名次一字不变。
     pool: candidates.length,
     poolAll: byRoster.size,
+    // ① 的刻度（纯强度，用户 2026-10-12 第 3 条）。
+    strengthLo: Number(strengthLo.toFixed(4)),
+    strengthHi: Number(strengthHi.toFixed(4)),
+    // 总榜分的刻度：**只用于浮层解释「队分 N」**，不参与总分（总分只吃上面那两个刻度）。
     scoreLo: Number(scoreLo.toFixed(4)),
     scoreHi: Number(scoreHi.toFixed(4)),
+    /** 生效的抽卡权重（已归一化，和为 1）—— 界面照它印那两个系数。 */
+    drawWeights: { ...draw },
     gapMax,
+    /** 「压金度」的封顶值（候选池账面金数的 p75）与它在性价比里的比重。 */
+    goldMax,
+    goldCapPct: Number(SCORING.teamPlanGoldCapPct) || 0.75,
+    costMix,
     gapMin: delivered.length ? Math.min(...delivered.map((t) => t.gap)) : 0,
     /** ② 的封顶分位（界面脚注要写「差额达到 N 金即 0 分」）。 */
     gapCapPct: Number(SCORING.teamPlanGapCapPct) || 0.5,
@@ -3011,6 +3225,20 @@ const frontierPackRowsOf = (env, frontierEntry, aggRows, availability) => {
 };
 
 /**
+ * **纯强度**：`frontierPackScale × 表现`，**刻意不乘金数项**（用户 2026-10-12 第 3 条）。
+ *
+ * 为什么必须从「榜上的分」里拆出来：整包分 = `表现 × 金数项`，所以它其实是**性价比** ——
+ * 实测用户账号 1 那支 9 金的拿了 100 分，而 16 金、行动值 286 的那支只有 81 分。
+ * 抽卡方案那个「强度」旋钮要的是另一件事：「强度权重越高 → 越倾向于推荐**高金、低行动值**
+ * 的队伍」，只有把金数项摘掉，强度得分才真的只随档位/行动值与版本加权走。
+ *
+ * ⚠️ 它与 `score` 共用同一个 `perf`（`perfFactorOf()` 的输出），**不要再算一遍表现分**：
+ * 分叉的症状是「界面上的强度得分与浮层里的算式对不上」（`herta-test.mjs` 有回归钉住）。
+ * 版本加权那一层与 `score` 完全同源（同一个 `wSum`、同样「已登场缺证据算 0 分」）。
+ */
+export const packStrengthOf = (perf) => Number(SCORING.frontierPackScale) * (Number(perf) || 0);
+
+/**
  * **金数项的唯一计算处**（用户 2026-10-11 第 3 条）。
  *
  * ```
@@ -3153,7 +3381,7 @@ export const frontierFactorsOf = (env, meta) => {
  * envs = /api/archive/conclusion 返回的每个副本/关卡（含完整阵容表）。
  * 返回：
  *   envs          每个副本的基线与候选（界面上「你现在在哪一档」）
- *   frontierUnits 性价比总榜：**纯数据集口径**，与角色池无关（界面上的「性价比总榜」）
+ *   frontierUnits 角色总榜：**纯数据集口径**，与角色池无关（界面上的「角色总榜」）
  *   units         个人口径的单位榜：按「这个单位在你身上值多少」排序（界面上「抽卡方案」）
  *   gapUnits      和主流强阵的差距榜；eidolonUnits 星魂全局榜；packages 作业榜
  */
@@ -3163,10 +3391,10 @@ export const buildConclusion = (envs, options = {}) => {
   // （单位归因、差距打分、前沿强度），每个口径内部必须全程一致。
   //
   //   options.weights          方案口径（抽卡方案 / 差距榜 / 星魂榜）
-  //   options.frontierWeights  总榜口径（性价比总榜）
+  //   options.frontierWeights  总榜口径（角色总榜）
   //
   // ⚠️ **刻意不做「只给一个就两边都用」的兜底**：那正是用户要拆掉的东西 ——
-  // 一条隐式耦合会让「我只改了总榜权重，方案怎么也跟着变了」在下一次改动里复活。
+  // 一条隐式耦合会让「我只改了关卡权重，方案怎么也跟着变了」在下一次改动里复活。
   // 两个都要调就两个都传（服务端与工具都是这么做的）。
   const prevPlan = setEnvWeights(options.weights, 'plan');
   const prevFrontier = setEnvWeights(options.frontierWeights, 'frontier');
@@ -3406,6 +3634,9 @@ const buildConclusionInner = (envs, options = {}) => {
           const limitedCones = limitedConesOf(row.members);
           const hit = {
             score,
+            // **纯强度**（用户 2026-10-12 第 3 条）：同一份 `perf`，只是不乘金数项。
+            // 抽卡方案的「强度得分」读它 —— 总榜自己仍按 `score` 排（口径没动）。
+            strength: packStrengthOf(perf),
             tier: row.tier,
             actionValue: row.actionValue,
             // 兼容旧字段名：界面与浮层拆因子时读它（现在 = 合并后的表现分）。
@@ -3532,6 +3763,14 @@ const buildConclusionInner = (envs, options = {}) => {
           const born = firstSeenOf(pack);
           let wSum = 0;
           let acc = 0;
+          /**
+           * 与 `acc` 同一条版本加权的**纯强度**累计（用户 2026-10-12 第 3 条）。
+           *
+           * 刻意与 `acc` 并排放在这里，而不是事后再算一遍：版本加权、「早于登场不参与
+           * 平均」「已登场却没有任何成绩算 0 分」这三条规则对两者**必须完全一致**，
+           * 分开写迟早会分叉（那就是「强度得分与总榜分对不上」）。
+           */
+          let strAcc = 0;
           /** 早于登场的版本数（不参与平均，见下）。 */
           let absentSeasons = 0;
           // 用户 2026-10-10：已登场却缺证据的版本**算 0 分**（权重进分母，分子不加）。
@@ -3540,7 +3779,12 @@ const buildConclusionInner = (envs, options = {}) => {
             const w = weightOr(seasonWeightOfRow(s), 1);
             if (!(w > 0)) continue;
             const observed = pack.bySeason.get(s);
-            if (observed) { wSum += w; acc += w * observed.score; continue; }
+            if (observed) {
+              wSum += w;
+              acc += w * observed.score;
+              strAcc += w * observed.strength;
+              continue;
+            }
             // 缺证据只有**两种**「缺」，它们不是同一种（v4.6.78 起）：
             //   ① 那一版整包**还不存在**（早于登场）→ 不参与平均（既不奖也不罚）
             //   ② 那一版它已在、但**没有任何成绩** → 算 0 分（明确的差）
@@ -3613,6 +3857,10 @@ const buildConclusionInner = (envs, options = {}) => {
             rawGold: pack.gold,
             hiddenCut: ownCut,
             score: acc / wSum,
+            // **纯强度**（不含金数项，用户 2026-10-12 第 3 条）：抽卡方案「强度得分」的来源。
+            // 与 `score` 同一条版本加权，所以 `strength ≥ score` 只在金数项 ≤ 1 时成立
+            // （0 金通关那一档的 1.2 是唯一会让它反过来的情形），回归用例钉的是这条。
+            strength: strAcc / wSum,
             // `absentSeasons` = 早于登场、**不参与平均**的版本数（不奖不罚）。
             absentSeasons,
             // `droppedSeasons` = 已登场却**没有任何成绩**、算 0 分的版本数（明确地差）。
@@ -3649,7 +3897,7 @@ const buildConclusionInner = (envs, options = {}) => {
             // 而这三条线只存在数据里，编不出来 —— 必须随副本元数据一起发给界面。
             // 见 `tierTextOf()` 与 `frontierEnvs` 的下发处。
             tierLines: env.tierLines || null,
-            // ⚠️ 口径必须显式写 `'frontier'`：总榜只吃界面上「总榜权重」那一行，
+            // ⚠️ 口径必须显式写 `'frontier'`：总榜只吃界面上「关卡权重」那一行，
             // 抽卡方案那边调权重不该动它（用户 2026-10 要求两套权重相互独立）。
             // 服务端已经按请求的 frontierWeights 计算了环境权重；没有服务端前沿表
             // 的本地夹具才回退到本地默认/覆盖值。
@@ -4342,7 +4590,7 @@ const buildConclusionInner = (envs, options = {}) => {
         const unitGain = Number.isFinite(itemGain) ? itemGain : cand.gain;
         // 分母必须是**这个单位自己**的期望抽数，不能是整套作业的、也不能是队友的。
         //
-        // 这是「性价比总榜」能正确排序的前提：榜上排的是**单位之间**的比值，
+        // 这是「角色总榜」能正确排序的前提：榜上排的是**单位之间**的比值，
         // 只有每个单位都用自己作分母，这个比值才可比、才有传递性。
         // 用别的量当分母有三个后果（前两个实测过）：
         //   1. 同伴的抽数被摊到每个单位头上 → 「补 1 个就能用」的单位被
@@ -4564,7 +4812,10 @@ const buildConclusionInner = (envs, options = {}) => {
   }
 
   // ===================================================================
-  // 性价比总榜（**纯黑塔网数据口径**，完全不看你的角色池）
+  // 角色总榜（**纯黑塔网数据口径**，完全不看你的角色池）
+  //   ⚠️ 名字是用户 2026-10-12 第 1 条改的（原「性价比总榜」）；**口径一字未动**：
+  //      排序仍按下面这个乘了金数项的 `total`（即它仍然是「性价比」意义上的榜）。
+  //      抽卡方案的「强度得分」另走 `strength`（纯强度，不含金数项）。
   // ===================================================================
   //
   // 用户 2026-10 的要求：「性价比总榜不用单独分析角色/星魂/光锥，也不考虑某个星魂
@@ -4578,7 +4829,7 @@ const buildConclusionInner = (envs, options = {}) => {
   //                                             × (该副本最便宜金数 ÷ r 的金数) ]
   //
   //   * 整包**自己的金数不进公式**，只用于展示与「0 金不进榜」的判断（见 A 段注释）。
-  //   * 权重只看用户在界面上定下的**总榜权重**（`'frontier'` 口径），与「抽卡方案」
+  //   * 权重只看用户在界面上定下的**关卡权重**（`'frontier'` 口径），与「抽卡方案」
   //     那一行互不影响（用户 2026-10 要求），换账号结果完全一致。
   //   * 并列**保持**（用户 2026-10 明确要求）：同一支队伍的成员必然同分，不再用
   //     「整包自身金数」之类的二级键把它们拆开。同分的条目按最佳证据聚在一起，
@@ -4615,6 +4866,9 @@ const buildConclusionInner = (envs, options = {}) => {
           // 这一条整包在该副本里的分，以及它乘上副本权重后对总分的贡献。
           score: Number(pack.score.toFixed(4)),
           value: Number((pack.score * weight).toFixed(4)),
+          // **纯强度**的同一份贡献（用户 2026-10-12 第 3 条）：抽卡方案的强度分读它。
+          // 乘同一个副本权重，所以顶层 `Σ strength` 与抽卡方案的强度分是同一个量纲。
+          strength: Number((pack.strength * weight).toFixed(4)),
           // 最佳证据那条**队伍**配置：界面写「7 金 · 满分 · 行动值 295 · 4.2 版本」。
           bestTeamGold: evidence.cost ?? null,
           // **最佳证据所在版本**的最便宜金数 —— 金数项的分母就是它（用户 2026-10-10
@@ -4674,6 +4928,16 @@ const buildConclusionInner = (envs, options = {}) => {
         hiddenCut: unit.hiddenCut ?? 0,
         pulls: unit.gold,
         total: Number(total.toFixed(4)),
+        /**
+         * **纯强度**（用户 2026-10-12 第 3 条）：Σ_副本 副本权重 × `packStrengthOf(表现)`。
+         *
+         * 与 `total` 的唯一区别就是**不乘金数项**，所以：
+         *   * `total` 仍是总榜的排名依据（口径没动，「角色总榜」照旧按性价比排）；
+         *   * `strength` 只服务**抽卡方案的强度得分** —— 它是「强度」旋钮要的那把尺子
+         *     （高金、低行动值的队伍在这里才排得上去）。
+         * 两者共用同一批 `perf`、同一份版本加权，见 `packStrengthOf()` 的注释。
+         */
+        strength: Number(unit.envs.reduce((n, e) => n + (e.strength || 0), 0).toFixed(4)),
         envCount: unit.envs.length,
         envs: unit.envs,
         basis: 'team-gold-frontier-pack',
@@ -4796,7 +5060,7 @@ const buildConclusionInner = (envs, options = {}) => {
     //
     // 「它强不强」是另一个问题，由**纯数据集口径**的 `frontierUnits` 回答
     // （前沿加权占比 ÷ 期望抽数），那个榜完全不看角色池。两个榜分工明确：
-    //   * `frontierUnits` → 界面上的「性价比总榜」（黑塔网数据口径）
+    //   * `frontierUnits` → 界面上的「角色总榜」（黑塔网数据口径）
     //   * `units`         → 界面上的「抽卡方案」（按你的角色池 + 预算排的补强清单）
     // 这里**不能**拿前沿占比当 `total`：那会让「抽卡方案」按一个与你的账号无关的
     // 顺序开药方（而且 2026-10 一度这么做，把下面六条回归测试全打红了）。
@@ -5199,9 +5463,9 @@ const buildConclusionInner = (envs, options = {}) => {
   return {
     envs: envResults,
     units: unitList,
-    // 性价比总榜：**纯黑塔网数据口径**（不依赖角色池，只看副本权重）
+    // 角色总榜：**纯黑塔网数据口径**（不依赖角色池，只看副本权重）
     frontierUnits,
-    // 逐星魂档的性价比总榜（用户 2026-10-11 报的缺陷）：`{ 0: […], 1: […], 2: […], 6: […] }`，
+    // 逐星魂档的角色总榜（用户 2026-10-11 报的缺陷）：`{ 0: […], 1: […], 2: […], 6: […] }`，
     // 每档各自按角色收敛成一条（与 `frontierUnits` 同一条排序，只是先按档位筛过）。
     //
     // 为什么必须单独一份、不能靠界面拿 `frontierUnits` 过滤：那份每角色只有一条，

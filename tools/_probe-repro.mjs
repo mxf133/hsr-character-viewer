@@ -1,3 +1,6 @@
+// ⚠️ 口径变更：本探针写于旧口径（①=总榜分含金数项归一化）；v4.6.87 起 ① 换成**纯强度**
+// （`rows[].strengthPct`，原始值 `rows[].strength`），这里已经跟着改。
+//
 // 复现截图 + 扫「补金推荐分为什么只有 50 多」。
 //
 // 两件事：
@@ -57,18 +60,19 @@ const build = async ({ weights = null, hidden = null, window: win = VERSION_WIND
 
 const show = (label, concl, opts = {}) => {
   const plan = teamPlan(concl, acct, { availability, ...opts });
-  const strengths = plan.rows.map((r) => r.scorePct);
+  const strengths = plan.rows.map((r) => r.strengthPct);
   console.log(`\n${'─'.repeat(100)}\n${label}`);
   console.log(`  总榜 ${concl.frontierUnits.length} 条 · 候选池 ${plan.pool} 支（去重 ${plan.poolAll}）`
     + ` · 展示 ${plan.rows.length} 条 · ②封顶 ${plan.gapMax} 金（真实最大 ${plan.gapRealMax}）`);
-  console.log(`  ① 刻度：队分 ${plan.scoreLo.toFixed(0)}~${plan.scoreHi.toFixed(0)}`
-    + `　→ ① 落在 ${Math.min(...strengths).toFixed(1)} ~ ${Math.max(...strengths).toFixed(1)}`);
+  console.log(`  ① 刻度（纯强度）：${plan.strengthLo.toFixed(0)}~${plan.strengthHi.toFixed(0)}`
+    + `　→ ① 落在 ${Math.min(...strengths).toFixed(1)} ~ ${Math.max(...strengths).toFixed(1)}`
+    + `　（总榜分刻度 ${plan.scoreLo.toFixed(0)}~${plan.scoreHi.toFixed(0)}，仅展示）`);
   console.log(`  ② 落在 ${Math.min(...plan.rows.map((r) => r.gapPct)).toFixed(1)}`
     + ` ~ ${Math.max(...plan.rows.map((r) => r.gapPct)).toFixed(1)}`
     + `　② 归 0 的 ${plan.rows.filter((r) => r.gapPct === 0).length}/${plan.rows.length} 支`);
   plan.rows.slice(0, 8).forEach((r, i) => {
     console.log(`  #${String(i + 1).padStart(2)} ${r.total.toFixed(1).padStart(5)}`
-      + ` = ①${r.scorePct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
+      + ` = ①${r.strengthPct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
       + `｜补 ${String(r.gap).padStart(2)} 金｜${nameOf(r)}`);
   });
   return plan;
@@ -97,7 +101,7 @@ for (const rows of [15, 40, 60]) {
     SCORING.teamPlanMaxRows = rows;
     SCORING.teamPlanGapCapPct = cap;
     const plan = teamPlan(shotHidden, acct, { availability });
-    const top = plan.rows.slice(0, 3).map((r) => `${r.total.toFixed(1)}(${r.scorePct.toFixed(0)}+${r.gapPct.toFixed(0)})`);
+    const top = plan.rows.slice(0, 3).map((r) => `${r.total.toFixed(1)}(${r.strengthPct.toFixed(0)}+${r.gapPct.toFixed(0)})`);
     const zero = plan.rows.filter((r) => r.gapPct === 0).length;
     const capLabel = cap === 1 ? 'max' : `p${cap * 100}`;
     console.log(`${String(rows).padEnd(6)}${capLabel.padEnd(8)}`

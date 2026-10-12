@@ -205,12 +205,17 @@
             </h3>
           </div>
 
-          <!-- 副本权重**两套**（用户 2026-10 要求「性价比总榜和抽卡方案的权重应相互
-               独立」）：总榜那一行只影响性价比总榜，方案那一行只影响抽卡方案。
-               两块各自贴在自己的小节里，改哪一行只动哪一个榜。 -->
-          <!-- 一节：性价比总榜（纯黑塔网投稿口径，不看你的角色池） -->
+          <!-- 权重**两大类**（用户 2026-10-12 第 2、3、4 条）：
+                 ① 关卡权重 = 五个副本的权重（决定哪些副本算数，**角色总榜与抽卡方案都吃它**）；
+                 ② 抽卡权重 = 强度 / 性价比（只决定**抽卡方案**里「强度得分」与「差额接近度」
+                    各占多少）。
+               用户原话：「总榜权重改名为权重，权重分为两大类，分别为关卡权重和抽卡权重，
+               关卡权重照旧让用户设置5种关卡的权重」「抽卡方案也适用于以上权重」。
+               ⚠️ 它们与「方案权重」那一行不是一回事：那一行在 2026-10-11 第 10 轮就已经
+               删掉了（新的抽卡方案是队伍口径）。 -->
+          <!-- 一节：角色总榜（纯黑塔网投稿口径，不看你的角色池） -->
           <h4 class="advice-h4">
-            性价比总榜
+            角色总榜
             <span class="muted small">角色 / 星魂 / 光锥混排 · 只看黑塔网投稿数据</span>
           </h4>
           <p class="muted small advice-note" id="adviceUnitNote">
@@ -231,16 +236,30 @@
             切到 <strong>E0</strong> 也能看到它 E0 档的分数与名次 —— 不会因为别的档位分更高就消失。
           </p>
           <div class="advice-weights is-compact" id="adviceFrontierWeights">
-            <span class="advice-weights-title">总榜权重</span>
-            <span class="advice-weights-hint muted small">只影响性价比总榜（不看你的角色池）。只有<strong>相对大小</strong>有意义，
-              调成 0 = 这个副本不进总榜。</span>
-            <div class="advice-weights-grid" id="adviceFrontierWeightRow"></div>
+            <span class="advice-weights-title">权重</span>
+            <span class="advice-weights-hint muted small">两大类：<strong>关卡权重</strong>决定
+              哪些副本算数（角色总榜与抽卡方案都吃它，调成 0 = 这个副本不进榜）；
+              <strong>抽卡权重</strong>决定抽卡方案里<strong>强度得分</strong>与
+              <strong>差额接近度</strong>各占多少（强度越高越推高金、低行动值的队伍，
+              性价比越高越推尽量压金通关的队伍）。两组都只有<strong>相对大小</strong>有意义。</span>
             <button type="button" id="adviceFrontierWeightsReset" class="btn btn-ghost btn-sm">恢复默认</button>
-            <span class="muted small advice-weights-meta" id="adviceFrontierWeightsMeta"></span>
+            <div class="advice-weights-groups">
+              <div class="advice-weights-group">
+                <span class="advice-weights-subtitle">关卡权重</span>
+                <div class="advice-weights-grid" id="adviceFrontierWeightRow"></div>
+                <span class="muted small advice-weights-meta" id="adviceFrontierWeightsMeta"></span>
+              </div>
+              <div class="advice-weights-group">
+                <span class="advice-weights-subtitle">抽卡权重</span>
+                <div class="advice-weights-grid is-draw" id="adviceDrawWeightRow"></div>
+                <span class="muted small advice-weights-meta" id="adviceDrawWeightsMeta"></span>
+              </div>
+            </div>
           </div>
           <!-- 隐金设置（用户 2026-10-11）：「在性价比总榜添加一个按钮，用于额外设置，
                将其放置于总榜权重下方」——所以它紧跟在 `#adviceFrontierWeights` 之后、
-               总榜列表之前。按钮只负责开详情窗口；口径与名单都在 advice.js 里
+               总榜列表之前（2026-10-12 起那个权重块的标题是「权重」、包含两大类）。
+               按钮只负责开详情窗口；口径与名单都在 advice.js 里
                （`HIDDEN_COST_SETTINGS` / `hiddenReductionOf`），界面不抄第二份。 -->
           <div class="advice-hidden-costs" id="adviceHiddenCostsBar">
             <button type="button" id="adviceHiddenCostsOpen" class="btn btn-ghost btn-sm"
@@ -266,9 +285,11 @@
           </div>
           <p class="muted small advice-note" id="adviceTeamPlanNote">
             这里给你的是<strong>可以照着走的补金路线</strong>：先看你已有几位核心角色，
-            再看<strong>下一步最适合补什么</strong>。候选来自<strong>性价比总榜里的真实队伍</strong>，
-            同一支队伍只留一条；补金推荐分同时考虑<strong>队伍强度</strong>和<strong>离你有多近</strong>，
-            让高分队伍与短路线都能被看见。每张卡都带角色 / 光锥图片、补金顺序与过渡档位，
+            再看<strong>下一步最适合补什么</strong>。候选来自<strong>角色总榜里的真实队伍</strong>，
+            同一支队伍只留一条；补金推荐分 = <strong>强度得分 × 抽卡权重</strong>
+            + <strong>差额接近度 × 抽卡权重</strong>，
+            「强度」那一档偏强队（高金、低行动值），「性价比」那一档偏尽量压金通关的队伍。
+            每张卡都带角色 / 光锥图片、补金顺序与过渡档位，
             点分数还能展开刻度来源和相近的次选配队。
           </p>
           <div id="adviceTeamPlanBody" class="advice-team-plan"></div>

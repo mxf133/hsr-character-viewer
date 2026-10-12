@@ -1,3 +1,6 @@
+// ⚠️ 口径变更：本探针写于旧口径（①=总榜分含金数项归一化）；v4.6.87 起 ① 换成**纯强度**
+// （`rows[].strengthPct`，原始值 `rows[].strength`），这里已经跟着改。
+//
 // 落地「线性 / p50 封顶」前先量一件事：封顶之后有多少队伍会被压到 ②=0。
 //
 //   node tools/_probe-p50-cap.mjs
@@ -60,12 +63,16 @@ for (const [i, account] of accounts.entries()) {
   const rows = plan.rows.map((r) => ({
     ...r,
     gapPctNew: Math.max(0, 100 * (1 - r.gap / med)),
-  })).map((r) => ({ ...r, totalNew: 0.5 * r.scorePct + 0.5 * r.gapPctNew }))
+  })).map((r) => ({
+    ...r,
+    // 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。
+    totalNew: 0.5 * r.strengthPct + 0.5 * r.gapPctNew,
+  }))
     .sort((a, b) => b.totalNew - a.totalNew);
   console.log('  前 10 名（按新总分）：');
   for (const [j, r] of rows.slice(0, 10).entries()) {
     console.log(`    #${String(j + 1).padStart(2)} 总分 ${r.totalNew.toFixed(1).padStart(5)}`
-      + `　① ${r.scorePct.toFixed(1).padStart(5)}　② ${r.gapPctNew.toFixed(1).padStart(5)}`
+      + `　① ${r.strengthPct.toFixed(1).padStart(5)}　② ${r.gapPctNew.toFixed(1).padStart(5)}`
       + `（${String(r.gap).padStart(2)} 金）　`
       + r.members.map((m) => zhName(i18n, 'characters', m.char) || m.char).join('/'));
   }

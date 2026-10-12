@@ -1,3 +1,6 @@
+// ⚠️ 口径变更：本探针写于旧口径（①=总榜分含金数项归一化）；v4.6.87 起 ① 换成**纯强度**
+// （`rows[].strengthPct`，原始值 `rows[].strength`），这里已经跟着改。
+//
 // 探针：为什么「差额接近度」拉不开差距 —— 打出补金差额的分布，以及四种归一化下的取值与总分跨度。
 //
 //   node tools/_probe-gap-spread.mjs --account=1
@@ -53,7 +56,8 @@ const gaps = rows.map((r) => r.gap).sort((a, b) => a - b);
 console.log(`账号 ${ACC}（${role.nickname}）`);
 console.log(`候选池 ${plan.pool} 支（下发 ${rows.length} 支，truncated=${plan.truncated}）`
   + ` · **池内最大差额 ${plan.gapMax} 金**`);
-console.log(`性价比原始分 ${plan.scoreLo.toFixed(1)} ~ ${plan.scoreHi.toFixed(1)}`);
+console.log(`① 纯强度刻度 ${plan.strengthLo.toFixed(1)} ~ ${plan.strengthHi.toFixed(1)}`
+  + `（总榜分刻度 ${plan.scoreLo.toFixed(1)} ~ ${plan.scoreHi.toFixed(1)}，仅展示）`);
 
 // ⚠️ 关键：`gapMax` 取的是**整个候选池**的最大值（含被截断掉的那些冷门队伍），
 // 而下发的只有前 40 支 —— 少数几支「要补几十金」的冷门队会把刻度的上端撑得极远。
@@ -116,7 +120,9 @@ for (const g of [...new Set(rows.map((r) => r.gap))].sort((a, b) => a - b)) {
 }
 
 // ---- 总分跨度 ----------------------------------------------------------------
-const sPctOf = (r) => 100 * (r.teamScore - plan.scoreLo) / (plan.scoreHi - plan.scoreLo);
+/** ① 直接用生产下发的**纯强度**归一化分（v4.6.87 起），不再从总榜分重算。 */
+const sPctOf = (r) => r.strengthPct;
+// 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。
 const scoreWith = (fn) => rows.map((r) => ({ r, total: 0.5 * sPctOf(r) + 0.5 * fn(r.gap) }));
 const spread = (list) => {
   const xs = list.map((x) => x.total).sort((a, b) => a - b);
@@ -205,7 +211,7 @@ for (const [label, fn] of CANDIDATES) {
 console.log('\n【修后前 10 名的两个分项】');
 for (const [i, r] of rows.slice(0, 10).entries()) {
   console.log(`  #${String(i + 1).padStart(2)} 总分 ${r.total.toFixed(1).padStart(5)}`
-    + `　① ${r.scorePct.toFixed(1).padStart(5)}　② ${r.gapPct.toFixed(1).padStart(5)}`
+    + `　① ${r.strengthPct.toFixed(1).padStart(5)}　② ${r.gapPct.toFixed(1).padStart(5)}`
     + `（${String(r.gap).padStart(2)} 金）　`
     + r.members.map((m) => zhName(i18n, 'characters', m.char) || m.char).join('/'));
 }

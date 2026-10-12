@@ -384,6 +384,17 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
   // 整包自己的金数：只用于展示（**不进公式、不参与排序**）
   gold: Number(unit.gold ?? unit.pulls) || 0,
   total: unit.total,
+  /**
+   * **纯强度**（用户 2026-10-12 第 3 条）：`Σ_副本 副本权重 × 表现`，**不含金数项**。
+   *
+   * 服务端必须带上它：抽卡方案的「强度得分」= 它归一化，而抽卡方案是在**浏览器里**
+   * 现算的（`teamPlan()`，服务端不下发队伍方案），界面自己无法从 `total` 反推出这一项
+   * —— `total = 强度 × 金数项`，而金数项要逐条查 `seasonMinCost` 与最佳证据金数，
+   * 且 `envs` 只发给前 200 条。实测多带一个数字 ≈ 每条 14 字节。
+   * ⚠️ 取不到时发 **`null`**（不是 0）：`null` = 「这份载荷没有这一项」，界面会退回
+   * 旧的 ① 口径；发 0 会让整列强度得分塌成 0 且查不出来。
+   */
+  strength: Number.isFinite(Number(unit.strength)) ? Number(unit.strength) : null,
   envCount: unit.envCount,
   // 并列分组键：同分 = 同一支队伍的成员（口径使然），界面据此标注并列。
   bestTeamGold: unit.bestTeamGold ?? null,
@@ -844,7 +855,9 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     // v7 = 新增 `frontierTiers`（总榜按 E0/E1/E2/E6 分档，每档各自按角色收敛一条）。
     //      ⚠️ 两支并行分支各自把载荷写成 v6（一支加 `availability`、一支加 `frontierTiers`），
     //      合并后两份都在，所以形状号必须是 **7** —— 别再改回 6。
-    payload: 7,
+    // v8 = 总榜每个整包新增 `strength`（**纯强度**，不含金数项）：抽卡方案的「强度得分」
+    //      读它（用户 2026-10-12 第 3、4 条）。缺它时界面会退回旧口径（见 teamPlan）。
+    payload: 8,
     // 隐金设置：**回显服务端实际生效的那一份**（归一化后的五个布尔）。
     // 为什么值得多带这 ~90 字节（载荷形状因此升到 v5）：隐金要穿过四层才生效
     // （界面 → POST body → 路由 → buildConclusion），任何一层漏传都表现为
