@@ -11,7 +11,7 @@ import { AccountStore } from '../src/server/store.js';
 import {
   buildConclusion, charCostOf, coneCostOf, eidolonTierOf, marginalCostOf, normalizeDrawWeights,
   ownedCharacters, eidolonsOf, lightConeRanksOf, perfFactorOf,
-  perfLineWeightsOf, teamPlan, teamPoolUnits, VERSION_WINDOW,
+  perfLineWeightsOf, SCORING, teamPlan, teamPoolUnits, VERSION_WINDOW,
 } from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
@@ -127,7 +127,7 @@ const clamp01 = (v) => Math.max(0, Math.min(1, v));
 for (const t of pool) {
   t.strengthPct = 100 * clamp01(strengthHi - strengthLo < 1e-9
     ? 1 : (t.total - strengthLo) / (strengthHi - strengthLo));
-  t.gapPct = 100 * clamp01(1 - (gapCap > 0 ? t.gap / gapCap : 0));
+  t.gapPct = 100 * clamp01(1 - (gapCap > 0 ? t.gap / gapCap : 0)) ** (Number(SCORING.teamPlanGapPower) || 1);
   t.score = 0.5 * t.strengthPct + 0.5 * t.gapPct;
 }
 const poolByKey = new Map(pool.map((t) => [t.key, t]));

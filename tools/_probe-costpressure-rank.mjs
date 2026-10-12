@@ -9,7 +9,7 @@
 import { AccountStore } from '../src/server/store.js';
 import {
   buildConclusion, charCostOf, coneCostOf, eidolonTierOf, marginalCostOf, normalizeDrawWeights,
-  ownedCharacters, eidolonsOf, lightConeRanksOf, teamPlan, teamPoolUnits, VERSION_WINDOW,
+  ownedCharacters, eidolonsOf, lightConeRanksOf, SCORING, teamPlan, teamPoolUnits, VERSION_WINDOW,
 } from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
@@ -135,7 +135,9 @@ const scorePool = (opts) => {
     const a = t.total;
     const b = axisB === 'gap' ? t.gap : t.gold;
     t.aPct = 100 * clamp01(span(a, aLo, aHi));
-    t.bPct = 100 * clamp01(1 - span(b, 0, bCap));
+    // ⚠️ ② 的曲线指数必须跟着生产走（v4.6.92 起 = 1.5）：少了它这条「与生产完全一致」的
+    //    自检会当场 ✗ —— 那是**本探针**的错，不是生产的。
+    t.bPct = 100 * clamp01(1 - span(b, 0, bCap)) ** (Number(SCORING.teamPlanGapPower) || 1);
     let wA = weights.strength;
     // 「封顶」类改法：强度只在金数不超过阈值时全额计分。
     if (strengthWeightCap !== null) {
@@ -235,7 +237,7 @@ const rankC = (() => {
   const clamp01 = (v) => Math.max(0, Math.min(1, v));
   for (const t of pool) {
     t.aPct = 100 * clamp01(span(t.total, totalLo, totalHi));
-    t.gapPct = 100 * clamp01(1 - span(t.gap, 0, gapCap));
+    t.gapPct = 100 * clamp01(1 - span(t.gap, 0, gapCap)) ** (Number(SCORING.teamPlanGapPower) || 1);
     t.goldPct = 100 * clamp01(1 - span(t.gold, 0, goldCap));
     t.bPct = (t.gapPct + t.goldPct) / 2;
     t.score = 0.5 * t.aPct + 0.5 * t.bPct;

@@ -2607,6 +2607,9 @@ const planTipTeam = (members, className = '') => {
  */
 const teamPlanTip = (row, plan) => {
   const num = (v) => Number(v || 0).toFixed(1);
+  // ② 那条曲线的指数（用户 2026-10-12 第 9 条）：由 `teamPlan()` 回显，界面不自己再算一遍。
+  // ⚠️ 这一句必须在**本函数**里取 —— 它不能借 `renderTeamPlan()` 里那个同名局部变量。
+  const gapPower = Math.max(1, Number(plan.gapPower) || 1);
   // 生效的抽卡权重（已归一化）：由 `teamPlan()` 回显，界面不自己再算一遍。
   const draw = plan.drawWeights || normalizeDrawWeights({});
   const ws = formatShare(draw.strength);
@@ -2650,8 +2653,10 @@ const teamPlanTip = (row, plan) => {
       // ② 只有这一个刻度（用户 2026-10-12 第 6 条）。「账面 N 金」放在「本队取值」里当
       // 参考信息，**不进公式** —— 它已经不参与任何折算（想让它参与就是 v4.6.87 那个
       // 被用户否掉的「压金度」）。
+      // ⚠️ 刻度那一格必须写出**曲线指数**（用户 2026-10-12 第 9 条「削减一点」）：
+      //    否则读者按线性去算会与右边的折算对不上（补 10 金时 28.6 → 15.3）。
       ['差额接近度', `补金 ${row.gap} 金｜账面 ${row.gold} 金`,
-        `1 − 补金 ÷ ${plan.gapMax} 金（池内 p75）`,
+        `(1 − 补金 ÷ ${plan.gapMax} 金)^${gapPower}（池内 p75）`,
         `${num(row.gapPct)} × ${wc}`],
     ],
     extra,
@@ -2957,6 +2962,8 @@ const renderTeamPlan = (conclusion) => {
   // ⚠️ v4.6.83 起候选池的来源是**逐档榜**（每角色 × 每星魂档各一条），不再是总榜 ——
   //    文案必须跟着改，否则读者会拿「总榜 84 支」去对「候选 245 支」，以为算错了。
   const capPct = Math.round((Number(plan.gapCapPct) || 0.75) * 100);
+  // ② 那条曲线的指数（用户 2026-10-12 第 9 条）：脚注必须写出来，否则读者按线性算会对不上。
+  const gapPower = Math.max(1, Number(plan.gapPower) || 1);
   const capped = plan.rows.filter((r) => r.gap >= plan.gapMax).length;
   const drawFoot = plan.drawWeights || normalizeDrawWeights(state.drawWeights || {});
   el.teamPlanBody.appendChild(text('p', 'muted small advice-plan-team-foot',
@@ -2972,8 +2979,10 @@ const renderTeamPlan = (conclusion) => {
     + `${Math.round(plan.strengthHi)} → 0~100，低于下限不可能出现 —— 这个量恒 ≥ 0）；`
     // ⚠️ 用户 2026-10-12 第 6 条之后这里**只有一个刻度**（差额接近度）——
     //    别再写成「差额 × a + 压金 × b」：那层合成已删（它等于同一个数的两种名字）。
-    + `性价比（差额接近度）= 1 − 补金 ÷ ${plan.gapMax} 金`
-    + `（**候选池**差额的 ${capPct} 分位，达到或超过就 0 分，`
+    + `性价比（差额接近度）= (1 − 补金 ÷ ${plan.gapMax} 金)^${gapPower}`
+    + `（**候选池**差额的 ${capPct} 分位当封顶值，达到或超过就 0 分；`
+    + `指数 ${gapPower} 是「给要补大量金的队伍少给点分」那条曲线 —— 补 2 金 79 分、`
+    + `补 8 金 28 分、补 10 金 15 分，`
     + `下面这批有 ${capped} 支落在这一档`
     + `${Number(plan.gapRealMax) > Number(plan.gapMax)
       ? `、补金最多的是 ${plan.gapRealMax} 金` : ''}）；`
