@@ -154,15 +154,17 @@ const measure = () => evaluate(`(() => {
     // 用户 2026-10-11 第 10 轮撤掉的旧「预算控件」（打算投入金数那个输入框）：
     // 这份必须为 0，判据在 node 里用（那边碰不到 document）。
     legacyBudgetBoxes: document.querySelectorAll('#adviceBudgetControl, #adviceBudget').length,
-    // 用户 2026-10 要求「性价比总榜和抽卡方案的权重应相互独立」：两行各五个输入框，
-    // 分别挂在 #adviceFrontierWeightRow / #advicePlanWeightRow。
+    // 权重**两大类**（用户 2026-10-12 第 2 条）：关卡权重 5 个输入框（#adviceFrontierWeightRow）
+    // + 抽卡权重 2 个（#adviceDrawWeightRow，强度 / 性价比）。
+    // ⚠️ 这段整体是模板字符串：注释里**不能出现反引号**（HANDOFF §6.1 第 16 条）。
     weightInputs: document.querySelectorAll('#adviceFrontierWeightRow input.advice-weight').length,
+    drawWeightInputs: document.querySelectorAll('#adviceDrawWeightRow input.advice-draw-weight').length,
     // 用户 2026-10-11 第 10 轮「去掉方案权重那一行」：这份**必须**是 0
     legacyPlanWeightBoxes: document.querySelectorAll('#advicePlanWeights, #advicePlanWeightRow').length,
-    // 两块权重各带自己的「已改」摘要与恢复默认按钮
+    // 权重两类各带自己的「已改 / 生效」摘要，恢复默认是**共用**的那一个按钮
     weightMeta: {
       frontier: Boolean(document.getElementById('adviceFrontierWeightsMeta')?.textContent),
-      // 方案权重那一行已删（2026-10-11 第 10 轮），恢复默认按钮只剩总榜那一个
+      draw: Boolean(document.getElementById('adviceDrawWeightsMeta')?.textContent),
       reset: Boolean(document.getElementById('adviceFrontierWeightsReset')),
     },
     // 2026-10 用户要求「性价比 +xxx 移到左边，靠近别的文字」：
@@ -303,13 +305,13 @@ for (const width of [1920, 1440, 1280]) {
     && s.legacyPlanWeightBoxes === 0);
   // 2026-10 的判据（都是用户点名的改动）：
   //   * 「你的补强路径」与「推荐阵容 · 按金数分档」两节必须撤掉；
-  //   * 性价比总榜（纯数据集口径）、抽卡方案（按角色池）都要有内容；
-  //   * 权重是**两行、各五个**输入框，各带自己的「已改」摘要与「恢复默认」
-  //     （用户要求两套权重相互独立）。
+  //   * 角色总榜（纯数据集口径）、抽卡方案（按角色池）都要有内容；
+  //   * 权重是**两大类**（用户 2026-10-12 第 2 条）：关卡权重 5 个输入框 + 抽卡权重
+  //     2 个（强度 / 性价比），两类各带自己的摘要、共用一个「恢复默认」。
   const sectionsGone = seen.every((s) => !s.removedSections?.plan && !s.removedSections?.bands);
   const blocksPresent = seen.every((s) => s.frontierRows > 0 && s.teamRows > 0
-    && s.weightInputs === 5 && s.legacyPlanWeightBoxes === 0
-    && s.weightMeta?.frontier && s.weightMeta?.reset);
+    && s.weightInputs === 5 && s.drawWeightInputs === 2 && s.legacyPlanWeightBoxes === 0
+    && s.weightMeta?.frontier && s.weightMeta?.draw && s.weightMeta?.reset);
   // 性价比徽标必须**紧贴左边的花费文字**（用户要求从行尾移到左边），并且这一行
   // 带着详情内容节点（点它开大窗口）。
   // 判据：间距 ≤ 24px（实测 8px），且离容器右边缘 > 60px（`margin-left:auto` 时约等于 0）。
@@ -341,9 +343,10 @@ for (const width of [1920, 1440, 1280]) {
     + `（队伍方案块 top=${seen.map((s) => s.teamPlan?.top ?? 'null').join('/')}）`);
   console.log(`      两节已撤掉：${sectionsGone ? '✓' : `仍在 ${JSON.stringify(seen[0].removedSections)}`}`);
   console.log(`      总榜 ${seen[0].frontierRows} 行 / 队伍方案 ${seen[0].teamRows} 支`
-    + ` / 补金顺序 ${seen[0].teamFills} 条 / 权重框 ${seen[0].weightInputs} 个`
+    + ` / 补金顺序 ${seen[0].teamFills} 条 / 关卡权重框 ${seen[0].weightInputs} 个`
+    + ` / 抽卡权重框 ${seen[0].drawWeightInputs} 个`
     + ` / 旧的方案权重块 ${seen[0].legacyPlanWeightBoxes} 个（应为 0）`
-    + (blocksPresent ? ' ✓' : ' ← 缺内容或旧的权重行没删干净'));
+    + (blocksPresent ? ' ✓' : ' ← 缺内容或权重块数目不对'));
   console.log(`      性价比徽标：距左边文字 ${seen[0].badge?.gapToText}px / 距右边缘 ${seen[0].badge?.gapToEdge}px`
     + ` / 带详情内容节点 ${seen[0].badge?.tip ? '✓' : '✗'}` + (badgeOk ? ' ✓' : ' ← 应紧贴文字且不在行尾'));
   console.log(`      开拓者的「已有」徽标：上场率里 ${seen[0].trailblazerOwn?.rows ?? 0} 个形态，`
@@ -670,13 +673,13 @@ if (!recordPanel.figures.length) {
     + ` 展开后技能 ${after.skillRows} 行，按钮文案「${after.toggle?.text}」`);
 }
 
-// ---- 权重只驱动两个榜的「分」（2026-10-11 第 10 轮起只剩一套）------------------
+// ---- 权重只驱动两个榜的「分」（2026-10-11 第 10 轮起副本权重只剩一套）----------
 //
 // 演进：用户 2026-10 要求「性价比总榜和抽卡方案的权重相互独立」→ 两行输入框；
-// 2026-10-11 第 10 轮又说「去掉方案权重那一行」—— 因为新的抽卡方案是**队伍口径**，
-// 它的「性价比得分」直接取总榜的分。所以现在**一套权重同时驱动两块**，
-// 这里改成钉「那一个输入框真的改到了总榜的分」。
-console.log('\n▶ 副本权重：一套驱动总榜（队伍方案的分也来自它）');
+// 2026-10-11 第 10 轮又说「去掉方案权重那一行」—— 因为新的抽卡方案是**队伍口径**。
+// 2026-10-12 第 2 条把权重分成两大类：**关卡权重**（下面这一段，一套同时驱动总榜与
+// 抽卡方案的强度侧）+ **抽卡权重**（强度/性价比，见再下面那一段）。
+console.log('\n▶ 关卡权重：一套驱动总榜（抽卡方案的强度得分也来自它）');
 const badges = () => evaluate(`(() => {
   const pick = (sel) => document.querySelector(sel)?.querySelector('.advice-unit-value')?.textContent || null;
   const teamHead = document.querySelector('#adviceTeamPlanBody .advice-plan-team .advice-plan-team-head');
@@ -741,8 +744,8 @@ for (let i = 0; i < 20; i += 1) {
 }
 const base = await badges();
 console.log(`  初始：总榜第一条 ${base.frontier} / 队伍方案第一条 ${base.plan}`);
-// ⚠️ 2026-10-11 第 10 轮起**只有一套权重**（用户：「去掉方案权重那一行」）：
-// 队伍方案的「性价比得分」直接取性价比总榜的分，所以这一行会同时改两个榜的分数 ——
+// ⚠️ 2026-10-11 第 10 轮起副本权重只有一套（用户：「去掉方案权重那一行」）：
+// 抽卡方案的**强度得分**走同一条 `frontier` 口径的链，所以这一行会同时改两个榜的分数 ——
 // 那是口径使然（两处本来就该同源），不再是「耦合没拆干净」。
 // 输入框有 5 个，对应 ENV_WEIGHT_ROWS 的顺序（见 `advice.js`）。这里把两个不同的
 // 副本各调一次，验证「同一个输入框真的驱动了两块」。
@@ -784,6 +787,61 @@ console.log(`  ${blankWeightOk ? '✓' : '✗'} 清空「异相仲裁 · 绝境�
 // 不把测试值留在用户浏览器里；这里只恢复总榜这一行，方案行已在上面恢复。
 await evaluate(`document.getElementById('adviceFrontierWeightsReset')?.click()`);
 await sleep(1500);
+
+// ---- 抽卡权重：强度 / 性价比（用户 2026-10-12 第 2、3、4 条）--------------------
+//
+// 这一类的判据与关卡权重**不同**：它**不进服务端请求**（那两个数只决定浏览器里
+// `teamPlan()` 怎么加权），所以改它不该重算数据集、也不该动角色总榜。
+// 这里钉三件事：① 两个输入框在、② 存档写进 `hsr.advice.drawWeights`、
+// ③ 改它之后「补金推荐分」那个等式里的两个系数真的换了、而总榜一个字不动。
+console.log('\n▶ 抽卡权重：强度 / 性价比（只重画抽卡方案，不重算数据集）');
+const drawProbe = () => evaluate(`(() => {
+  const eq = document.querySelector('#adviceTeamPlanBody .advice-plan-team .advice-plan-team-eq');
+  const board = document.querySelector('#adviceConclusionUnits .advice-unit .advice-unit-value');
+  return {
+    eq: eq ? eq.textContent : null,
+    board: board ? board.textContent : null,
+    inputs: [ ...document.querySelectorAll('#adviceDrawWeightRow input.advice-draw-weight') ].map((i) => i.value),
+    meta: document.getElementById('adviceDrawWeightsMeta')?.textContent || null,
+    stored: localStorage.getItem('hsr.advice.drawWeights'),
+  };
+})()`);
+const drawInputsOk = (await drawProbe()).inputs.length === 2;
+if (!drawInputsOk) failures += 1;
+console.log(`  ${drawInputsOk ? '✓' : '✗'} 抽卡权重有 2 个输入框（强度 / 性价比）`);
+const drawBase = await drawProbe();
+console.log(`  初始：${drawBase.eq}`);
+console.log(`        摘要 ${drawBase.meta}`);
+// 3 : 1 → 归一化成 0.75 / 0.25，等式里那两个系数必须跟着换。
+await evaluate(`(() => {
+  const inputs = [ ...document.querySelectorAll('#adviceDrawWeightRow input.advice-draw-weight') ];
+  inputs.forEach((input, i) => {
+    input.value = String([3, 1][i]);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  return inputs.length;
+})()`);
+await sleep(1200);
+const drawAfter = await drawProbe();
+const drawEqOk = Boolean(drawAfter.eq && drawAfter.eq.includes('× 0.75') && drawAfter.eq.includes('× 0.25'));
+if (!drawEqOk) failures += 1;
+console.log(`  ${drawEqOk ? '✓' : '✗'} 3 : 1 应印成 × 0.75 / × 0.25 —— ${drawAfter.eq}`);
+const drawStoredOk = Boolean(drawAfter.stored && /"strength":3/.test(drawAfter.stored));
+if (!drawStoredOk) failures += 1;
+console.log(`  ${drawStoredOk ? '✓' : '✗'} 抽卡权重存档在 hsr.advice.drawWeights：${drawAfter.stored}`);
+// 总榜不吃抽卡权重（它只看关卡权重）—— 这一条是「不重算数据集」的可观测形式。
+const drawBoardOk = drawAfter.board === drawBase.board;
+if (!drawBoardOk) failures += 1;
+console.log(`  ${drawBoardOk ? '✓' : '✗'} 角色总榜不受抽卡权重影响：`
+  + `${drawBase.board} → ${drawAfter.board}`);
+// 收尾：恢复默认（同一个按钮管两大类）。
+await evaluate(`document.getElementById('adviceFrontierWeightsReset')?.click()`);
+await sleep(1200);
+const drawReset = await drawProbe();
+const drawResetOk = (drawReset.inputs || []).join(',') === '1,1'
+  && Boolean(drawReset.eq && drawReset.eq.includes('× 0.5'));
+if (!drawResetOk) failures += 1;
+console.log(`  ${drawResetOk ? '✓' : '✗'} 「恢复默认」把抽卡权重也还原成 1 : 1 —— ${drawReset.eq}`);
 
 // ---- 总榜行图标 / 详情大窗口 / 文案（用户 2026-10 点名的四条）--------------------
 //
@@ -1537,7 +1595,9 @@ if (!tipTarget) {
   // 以及上面那条「表现」（判据线来自数据集）。
   const NOTE_RE = [
     /^整包 = 角色 \+ 星魂档 \+ 光锥（含叠影）；整包自身 \d+ 金不进公式。$/,
-    /^最近 \d+ 个版本按 2:2:2:1:1:1:1 加权，未上线版本不参与加权。$/,
+    // ⚠️ 比例与版数都**跟着数据走**（2026-10-12 第 5 条把窗口从 7 版收到 3 版，
+    // `VERSION_WEIGHTS` 也随之从 2:2:2:1:1:1:1 变成 2:2:2），所以正则只能钉形状。
+    /^最近 \d+ 个版本按 [\d:]+ 加权，未上线版本不参与加权。$/,
     notePerfRe,
     // 用户 2026-10-11 缺陷 5：证据基础必须写出来（新角色按单版最大值、老角色按 7 版平均）。
     /^实测证据 \d+ 个（副本×版本）；证据越少，分数波动越大。$/,
@@ -2197,14 +2257,23 @@ const teamPlanProbe = await evaluate(`(() => {
     const head = card.querySelector('.advice-plan-team-head');
     const badge = head?.querySelector('.advice-unit-value')?.textContent || '';
     const eq = head?.querySelector('.advice-plan-team-eq')?.textContent || '';
-    // ⚠️ 那个等式里有 4 个数字（两个分项 + 两处 ×0.5 权重），实测形如
+    // ⚠️ 那个等式里有 4 个数字（两个分项 + 两处系数），实测形如
     //    「= 强度得分 64.9 × 0.5 + 差额接近度 83.3 × 0.5」—— 按**下标**取会取到 64.9 与 0.5
     //    （于是 0.5×64.9+0.5×0.5 ≠ 徽标，假红）。只能按标签取。
     //    ⚠️ 用户 2026-10-11 把「性价比」改叫**强度得分**、「总分」改叫**补金推荐分**，
     //    并把全角空格换成普通空格 —— 标签跟着改，否则这两条断言会双双假红。
+    //    ⚠️ 2026-10-12 第 3、4 条把写死的 × 0.5 换成了**用户可调的抽卡权重**，
+    //    所以这两个系数必须从等式里现取，不能再写死（默认仍是 0.5 / 0.5）。
     //    ⚠️ 这一段整个是模板字符串：注释里**不能出现反引号**（HANDOFF §6.1 第 16 条）。
     const numAfter = (label) => Number((eq.match(new RegExp(label + '[^0-9]*([0-9]+(?:\\.[0-9]+)?)')) || [])[1]);
-    const parts = [numAfter('强度得分'), numAfter('差额接近度')];
+    const coefAfter = (label) => {
+      const seg = eq.slice(eq.indexOf(label));
+      return Number((seg.match(/×\\s*([0-9]+(?:\\.[0-9]+)?)/) || [])[1]);
+    };
+    // ⚠️ 第二项在 2026-10-12 第 5 条从「差额接近度」换成了**性价比得分**
+    //    （差额接近度 与 压金度 合成）—— 标签不跟着改，numAfter 会取到 NaN。
+    const parts = [numAfter('强度得分'), numAfter('性价比得分')];
+    const coefs = [coefAfter('强度得分'), coefAfter('性价比得分')];
     const fills = [ ...card.querySelectorAll('.advice-plan-team-fill .advice-fill-item') ];
     // 一笔补金可能是**多金**（例：遐蝶 E0→E2 一笔 2 金），所以条数 ≠ 补金金数 ——
     // 正确的判据是「各条的金数之和 = 补金金数」。每条的 .advice-fill-cost 以「N 金」开头。
@@ -2224,6 +2293,7 @@ const teamPlanProbe = await evaluate(`(() => {
       eqText: eq,
       cardText: card.textContent || '',
       parts,
+      coefs,
       hasRank: Boolean(head?.querySelector('.advice-unit-rank')?.textContent),
       slots: card.querySelectorAll('.advice-plan-team-slot').length,
       missing: card.querySelectorAll('.advice-plan-team-slot.is-missing').length,
@@ -2266,11 +2336,15 @@ if (teamPlanProbe.missing) {
   if (!legacyGone) failures += 1;
   console.log(`  ${legacyGone ? '✓' : '✗'} 「方案权重」那一行已删除（残留 ${teamPlanProbe.legacy} 个容器）`);
   if (hasCards) {
-    // 每张卡：名次 + 四个位置 + 分项等式（两数各半 = 徽标）+ 补金顺序条数 = 补金金数
-    const eqOk = teamPlanProbe.rows.every((r) => r.parts.length === 2
-      && Math.abs(0.5 * r.parts[0] + 0.5 * r.parts[1] - r.badge) < 0.51);
+    // 每张卡：名次 + 四个位置 + 分项等式（两个分项 × 印出来的系数 = 徽标）+ 补金顺序之和 = 补金金数
+    // ⚠️ 系数不写死 0.5：2026-10-12 第 3 条起它们来自用户可调的**抽卡权重**，
+    //    这里验的是「按卡上印出来的系数算得回去」+「两个系数加起来是 1」。
+    const eqOk = teamPlanProbe.rows.every((r) => r.parts.length === 2 && r.coefs.length === 2
+      && Math.abs(r.coefs[0] + r.coefs[1] - 1) < 0.02
+      && Math.abs(r.coefs[0] * r.parts[0] + r.coefs[1] * r.parts[1] - r.badge) < 0.51);
     if (!eqOk) failures += 1;
-    console.log(`  ${eqOk ? '✓' : '✗'} 每张卡的总分 = 性价比×0.5 + 差额接近度×0.5（印出来的两个数算得回去）`);
+    console.log(`  ${eqOk ? '✓' : '✗'} 每张卡的总分 = 强度得分×系数 + 差额接近度×系数`
+      + `（系数由抽卡权重决定、印在卡上，两个系数之和必须是 1）`);
     const shapeOk = teamPlanProbe.rows.every((r) => r.hasRank && r.slots === 4
       // ⚠️ `fills >= 1` 曾被写成硬条件，与用户第 6 条**自相矛盾**：隐金设置开着时
       //    「不添加成本的那几笔」会被隐藏，一整队的补金项全被盖掉时列表就是空的。
@@ -2298,23 +2372,30 @@ if (teamPlanProbe.missing) {
     //   ② 徽标标签必须叫「补金推荐分」、「性价比」必须改叫「强度得分」，
     //      且等式里**不许再用全角空格**（用户：「注意空格不要离得太远」）；
     //   ③ 补金顺序写「本体 / 本体+E1」，**不许再出现箭头 `→`**；
-    //   ④ 界面**不显示抽数**（卡片正文里不许有「抽」字）、补金顺序里也不许再写「性价比」；
+    //   ④ 界面**不显示抽数**、补金顺序里也不许再写「性价比」；
+    //      ⚠️ 2026-10-12 起判据是「不许出现 `N 抽` / `抽数`」而不是单个「抽」字 ——
+    //      用户第 2 条把第二类权重命名为**抽卡权重**，那个功能名必然含「抽」。
     //   ⑤ 条数上限 15。
     const labelOk = teamPlanProbe.rows.every((r) => /^补金推荐分 \+/.test(r.badgeText)
       && r.eqText.includes('强度得分') && !r.eqText.includes('　'));
     if (!labelOk) failures += 1;
     console.log(`  ${labelOk ? '✓' : '✗'} 标签改成「补金推荐分 / 强度得分」且等式里没有全角空格`
       + `（首条「${teamPlanProbe.rows[0]?.badgeText || ''}」/「${(teamPlanProbe.rows[0]?.eqText || '').slice(0, 60)}」）`);
-    const stepOk = teamPlanProbe.rows.every((r) => r.fillSteps.every((t, i) => {
+    // ⚠️ 「不出现抽」这条判据在 2026-10-12 收窄成「不出现**抽数**」：用户第 2 条把
+    //    第二类权重命名为**抽卡权重**（那是功能名，必然含「抽」字），而这条判据的本意是
+    //    「界面不显示抽数」（用户 2026-10-11 第 5 条）。所以禁词是 `N 抽` / `抽数`，
+    //    不是单独一个「抽」字 —— 只禁那个字会连功能名一起误杀。
+    const noPulls = !teamPlanProbe.rows.some((r) => /抽数|\d\s*抽/.test(r.cardText));
+    const stepOk = noPulls && teamPlanProbe.rows.every((r) => r.fillSteps.every((t, i) => {
       // ⚠️ 用户 2026-10-11 报的 bug：「遐蝶 本体+E2 2 金 这个描述有误，我已有遐蝶，
       //    应改为 E1-E2」——**已拥有**的角色只能写「Ea→Eb」，写「本体…」就是错的
       //    （那一笔根本不包含本体）。没拥有的角色/光锥才写「本体」或「本体+E1」。
       if (r.ownedChars.includes(r.fillNames[i])) return /^E\d→E\d$/.test(t);
       return /^本体(\+[ES]\d)?$/.test(t) || /^[ES]\d→[ES]\d$/.test(t);
-    }) && !teamPlanProbe.rows.some((r) => r.cardText.includes('抽')));
+    }));
     if (!stepOk) failures += 1;
     console.log(`  ${stepOk ? '✓' : '✗'} 补金顺序：**已拥有**的角色写「E1→E2」、没拥有才写「本体 / 本体+E1」`
-      + `（用户 2026-10-11 报的「我已有遐蝶」），全文不出现「抽」`
+      + `（用户 2026-10-11 报的「我已有遐蝶」），全文不出现抽数（${noPulls ? '✓' : '✗'}）`
       + `（首条 ${JSON.stringify(teamPlanProbe.rows[0]?.fillSteps || [])}）`);
     const capOk = teamPlanProbe.cards <= 15;
     if (!capOk) failures += 1;

@@ -248,8 +248,16 @@ const main = async () => {
         && junkHidden.body?.hiddenCosts?.gift === true
         && junkHidden.body?.hiddenCosts?.bogus === undefined,
         `status=${junkHidden.status} hiddenCosts=${JSON.stringify(junkHidden.body?.hiddenCosts)}`);
-      check('conclusion payload 形状升到 v7（hiddenCosts 回显 + availability + frontierTiers）',
-        hiddenOn.body?.payload === 7, `payload=${hiddenOn.body?.payload}`);
+      check('conclusion payload 形状升到 v8（hiddenCosts + availability + frontierTiers + strength）',
+        hiddenOn.body?.payload === 8, `payload=${hiddenOn.body?.payload}`);
+      // 抽卡方案的「强度得分」= 服务端下发的**纯强度**归一化（用户 2026-10-12 第 3 条）：
+      // 界面自己反推不出来（`total = 强度 × 金数项` 而金数项要逐条查证据），所以必须实测它在。
+      check('conclusion 每个整包都带 strength（纯强度，不含金数项）',
+        (hiddenOn.body?.frontierUnits || []).length > 0
+        && (hiddenOn.body?.frontierUnits || []).every((u) => Number.isFinite(Number(u.strength)))
+        && (hiddenOn.body?.frontierTiers?.['0'] || []).every((u) => Number.isFinite(Number(u.strength))),
+        `frontierUnits=${(hiddenOn.body?.frontierUnits || []).length}`
+        + ` 缺 strength=${(hiddenOn.body?.frontierUnits || []).filter((u) => !Number.isFinite(Number(u.strength))).length}`);
       // 队伍口径的抽卡方案在**界面**现算差额，所以 availability 必须真的发过去；
       // 缺它时界面会把 4★ 也算成 1 金（见 conclusion.js 的 slimAvailability 注释）。
       check('conclusion 带成本口径表 availability（星级 / 常驻标记）',

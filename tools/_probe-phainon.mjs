@@ -1,4 +1,8 @@
-﻿// 追一支特定队伍：**白厄 / 刻律德菈 / 昔涟 / 花火**（第一版抽卡方案里的 #2，
+// ⚠️ 口径变更：本探针写于旧口径（①=总榜分含金数项归一化）；v4.6.87 起 ① 换成**纯强度**
+// （`rows[].strengthPct`，原始值 `rows[].strength`），这里已经跟着改。
+// 下面 `legacyTop()` 那一段是**故意**保留的旧口径复算，不要跟着改。
+//
+// 追一支特定队伍：**白厄 / 刻律德菈 / 昔涟 / 花火**（第一版抽卡方案里的 #2，
 // 「性价比低但差额接近度高」那一支）。看它在**当前算法**下排第几、两个分项各是多少。
 //
 // 同时把「只换刻度基准、不换候选池」的对照也打出来，用来分离两个原因：
@@ -56,7 +60,7 @@ SCORING.teamPlanMaxRows = keep;
 
 console.log(`账号 ${role.nickname}｜隐金=${HIDDEN ? '全勾' : '不减'}｜默认总榜权重`);
 console.log(`总榜 ${concl.frontierUnits.length} 条 · 候选池 ${planAll.pool} 支`
-  + ` · ① 刻度 ${planAll.scoreLo.toFixed(1)}~${planAll.scoreHi.toFixed(1)}`
+  + ` · ① 刻度 ${planAll.strengthLo.toFixed(1)}~${planAll.strengthHi.toFixed(1)}`
   + ` · ② 封顶 ${planAll.gapMax} 金（p${Math.round(SCORING.teamPlanGapCapPct * 100)}）`);
 
 /** 找含 Phainon（白厄）的队伍。 */
@@ -64,7 +68,7 @@ const hits = planAll.rows.filter((r) => r.members.some((m) => m.char === 'Phaino
 console.log(`\n候选池里含【白厄】的队伍：${hits.length} 支`);
 for (const [i, r] of planAll.rows.entries()) {
   if (!r.members.some((m) => m.char === 'Phainon')) continue;
-  console.log(`  全池第 ${i + 1} 名｜总分 ${r.total.toFixed(1)} = ①${r.scorePct.toFixed(1)}`
+  console.log(`  全池第 ${i + 1} 名｜总分 ${r.total.toFixed(1)} = ①${r.strengthPct.toFixed(1)}`
     + ` + ②${r.gapPct.toFixed(1)}｜补 ${r.gap} 金｜${nameOf(r)}`);
   console.log(`      成员档位：${r.members.map((m) => `${cn(m.char)}[${m.owned ? '有' : '缺'}]E${m.eidolon ?? 0}`
     + `${m.lc ? `+${cn(m.lc)}S${m.superimp ?? 1}` : ''}`).join(' / ')}`);
@@ -105,7 +109,7 @@ for (const r of hits.filter((x) => x.gap <= 1)) {
   const ls = legacy.find((x) => x.key === r.key);
   console.log(`  ${nameOf(r)}（补 ${r.gap} 金）`);
   console.log(`    修后刻度（全池 p50 = ${planAll.gapMax} 金）：总分 ${r.total.toFixed(1)}`
-    + ` = ①${r.scorePct.toFixed(1)} + ②${r.gapPct.toFixed(1)}`);
+    + ` = ①${r.strengthPct.toFixed(1)} + ②${r.gapPct.toFixed(1)}`);
   console.log(`    修前刻度（展示批次 p50 = ${legacy[0].cap} 金）：`
     + (ls ? `总分 ${ls.lt.toFixed(1)} = ①${ls.ls.toFixed(1)} + ②${ls.lg.toFixed(1)}`
       : '（它不在「按队分初选的前 15 支」里 —— 连算分的机会都没有）'));
@@ -124,7 +128,7 @@ console.log(`\n【闸门影响】修后按总分排的前 15 名里，有 ${bloc
   + `在修前那套「按队分初选前 15 支」里**进不来**（所以从来没被算过总分）：`);
 for (const r of blocked) {
   console.log(`  · 修后 #${planAll.rows.indexOf(r) + 1} 总分 ${r.total.toFixed(1)}`
-    + ` = ①${r.scorePct.toFixed(1)} + ②${r.gapPct.toFixed(1)}｜补 ${r.gap} 金｜${nameOf(r)}`);
+    + ` = ①${r.strengthPct.toFixed(1)} + ②${r.gapPct.toFixed(1)}｜补 ${r.gap} 金｜${nameOf(r)}`);
 }
 const legacyWorstTotal = Math.min(...legacy.map((r) => r.lt));
 console.log(`  （对照：修前那 15 支里，总分最低的一支只有 ${legacyWorstTotal.toFixed(1)}）`);
