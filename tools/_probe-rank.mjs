@@ -15,7 +15,7 @@ import { readFile } from 'node:fs/promises';
 import {
   buildConclusion, budgetPlan, eidolonsOf, envWeightOf, lightConeRanksOf, ownedCharacters,
   VERSION_WINDOW,
-} from '../src/core/advice.js';
+} from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
 

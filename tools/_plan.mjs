@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { loadI18n } from '../src/server/archive.js';
-import { budgetPlan } from '../src/core/advice.js';
+import { budgetPlan } from '../public/scripts/advice.js';
 
 const i18n = await loadI18n();
 const zc = new Map(Object.entries(i18n.characters).map(([en, zh]) => [zh, en]));

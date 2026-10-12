@@ -15,7 +15,7 @@ import { createApp } from '../src/server/app.js';
 import {
   DEFAULT_HIDDEN_COSTS, NO_HIDDEN_COSTS, SCORING, eidolonsOf, lightConeRanksOf, ownedCharacters,
   setHiddenCosts, teamPlan, teamPoolUnits, unitPullsOf,
-} from '../src/core/advice.js';
+} from '../public/scripts/advice.js';
 
 let passed = 0;
 const fails = [];

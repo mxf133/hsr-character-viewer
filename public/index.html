@@ -3,40 +3,369 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="崩坏：星穹铁道 角色信息查询工具 — 程序开发中，界面重做中">
-  <!-- 占位页不该被搜索引擎收录（它没有任何内容，收录了只会让人以为这是个空站）。 -->
-  <meta name="robots" content="noindex">
-  <title>星穹铁道 · 角色信息（开发中）</title>
+  <meta name="description" content="崩坏：星穹铁道 角色信息查询工具 — 米游社扫码登录，查询开拓者总览与角色详情">
+  <title>星穹铁道 · 角色信息</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🚄</text></svg>">
-  <link rel="stylesheet" href="/styles/placeholder.css">
+  <link rel="stylesheet" href="/styles/app.css">
+  <!-- 性价比详情**大窗口**的尺寸与内容中和规则。⚠️ 必须在 app.css **之后**：
+       `.advice-tip-card` 与 app.css 的 `.char-panel-card` 同特异度（0,1,0），
+       谁后加载谁生效 —— 接在前面的话窗口尺寸会被 `.char-panel-card` 压回去。 -->
+  <link rel="stylesheet" href="/styles/advice-tip-window.css">
 </head>
 <body>
-  <!--
-    这里是**唯一的**对外页面：程序开发中，界面还没定稿。
-
-    为什么把原来的界面整个删掉（v4.6.85）：用户 2026-10 看过之后认为那一版网页界面
-    写得很糟糕，而最终版本还没定；与其把一个不打算保留的界面挂出去，不如明确写
-    「还在更新中」。删掉的是**界面**（index.html 的版面 + 8 个前端脚本 + 2 份样式），
-    `advice.js`（算分核心）与 `format.js`（字段解析）搬到 `src/core/` 继续给服务端与
-    工具使用，所以后端服务、数据管线、推荐算法都还在。
-
-    ⚠️ 这一页**故意不带任何脚本**：没有登录、不读缓存、不发 `/api/*` 请求。
-    重做界面时不要往这里加临时代码 —— 新界面应当另起一套文件（`public/scripts/**`），
-    这一页留给「界面还没接上」的那段时间。
-  -->
   <div class="starfield" aria-hidden="true"></div>
 
-  <main class="notice">
-    <p class="badge">🚧 开发中</p>
-    <h1>程序还在更新中，敬请期待</h1>
-    <p class="lead">
-      网页界面正在重做。后端服务、米游社战绩读取与抽卡推荐算法都已经在仓库里，
-      但界面还没定稿，所以这一版先不对外开放。
-    </p>
-    <p class="hint">
-      想看进度或提建议：<a href="https://github.com/mxf133/hsr-character-viewer">github.com/mxf133/hsr-character-viewer</a>
-    </p>
-    <p class="foot">崩坏：星穹铁道 · 角色信息查询 + 抽卡推荐</p>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">✦</span>
+      <div class="brand-text">
+        <h1>崩坏：星穹铁道 <span>角色信息</span></h1>
+        <p>米游社扫码登录 · 官方战绩接口</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <nav class="tabs" id="tabs" role="tablist" aria-label="功能分页">
+        <button class="tab is-active" id="tabRecords" type="button" role="tab"
+          aria-selected="true" data-view="records">角色信息</button>
+        <button class="tab" id="tabAdvice" type="button" role="tab"
+          aria-selected="false" data-view="advice">抽卡推荐</button>
+      </nav>
+      <span id="statusPill" class="pill pill-idle">未登录</span>
+      <button id="logoutBtn" class="btn btn-ghost" hidden>退出登录</button>
+    </div>
+  </header>
+
+  <main class="layout" id="layoutRecords">
+    <!-- ---------------------------------------------------------------- -->
+    <aside class="panel panel-side" id="accountPanel">
+      <div class="panel-heading">
+        <h2 class="panel-title">账号与角色</h2>
+        <button id="addAccountBtn" class="btn btn-ghost btn-sm" type="button" hidden>添加账号</button>
+      </div>
+      <div id="accountList" class="account-list">
+        <p class="muted">尚未登录。使用右侧二维码登录米游社后，账号会出现在这里。</p>
+      </div>
+    </aside>
+
+    <!-- ---------------------------------------------------------------- -->
+    <section class="panel panel-main" id="mainPanel">
+      <!-- Login view -->
+      <div id="viewLogin" class="view">
+        <div class="login-grid">
+          <div class="login-copy">
+            <div class="login-heading">
+              <h2 id="loginTitle">扫码登录米游社</h2>
+              <button id="loginCancel" class="btn btn-ghost btn-sm" type="button" hidden>返回账号</button>
+            </div>
+            <ol class="steps">
+              <li>打开手机上的<b>米游社</b> App</li>
+              <li>点击右上角 <b>+</b> → <b>扫一扫</b></li>
+              <li>扫描右侧二维码并在手机上确认登录</li>
+            </ol>
+            <p class="muted small">
+              二维码有效期约 2 分钟，失效后会自动刷新。登录凭证仅保存在本机
+              <code>data/accounts.json</code>，不会上传到任何第三方服务器。
+            </p>
+            <div class="login-alt">
+              <button id="toggleCookieBtn" class="btn btn-ghost btn-sm" type="button">使用 Cookie 登录（备用）</button>
+            </div>
+            <div id="cookieForm" class="cookie-form" hidden>
+              <label for="cookieInput">粘贴米游社 Cookie</label>
+              <textarea id="cookieInput" rows="4" spellcheck="false"
+                placeholder="cookie_token=...; account_id=...; ltuid_v2=...; ltmid_v2=..."></textarea>
+              <div class="row">
+                <button id="cookieSubmit" class="btn btn-primary btn-sm" type="button">使用该 Cookie 登录</button>
+                <button id="cookieCancel" class="btn btn-ghost btn-sm" type="button">取消</button>
+              </div>
+              <p class="muted small">
+                在浏览器登录 <code>user.mihoyo.com</code> 后，从开发者工具中复制 Cookie。
+                至少需要 <code>cookie_token</code> 与 <code>account_id</code>。
+              </p>
+            </div>
+          </div>
+
+          <div class="qr-box">
+            <div id="qrWrap" class="qr-wrap">
+              <img id="qrImage" alt="米游社登录二维码" width="288" height="288" hidden>
+              <div id="qrPlaceholder" class="qr-placeholder">
+                <div class="spinner" aria-hidden="true"></div>
+                <p>正在获取二维码…</p>
+              </div>
+            </div>
+            <p id="qrStatus" class="qr-status">初始化中…</p>
+            <button id="qrRefresh" class="btn btn-primary btn-sm" type="button">刷新二维码</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Dashboard view -->
+      <div id="viewDashboard" class="view" hidden>
+        <div class="dash-head">
+          <div>
+            <h2 id="dashTitle">选择角色</h2>
+            <p id="dashSubtitle" class="muted small"></p>
+          </div>
+          <div class="dash-actions">
+            <label class="field">
+              <span>角色</span>
+              <select id="roleSelect"></select>
+            </label>
+            <button id="refreshBtn" class="btn btn-primary btn-sm" type="button"
+              title="重新从米游社抓取当前角色的完整战绩。请求过多会触发米游社风控，所以打开页面不会自动刷新，短时间内重复点会被限流">刷新数据</button>
+          </div>
+          <p id="snapshotUpdated" class="muted small" hidden></p>
+        </div>
+
+        <div id="warningBox" class="warn-box" hidden></div>
+        <div id="loadingBox" class="loading-box" hidden>
+          <div class="spinner" aria-hidden="true"></div>
+          <span>正在读取战绩数据…</span>
+        </div>
+        <div id="errorBox" class="error-box" hidden></div>
+
+        <div id="snapshot" class="snapshot" hidden></div>
+      </div>
+    </section>
   </main>
+
+  <!-- ---------------------------------------------------------------- -->
+  <!-- 抽卡推荐: derived entirely from the offline theherta.com dataset.   -->
+  <main class="layout layout-advice" id="layoutAdvice" hidden>
+    <section class="panel panel-advice">
+      <div class="dash-head">
+        <div>
+          <h2>抽卡推荐</h2>
+        </div>
+        <div class="dash-actions">
+          <button id="adviceReload" class="btn btn-ghost btn-sm" type="button"
+            title="只重新读取本机已保存的黑塔网数据，不联网">重读本地数据</button>
+          <button id="adviceUpdate" class="btn btn-ghost btn-sm" type="button"
+            title="联网抓取黑塔网缺失和最新版本，并重建统计">同步黑塔网数据</button>
+        </div>
+      </div>
+
+      <div id="adviceEmpty" class="warn-box" hidden></div>
+      <div id="adviceLoading" class="loading-box" hidden>
+        <div class="spinner" aria-hidden="true"></div>
+        <span>正在读取投稿统计…</span>
+      </div>
+
+      <div id="adviceBody" hidden>
+        <div id="adviceBrief" class="advice-brief"></div>
+
+        <!-- 数据状态（用户 2026-10-11 第 3 条：「将角色快照、战斗记录、黑塔网数据
+             三者的缓存记录整合在一起，共同放置于抽卡推荐下方」）。
+
+             改前这三件事散在三处：角色快照的时间在正文最上面一行、战斗记录的时间
+             在①那一节里、黑塔网数据的生成时间在标题栏右侧 —— 想知道「我手上的
+             数据是什么时候的」要在三个地方各看一次，而且三处写法还各不相同。现在
+             并排三格、字段一致，就贴在「抽卡推荐」标题下方。
+
+             ⚠️ 三格的 id（`adviceSnapshotFreshness` / `recordFreshness` /
+             `adviceDatasetFreshness`）是既有契约：`advice-view.js` 按 id 取它们，
+             内容整块重画（含空态）。**不要**为了排版再往里套一层元素 ——
+             `.data-freshness` 这一层就是格子本身。 -->
+        <section id="adviceDataStatus" class="data-status">
+          <div class="data-status-head">
+            <h3 class="data-status-title">数据状态</h3>
+            <span class="muted small">三份数据都只读本机：打开页面、切换分页都不会联网，要更新请点页面上的刷新按钮</span>
+          </div>
+          <div class="data-status-grid">
+            <div id="adviceSnapshotFreshness" class="data-freshness"></div>
+            <div id="recordFreshness" class="data-freshness"></div>
+            <div id="adviceDatasetFreshness" class="data-freshness"></div>
+          </div>
+        </section>
+
+        <!-- ① 战斗记录：米游社官方的四个高难副本记录（队伍/回合/积分）。
+             这是唯一需要联网的一节，未登录或没抓过时给出说明而不是报错。 -->
+        <section id="adviceRecord" class="advice-record">
+          <div class="record-head">
+            <h3 class="advice-h3">
+              <span class="record-no">①</span> 战斗记录
+              <span class="muted small">米游社官方数据</span>
+            </h3>
+            <div class="record-head-actions">
+              <span class="muted small" id="recordMeta"></span>
+              <button id="recordRefresh" class="btn btn-ghost btn-sm" type="button"
+                title="从米游社重新读取当前角色的战斗记录。请求过多会触发米游社风控，所以打开页面不会自动刷新，短时间内重复点会被限流">刷新米游社战绩</button>
+            </div>
+          </div>
+          <p class="muted small advice-note" id="recordNote"></p>
+          <div id="recordTabs" class="record-tabs"></div>
+          <div id="recordModes" class="record-modes"></div>
+        </section>
+
+        <!-- 跨模式综合结论：把 5 个副本/关卡放在一起回答「这个账号该抽什么」。 -->
+        <div id="adviceConclusion" class="advice-conclusion" hidden>
+          <div class="advice-section-head">
+            <h3 class="advice-h3">
+              <span class="record-no">②</span> 综合结论 · 该抽什么
+              <span class="muted small" id="adviceConclusionMeta"></span>
+            </h3>
+          </div>
+
+          <!-- 副本权重**两套**（用户 2026-10 要求「性价比总榜和抽卡方案的权重应相互
+               独立」）：总榜那一行只影响性价比总榜，方案那一行只影响抽卡方案。
+               两块各自贴在自己的小节里，改哪一行只动哪一个榜。 -->
+          <!-- 一节：性价比总榜（纯黑塔网投稿口径，不看你的角色池） -->
+          <h4 class="advice-h4">
+            性价比总榜
+            <span class="muted small">角色 / 星魂 / 光锥混排 · 只看黑塔网投稿数据</span>
+          </h4>
+          <p class="muted small advice-note" id="adviceUnitNote">
+            这个榜<strong>完全不看你的角色池</strong>：每个副本先只保留<strong>判据最好的一档与次好的一档</strong>
+            （混沌回忆/虚构叙事是 <strong>0T</strong> / <strong>≤2T</strong>、末日幻影是 <strong>积分 4000</strong> /
+            <strong>≥3700</strong>、异相仲裁·绝境王棋关是<strong>行动值 &lt;300</strong> / <strong>&lt;500</strong>），
+            这批投稿<strong>全部进池</strong>（v4.6.78 起不再只圈最便宜的 25%），
+            最后看每个单位在这批里出现的<strong>占比</strong>——
+            占比越高说明它越常在能出分的阵容里出现。
+          </p>
+          <!-- 星魂档筛选的口径（用户 2026-10-11 报的缺陷：切到 E0/E1/E2/E6 只剩
+               「最佳成绩就在这一档」的角色）。说明只写在这一处，筛选器上的 title
+               写同一件事的短版。 -->
+          <p class="muted small advice-note">
+            下面的 <strong>E0 / E1 / E2 / E6</strong> 是把这一份榜拆成四个<strong>星魂档</strong>：
+            每一档<strong>各自比较</strong>，一个角色在每个档位都可能有自己的一行
+            （取它抽到这一档时最强的那个整包）。所以「最佳成绩在 E2」的角色，
+            切到 <strong>E0</strong> 也能看到它 E0 档的分数与名次 —— 不会因为别的档位分更高就消失。
+          </p>
+          <div class="advice-weights is-compact" id="adviceFrontierWeights">
+            <span class="advice-weights-title">总榜权重</span>
+            <span class="advice-weights-hint muted small">只影响性价比总榜（不看你的角色池）。只有<strong>相对大小</strong>有意义，
+              调成 0 = 这个副本不进总榜。</span>
+            <div class="advice-weights-grid" id="adviceFrontierWeightRow"></div>
+            <button type="button" id="adviceFrontierWeightsReset" class="btn btn-ghost btn-sm">恢复默认</button>
+            <span class="muted small advice-weights-meta" id="adviceFrontierWeightsMeta"></span>
+          </div>
+          <!-- 隐金设置（用户 2026-10-11）：「在性价比总榜添加一个按钮，用于额外设置，
+               将其放置于总榜权重下方」——所以它紧跟在 `#adviceFrontierWeights` 之后、
+               总榜列表之前。按钮只负责开详情窗口；口径与名单都在 advice.js 里
+               （`HIDDEN_COST_SETTINGS` / `hiddenReductionOf`），界面不抄第二份。 -->
+          <div class="advice-hidden-costs" id="adviceHiddenCostsBar">
+            <button type="button" id="adviceHiddenCostsOpen" class="btn btn-ghost btn-sm"
+              aria-haspopup="dialog">隐金设置</button>
+            <span class="muted small" id="adviceHiddenCostsMeta"></span>
+          </div>
+          <!-- 筛选器（星魂档 / 「只看我没有的」）：`feat/team-plan` 那一轮把它连同这个
+               节点一起撤掉了，而 `dsh/fix-eidolon-tier-filter` 恰好把它修好（每档各自
+               收敛一条）—— 收尾人裁决**保留并修好**，所以节点在这里，渲染在
+               `advice-view.js` 的 `renderUnitFilters()`。详见 HANDOFF §4.2E。 -->
+          <div class="advice-unit-toolbar">
+            <div id="adviceUnitFilter" class="advice-filters"></div>
+            <span class="muted small" id="adviceUnitMeta"></span>
+          </div>
+          <div id="adviceConclusionUnits" class="advice-units"></div>
+
+          <!-- 二节：抽卡方案（2026-10-11 第 10 轮改成**队伍口径**） -->
+          <div class="advice-section-head">
+            <h4 class="advice-h4">
+              抽卡方案
+              <span class="muted small" id="adviceTeamPlanMeta"></span>
+            </h4>
+          </div>
+          <p class="muted small advice-note" id="adviceTeamPlanNote">
+            这里给你的是<strong>可以照着走的补金路线</strong>：先看你已有几位核心角色，
+            再看<strong>下一步最适合补什么</strong>。候选来自<strong>性价比总榜里的真实队伍</strong>，
+            同一支队伍只留一条；补金推荐分同时考虑<strong>队伍强度</strong>和<strong>离你有多近</strong>，
+            让高分队伍与短路线都能被看见。每张卡都带角色 / 光锥图片、补金顺序与过渡档位，
+            点分数还能展开刻度来源和相近的次选配队。
+          </p>
+          <div id="adviceTeamPlanBody" class="advice-team-plan"></div>
+        </div>
+
+        <!-- 环境统计（上场率）：这一节按「当前副本 / 版本」算，所以选择器放在它自己的标题行里。
+             原来它挂在「推荐阵容」标题行上，用户要求删掉那一节之后挪过来。 -->
+        <div class="advice-section-head">
+          <h3 class="advice-h3">
+            环境统计 · 上场率
+            <span class="muted small" id="adviceCharMeta"></span>
+          </h3>
+          <div class="advice-section-fields">
+            <label class="field field-inline">
+              <span>副本</span>
+              <select id="adviceMode"></select>
+            </label>
+            <label class="field field-inline">
+              <span>版本</span>
+              <select id="adviceSeason"></select>
+            </label>
+          </div>
+        </div>
+        <p class="muted small advice-note" id="adviceCharNote">
+          按「通过该副本的投稿中出现次数」排序。<b>这只说明玩的人多，不代表强</b>，
+          所以上面的榜不按它排；列在这里是为了看清当前环境围绕哪些角色，以及各自的
+          星魂普及度。
+        </p>
+        <div id="adviceChars" class="advice-chars"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- 角色面板浮层：**两个分页共用同一个框**。
+       「角色信息」页点角色卡、抽卡推荐页的战斗记录里点角色 chip，弹出的都是这一个
+       （同一份 DOM、同一个 character-panel.js，连标题栏的按钮都一样），
+       否则同一张卡在两个分页长得不一样，早晚出对不上的数字。 -->
+  <div id="charPanelModal" class="modal char-panel-modal" hidden>
+    <div class="modal-card char-panel-card" role="dialog" aria-modal="true" aria-labelledby="charPanelTitle">
+      <div class="char-panel-head">
+        <h3 id="charPanelTitle">角色面板</h3>
+        <span class="muted small" id="charPanelSubtitle"></span>
+        <div class="char-panel-actions">
+          <button id="charPanelToggle" class="btn btn-ghost btn-sm" type="button">显示技能等级</button>
+          <button id="charPanelClose" class="btn btn-ghost btn-sm" type="button">关闭</button>
+        </div>
+      </div>
+      <div id="charPanelBody" class="char-panel-body"></div>
+    </div>
+  </div>
+
+  <!-- 1034 Geetest verification: the puzzle must run in a real browser, which is
+       exactly why Snap Hutao embeds WebView2. -->
+  <div id="verifyModal" class="modal" hidden>
+    <div class="modal-card">
+      <h3>需要米游社验证</h3>
+      <p class="muted small" id="verifyIntro">
+        米游社要求先通过一次验证码才能读取战绩数据（retcode 1034）。
+      </p>
+      <div id="geetestBox" class="geetest-box">
+        <div class="spinner" aria-hidden="true"></div>
+      </div>
+      <p id="verifyStatus" class="muted small"></p>
+
+      <div class="verify-primary">
+        <p class="muted small">
+          验证码由米游社（Geetest）提供，与 Snap Hutao 弹出的是同一套机制。
+          验证通过后本工具会自动读取数据。
+        </p>
+        <button id="verifyRetry" class="btn btn-primary btn-sm" type="button">重新验证</button>
+        <button id="verifyRecheck" class="btn btn-ghost btn-sm" type="button">我已完成验证，重新读取</button>
+      </div>
+
+      <details class="verify-alt">
+        <summary>高级：手动提交 x-rpc-challenge</summary>
+        <label for="challengeInput" class="muted small">
+          若你从其他工具得到了 <code>x-rpc-challenge</code>，可直接粘贴：
+        </label>
+        <input id="challengeInput" type="text" spellcheck="false" placeholder="粘贴 x-rpc-challenge 的值">
+        <button id="challengeSubmit" class="btn btn-primary btn-sm" type="button">使用该 challenge 重试</button>
+      </details>
+      <div class="modal-actions">
+        <button id="verifyCancel" class="btn btn-ghost btn-sm" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <p>
+      仅供学习与个人查询使用，数据来自米游社官方战绩接口。
+      本项目与米哈游 / HoYoverse 无任何关联。
+      <span class="footer-version" id="appVersion" hidden></span>
+    </p>
+  </footer>
+
+  <script type="module" src="/scripts/app.js"></script>
 </body>
 </html>

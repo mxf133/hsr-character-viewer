@@ -9,7 +9,7 @@
 //   node tools/_probe-evidence.mjs --find=遐蝶 --all
 import { archiveIndex, archiveFrontierAll, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
-import { buildConclusion, eidolonTierOf, VERSION_WINDOW } from '../src/core/advice.js';
+import { buildConclusion, eidolonTierOf, VERSION_WINDOW } from '../public/scripts/advice.js';
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));

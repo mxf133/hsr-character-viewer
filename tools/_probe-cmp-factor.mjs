@@ -9,7 +9,7 @@
 //   node tools/_probe-cmp-factor.mjs --find=遐蝶 --vs=真珠 --vs=千冶 --vs=砂金
 import { archiveIndex, archiveFrontierAll, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
-import { buildConclusion, frontierFactorsOf, VERSION_WINDOW } from '../src/core/advice.js';
+import { buildConclusion, frontierFactorsOf, VERSION_WINDOW } from '../public/scripts/advice.js';
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));

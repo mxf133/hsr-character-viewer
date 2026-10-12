@@ -10,7 +10,7 @@ import { AccountStore } from '../src/server/store.js';
 import {
   SCORING, DEFAULT_HIDDEN_COSTS, buildConclusion, eidolonsOf, lightConeRanksOf,
   teamPlan, ownedCharacters, VERSION_WINDOW,
-} from '../src/core/advice.js';
+} from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
 
