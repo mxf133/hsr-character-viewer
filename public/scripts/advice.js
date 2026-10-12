@@ -1015,6 +1015,21 @@ export const SCORING = {
    */
   teamPlanGapCapPct: 0.75,
   /**
+   * 「强度得分」**下限的分位**（候选池里纯强度的 p75）—— 用户 2026-10-12 第 7 条追问
+   * 「为什么现在有很多队伍的强度得分直接达到接近 100」。
+   *
+   * 取 0.75 是为了与 ② 的 `teamPlanGapCapPct` **对称**：那一侧是「差额达到池内 p75 就 0 分」，
+   * 这一侧是「强度低于池内 p75 就没分」，两边同一个分位、读数时不用记两个数。
+   * 实测（账号 1）：下限从池内最小（16.7）抬到 p75（891）之后，前 15 名的强度得分跨度
+   * 从 **26 分** 拉到 **71 分**。
+   *
+   * ⚠️ 这一条**只影响抽卡方案的强度得分**，不动角色总榜（总榜显示的是原始分，没有归一化）。
+   * ⚠️ 它**不是**把成本带进强度那一档：池内 `r(纯强度, 账面金数) = 0.24`、头部（≥1300）
+   * 是 **−0.65**（越便宜反而越强 —— 金数不进强度，9 金的满分与 24 金的满分拿同一个表现分）。
+   * 所以抬下限让「便宜还能满分」的队伍更占优，与用户「已被更能压成本的队伍取代」同向。
+   */
+  teamPlanStrengthFloorPct: 0.75,
+  /**
    * **抽卡权重**（用户 2026-10-12 第 3 条）：`{ strength, cost }` 两个数的**相对大小**，
    * 决定抽卡方案「补金推荐分」里两个分项各占多少。
    *
@@ -2272,13 +2287,29 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   const scoreLo = candidates.length ? Math.min(...candidates.map((t) => t.total)) : 0;
   const scoreHi = candidates.length ? Math.max(...candidates.map((t) => t.total)) : 0;
   /**
-   * ① **强度得分**的刻度：候选池里**纯强度**的最小 / 最大值（用户 2026-10-12 第 3 条）。
+   * ① **强度得分**的刻度：候选池里**纯强度**的 `teamPlanStrengthFloorPct` 分位 ~ 最大值
+   * （用户 2026-10-12 第 3 条 + 第 7 条追问「为什么现在有很多队伍的强度得分直接达到接近 100」）。
    *
-   * ⚠️ 与 `scoreLo` / `scoreHi`（总榜分的刻度，只用于浮层里解释「队分 N」）**不是**
-   * 同一对数：总榜分含金数项。以前 ① 直接用总榜分，本轮起 ① 换成纯强度
-   * —— 两个刻度都留在返回值里，界面各写各的那一列。
+   * ⚠️ 用户 2026-10-12 第 3 条那版的下限是**池内最小值**，实测那个值是 **16.7**
+   * （池里最弱的一支是「1 金血分队」），而争冠队伍都在 **1330~1397** —— 只占全量程的
+   * **4.8%**，于是任何有竞争力的队伍算出来必然落在 **95~100**（池内 220 支里 14 支 ≥95）。
+   * 更根本的一半原因在「表现」那条曲线：绝境（权重 ×10）在 **行动值 < 300 时固定 1.00**
+   * （用户 2026-10-11 点名定的），前 10 张卡里有 8 支的绝境行动值都在 286~298 —— 它们在
+   * **权重最大的副本上拿的是同一个表现分**，raw 强度只差 1.3%。
+   *
+   * 所以下限改成**分位数**（与 ② 的 p75 封顶对称：一边是「超过就 0 分」，一边是「低于就没分」）：
+   * 实测（账号 1，池内 p75 = 891）前 15 名的强度得分跨度从 **26 分** 拉开到 **71 分**。
+   * ⚠️ 实测另一个事实（别误会这条改动的性质）：抬下限**不是**把成本偷偷带进强度那一档 ——
+   * 池内 `r(纯强度, 账面金数) = 0.24`、而**头部（强度 ≥ 1300）是 −0.65**（越便宜反而越强，
+   * 因为金数不进强度，9 金的满分与 24 金的满分拿同一个表现分）。所以这条改动让
+   * 「便宜还能满分」的队伍更占优，方向与用户「已被更能压成本的队伍取代」的诉求一致。
    */
-  const strengthLo = candidates.length ? Math.min(...candidates.map((t) => t.strength)) : 0;
+  const strengthLo = (() => {
+    if (!candidates.length) return 0;
+    const sorted = candidates.map((t) => t.strength).sort((a, b) => a - b);
+    const p = Math.max(0, Math.min(1, Number(SCORING.teamPlanStrengthFloorPct) || 0.75));
+    return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
+  })();
   const strengthHi = candidates.length ? Math.max(...candidates.map((t) => t.strength)) : 0;
   /**
    * ② 的**封顶值**：候选池里补金差额的 `SCORING.teamPlanGapCapPct` 分位（现在是 p75）。
@@ -2303,7 +2334,14 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   for (const t of candidates) {
     // ① **强度得分** = 纯强度在候选池里的位置（0~100）—— 用户 2026-10-12 第 3、4 条：
     // 它不含金数项，所以「强度权重拉高 → 高金、低行动值的队伍排上来」才成立。
-    t.strengthPct = Number((100 * clampUnit(span(t.strength, strengthLo, strengthHi))).toFixed(4));
+    //
+    // ⚠️ 这里**不能**直接用 `span()`：它在 `hi − lo < 1e-9` 时返回 1（「全池同分 → 人人满分」），
+    // 而换成**分位下限**之后多了一种退化 —— 小池子里 p75 恰好等于最大值（2 支的夹具就是），
+    // 这时只有达到上限的那一支算满分，其余必须记 0；否则又会变成「大家都接近 100」。
+    const strengthSpan = strengthHi - strengthLo;
+    t.strengthPct = Number((strengthSpan > 1e-9
+      ? 100 * clampUnit((t.strength - strengthLo) / strengthSpan)
+      : (t.strength >= strengthHi - 1e-9 ? 100 : 0)).toFixed(4));
     // ② **性价比得分 == 差额接近度**（用户 2026-10-12 第 6 条：只要这一个刻度）。
     // 「差额接近度」= 1 − 差额 ÷ 封顶值：差额 0 金 = 100 分，达到/超过封顶值 = 0 分。
     // ⚠️ v4.6.87 这里还与「压金度」按 `teamPlanCostMix` 合成过 —— 已按用户要求删除，
@@ -2545,9 +2583,12 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     //   只会改展示条数，分数与名次一字不变。
     pool: candidates.length,
     poolAll: byRoster.size,
-    // ① 的刻度（纯强度，用户 2026-10-12 第 3 条）。
+    // ① 的刻度（纯强度，用户 2026-10-12 第 3 条）：下限是**池内分位**（第 7 条），上限是最大值。
+    // `strengthFloorPct` 一并回显 —— 界面那行刻度要写清「p75 ~ 最高」，否则读者会以为
+    // 下限是池内最弱的队（那正是让所有强队都算成 95+ 的原因）。
     strengthLo: Number(strengthLo.toFixed(4)),
     strengthHi: Number(strengthHi.toFixed(4)),
+    strengthFloorPct: Math.max(0, Math.min(1, Number(SCORING.teamPlanStrengthFloorPct) || 0.75)),
     // 总榜分的刻度：**只用于浮层解释「队分 N」**，不参与总分（总分只吃上面那两个刻度）。
     scoreLo: Number(scoreLo.toFixed(4)),
     scoreHi: Number(scoreHi.toFixed(4)),

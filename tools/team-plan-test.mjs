@@ -151,16 +151,21 @@ check('两个指标按**抽卡权重**合成，默认 1:1 = 旧的等权', () =>
 
 check('刻度的取样集合是**整个候选池**（不是写死的常数，也不是要展示的那几条）', () => {
   const plan = fixturePlan();
-  // 候选池 = 3 支（差额 0 的那支被剔除）：队分 600 / 800 / 1000，差额 {1, 1, 3}
-  // → ① 的刻度 600~1000。
+  // 候选池 = 3 支（差额 0 的那支被剔除）：队分 600 / 800 / 1000。
   //
-  // ⚠️ ② 的封顶值**不要写死数字**：它 = 候选池差额的 `SCORING.teamPlanGapCapPct` 分位，
-  // 这条规则本身改过两次（p50 → p75，见 `SCORING` 的注释）。这里按**规则**复算：
-  // 排好序取第 ⌊n×p⌋ 个（与 `teamPlan` 里的取法逐字一致）。
-  assert.equal(Math.round(plan.strengthLo), 600);
+  // ⚠️ ① 的刻度**下限是分位数**（用户 2026-10-12 第 7 条：「为什么现在有很多队伍的强度得分
+  //    直接达到接近 100」—— 下限取池内最小值时，争冠队伍全挤在最高那 5% 里，会一起算成 95+），
+  //    上限仍是最大值。所以这里**按规则复算**，不写死数字（分位本身也可能再调）。
+  // ⚠️ ② 的封顶值同理：它 = 候选池差额的 `SCORING.teamPlanGapCapPct` 分位，
+  //    这条规则改过两次（p50 → p75，见 `SCORING` 的注释）。取法与实现逐字一致。
+  const ceilIdx = (arr, p) => arr[Math.min(arr.length - 1, Math.floor(arr.length * p))];
+  const strengths = plan.rows.map((r) => r.strength).sort((a, b) => a - b);
+  assert.equal(plan.strengthLo, ceilIdx(strengths, SCORING.teamPlanStrengthFloorPct),
+    `① 的下限应是候选池强度的 p${SCORING.teamPlanStrengthFloorPct * 100}`);
   assert.equal(Math.round(plan.strengthHi), 1000);
+  assert.equal(plan.strengthFloorPct, SCORING.teamPlanStrengthFloorPct);
   const gaps = plan.rows.map((r) => r.gap).sort((a, b) => a - b);
-  const expectCap = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * SCORING.teamPlanGapCapPct))];
+  const expectCap = ceilIdx(gaps, SCORING.teamPlanGapCapPct);
   assert.equal(plan.gapMax, expectCap,
     `② 的封顶值应是候选池差额的 p${SCORING.teamPlanGapCapPct * 100} = ${expectCap} 金，实际 ${plan.gapMax}`);
   assert.equal(plan.gapCapPct, SCORING.teamPlanGapCapPct);
@@ -168,6 +173,12 @@ check('刻度的取样集合是**整个候选池**（不是写死的常数，也
   // 分最高的那支拿 ①=100（⚠️ 按**强度**排，不是按总榜分 —— ① 在 v4.6.87 换了口径）
   const top = [...plan.rows].sort((a, b) => b.strength - a.strength)[0];
   assert.equal(Math.round(top.strengthPct), 100, '强度最高的那支应拿满分');
+  // ⚠️ 下限是分位数 ⇒ 低于它的队伍拿 **0**（而不是「接近 0 的几分」）。夹具 3 支里
+  //    强度是 300/600/900，p75 取到第 ⌊3×0.75⌋ = 2 个（= 900）→ 只有最强的拿分。
+  //    这条钉住「下限确实在切分，而不是个装饰品」。
+  const below = plan.rows.filter((r) => r.strength < plan.strengthLo);
+  assert.ok(below.every((r) => r.strengthPct === 0),
+    '低于下限的队伍必须拿 0 分（分位下限的意义就在这）');
 });
 
 check('⭐ 展示条数（maxRows）**不参与任何计算**：改条数不改分数、不改名次', () => {
@@ -231,7 +242,10 @@ const strengthPlan = (drawWeights) => teamPlan(strengthFixture, accountFixture,
 check('⭐ ① 取**纯强度**，不是「队伍在角色总榜上的分」（两个刻度各自独立）', () => {
   const plan = strengthPlan();
   // 两个刻度必须分开：强度刻度来自 `strength`，总榜分刻度来自 `total`。
-  assert.equal(Math.round(plan.strengthLo), 300, '强度刻度下限应是 300');
+  // ⚠️ 强度刻度下限是**池内分位**（第 7 条），而这个夹具只有 2 支 ⇒ p75 落在第
+  //    ⌊2×0.75⌋ = 1 个（= 900），也就是「下限 = 上限」；上限与总榜分那对数仍各归各的。
+  //    真实池子（220 支）的分位下限实测是 891，不会退化。
+  assert.equal(plan.strengthLo, 900, '强度刻度下限应是池内 p75（夹具只有 2 支 ⇒ 就是 900）');
   assert.equal(Math.round(plan.strengthHi), 900, '强度刻度上限应是 900');
   assert.equal(Math.round(plan.scoreLo), 400, '总榜分刻度下限应是 400');
   assert.equal(Math.round(plan.scoreHi), 1000, '总榜分刻度上限应是 1000');
