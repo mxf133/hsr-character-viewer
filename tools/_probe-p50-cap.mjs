@@ -6,7 +6,7 @@
 //   node tools/_probe-p50-cap.mjs
 import { AccountStore } from '../src/server/store.js';
 import {
-  buildConclusion, eidolonsOf, lightConeRanksOf, teamPlan, ownedCharacters, VERSION_WINDOW,
+  buildConclusion, eidolonsOf, lightConeRanksOf, SCORING, teamPlan, ownedCharacters, VERSION_WINDOW,
 } from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
@@ -62,7 +62,8 @@ for (const [i, account] of accounts.entries()) {
   // 前 10 名在 p50 封顶下的分项
   const rows = plan.rows.map((r) => ({
     ...r,
-    gapPctNew: Math.max(0, 100 * (1 - r.gap / med)),
+    // ⚠️ 「新」那一列要跟生产同口径（含曲线指数），否则这条对照从 v4.6.92 起就是假的。
+gapPctNew: 100 * Math.max(0, Math.min(1, 1 - r.gap / med)) ** (Number(SCORING.teamPlanGapPower) || 1),
   })).map((r) => ({
     ...r,
     // 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。

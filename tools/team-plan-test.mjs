@@ -32,6 +32,10 @@ const check = (label, fn) => {
 const section = (title) => console.log(`\n=== ${title} ===`);
 /** `teamPlan` 会把两个分项四舍五入到 4 位小数，所以按线性公式复算时要留容差。 */
 const near = (a, b) => Math.abs(Number(a) - Number(b)) < 1e-3;
+/** 「差额接近度」那条曲线的期望值（与 `teamPlan()` 里的写法逐字一致，只用于复算）。
+ *  ⚠️ 先 `clamp` 再取幂：负数取小数次幂是 `NaN`（生产代码也是先 clampUnit 再 `** power`）。 */
+const caret = (gap, cap, power) => 100
+  * Math.max(0, Math.min(1, 1 - gap / cap)) ** power;
 
 // ---------------------------------------------------------------- A. 合成夹具
 //
@@ -342,19 +346,34 @@ check('⭐ 性价比只有**差额接近度**一个刻度：差额与整包分�
     '同分时的名次必须可复现');
 });
 
-check('指标②是**分位封顶**：达到/超过封顶值一律 0 分，以下线性展开', () => {
+check('指标②是**分位封顶 + 曲线指数**：达到/超过封顶值一律 0 分，以下按 (1 − 差额÷封顶)^k 展开', () => {
   const plan = fixturePlan();
   const cap = plan.gapMax;
-  // ⚠️ 这里验的是**规则**，不写死封顶值 —— 分位本身改过两次（p50 → p75）。
-  // 规则：≥ 封顶 → 0 分；以下 → `100 × (1 − 差额 ÷ 封顶)`。
+  // ⚠️ 这里验的是**规则**，不写死封顶值与指数 —— 两者都改过（封顶 p50 → p75；
+  //    指数 1 → 1.5，用户 2026-10-12 第 9 条「差额接近度给要补大量金的队伍的分太多」）。
+  // 规则：≥ 封顶 → 0 分；以下 → `100 × (1 − 差额 ÷ 封顶) ^ SCORING.teamPlanGapPower`。
+  const power = Math.max(1, Number(SCORING.teamPlanGapPower) || 1);
   for (const r of plan.rows) {
-    const expect = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap)));
+    const expect = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap) ** power));
     assert.ok(near(r.gapPct, expect),
-      `${r.gap} 金 ÷ 封顶 ${cap} 金 的 ② 应是 ${expect}，实际 ${r.gapPct}`);
+      `${r.gap} 金 ÷ 封顶 ${cap} 金 的 ② 应是 ${expect}（^${power}），实际 ${r.gapPct}`);
   }
+  // ⚠️ 指数必须**真的在压尾部**：这是用户第 9 条要的东西。线性（^1）时 8 金能拿 42.9 分，
+  //    ^1.5 只有 28.1 —— 如果哪天有人把指数改回 1，这条断言会红给他看。
+  assert.ok(power > 1, `曲线指数应当 > 1（实际 ${power}）`);
+  // ⚠️ 用**名义封顶 14 金**验曲线形状：夹具那 3 支的差额只有 1/1/3 金，套在它们身上
+  //    8 金、10 金那几档全都落在封顶之外（一律 0 分），验不出尾部被压。
+  const NOMINAL_CAP = 14;
+  const tail = caret(8, NOMINAL_CAP, power);
+  const linear = caret(8, NOMINAL_CAP, 1);
+  assert.ok(tail < linear - 5,
+    `补 8 金的 ② 应当明显低于线性（^${power} = ${tail.toFixed(1)} vs 线性 ${linear.toFixed(1)}）`);
+  // 小差额几乎不受影响（否则这一档会把「补 1~2 金」的队伍一起罚掉）
+  assert.ok(caret(2, NOMINAL_CAP, power) > caret(2, NOMINAL_CAP, 1) - 8,
+    '补 2 金的 ② 不该被指数砍掉太多');
   // 封顶值必须真的落在池内（否则「封顶」两个字没有意义）
   assert.ok(plan.rows.some((r) => r.gap >= cap), `池内应有队伍补金 ≥ 封顶值 ${cap}`);
-  // 换一批：让池内出现「差额 1 金」的队伍，就能看到「以下线性」那一段的正分
+  // 换一批：让池内出现「差额 1 金」的队伍，就能看到「以下」那一段的正分
   const wide = teamPlan({
     ...conclusionFixture,
     frontierUnits: conclusionFixture.frontierUnits.map((u) => (u.name === 'charY'
@@ -364,8 +383,9 @@ check('指标②是**分位封顶**：达到/超过封顶值一律 0 分，以�
   const wcap = wide.gapMax;
   const byGap = (g) => wide.rows.find((r) => r.gap === g);
   assert.ok(byGap(1), `应有补 1 金的队伍（实际 ${wide.rows.map((r) => r.gap)}）`);
-  assert.equal(Math.round(byGap(1).gapPct), Math.round(100 * (1 - 1 / wcap)),
-    `1 金 ÷ 封顶 ${wcap} 金 的 ② 应落在封顶值以内、按线性拿分`);  assert.ok(byGap(1).gapPct > 0, '1 金应拿正分（否则「以下线性」这段没被验到）');
+  assert.equal(Math.round(byGap(1).gapPct), Math.round(caret(1, wcap, power)),
+    `1 金 ÷ 封顶 ${wcap} 金 的 ② 应落在封顶值以内、按 ^${power} 拿分`);
+  assert.ok(byGap(1).gapPct > 0, '1 金应拿正分（否则「以下」这段没被验到）');
   for (const r of wide.rows.filter((x) => x.gap >= wcap)) {
     assert.equal(r.gapPct, 0, `${r.gap} 金 ≥ 封顶 ${wcap} 金 → 0 分`);
   }

@@ -1015,6 +1015,36 @@ export const SCORING = {
    */
   teamPlanGapCapPct: 0.75,
   /**
+   * 「差额接近度」那条曲线的**指数**（用户 2026-10-12 第 9 条：「差额接近度给要补大量金的
+   * 队伍的分太多，削减一点」）。
+   *
+   * ```
+   *   差额接近度 = (1 − 补金 ÷ 封顶值) ^ teamPlanGapPower × 100
+   * ```
+   *
+   * `1` = 旧的线性曲线（`v4.6.78`~`v4.6.90`）；`> 1` 时**越贵扣得越狠**，而小差额几乎不动
+   * —— 这正是用户要的那种「削减」：不是把整条曲线压下去（那会连「补 1~2 金」的队伍一起罚，
+   * 而那些队恰恰是这一档要奖励的），而是让「补十几金」的尾部掉得更快。
+   *
+   * 实测（账号 1，隐金全勾，池内差额 p50 = 8 / p75 = 14 / p90 = 22 金）：
+   *
+   * | 补金 | 线性（旧） | **^1.5（现在）** | ^2（太狠） |
+   * | --- | --- | --- | --- |
+   * | 2 金 | 85.7 | 79.4 | 73.5 |
+   * | 4 金 | 71.4 | 60.4 | 51.0 |
+   * | 6 金 | 57.1 | 43.2 | 32.7 |
+   * | 8 金 | 42.9 | 28.1 | 18.4 |
+   * | 10 金 | 28.6 | 15.3 | 8.2 |
+   * | 14 金（= 封顶） | 0 | 0 | 0 |
+   *
+   * 名次影响（前 6 名）：补 9 金那支从 **#3 → #4**、补 6 金的两支各升一位；
+   * ⚠️ 副作用是**补金少的队伍相对受益** —— 实测「你已经拥有一大半」的那支（补 4 金、
+   * 账面 15 金）从 #5 升到 **#3**。这是同一条杠杆的两面：削尾部 = 抬头部，
+   * 想同时压住高金队伍只能靠 ①（那一档已经含金数项，见 `drawWeight` 的注释）。
+   * 复算：`node tools/_probe-gap-curve.mjs --account=1 --hidden`（六种写法并排）。
+   */
+  teamPlanGapPower: 1.5,
+  /**
    * **抽卡权重**（用户 2026-10-12 第 3 条）：`{ strength, cost }` 两个数的**相对大小**，
    * 决定抽卡方案「补金推荐分」里两个分项各占多少。
    *
@@ -2285,6 +2315,8 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   /** ② 的刻度上界（用于展示与断言）：封顶值取不到时退回最大值，不出现除零。 */
   const gapMax = gapCap > 0 ? gapCap
     : (candidates.length ? Math.max(...candidates.map((t) => t.gap)) : 0);
+  /** 「差额接近度」的曲线指数（1 = 线性；> 1 越贵扣得越狠，见 `SCORING.teamPlanGapPower`）。 */
+  const gapPower = Math.max(1, Number(SCORING.teamPlanGapPower) || 1);
   const span = (v, lo, hi) => (hi - lo < 1e-9 ? 1 : (v - lo) / (hi - lo));
   // ⚠️ 不要叫 `clamp01`：模块顶上已经有一个同名的（那一个在模块作用域里），
   // 这里遮蔽它会让人以为改的是同一个函数。
@@ -2296,11 +2328,14 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     // 9 金那支远强于 16 金那支」才成立 —— 那正是用户要的那条区分线。
     t.strengthPct = Number((100 * clampUnit(span(t.total, strengthLo, strengthHi))).toFixed(4));
     // ② **性价比得分 == 差额接近度**（用户 2026-10-12 第 6 条：只要这一个刻度）。
-    // 「差额接近度」= 1 − 差额 ÷ 封顶值：差额 0 金 = 100 分，达到/超过封顶值 = 0 分。
+    // 「差额接近度」= (1 − 差额 ÷ 封顶值) ^ gapPower：差额 0 金 = 100 分，达到/超过封顶值 = 0 分。
+    // ⚠️ 指数 `gapPower` 是用户第 9 条要的「削减」：它只压**尾部**（补十几金的队伍），
+    //    补 1~2 金的几乎不动 —— 理由与逐档实测见 `SCORING.teamPlanGapPower`。
+    t.gapPct = Number((100
+      * clampUnit(1 - span(t.gap, 0, gapMax)) ** gapPower).toFixed(4));
     // ⚠️ v4.6.87 这里还与「压金度」按 `teamPlanCostMix` 合成过 —— 已按用户要求删除，
     //    所以**不要再引入第二个金数刻度**：他与「你还要补几金」高度同向，属于重复计分。
     //    「这支队总共几金」仍逐行显示（`gold` / 卡片上的「账面 N 金」），只是不进分数。
-    t.gapPct = Number((100 * clampUnit(1 - span(t.gap, 0, gapMax))).toFixed(4));
     // 总分 = 强度得分 × ws + 性价比得分（差额接近度）× wc（用户 2026-10-12 第 3、4、6 条）。
     t.total_score = Number((draw.strength * t.strengthPct + draw.cost * t.gapPct).toFixed(4));
   }
@@ -2549,7 +2584,9 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     gapMax,
     gapMin: delivered.length ? Math.min(...delivered.map((t) => t.gap)) : 0,
     /** ② 的封顶分位（界面脚注要写「差额达到 N 金即 0 分」）。 */
-    gapCapPct: Number(SCORING.teamPlanGapCapPct) || 0.5,
+    gapCapPct: Number(SCORING.teamPlanGapCapPct) || 0.75,
+    /** ② 那条曲线的指数（界面脚注要写成「(1 − 补金 ÷ N 金)^k」，见 `teamPlanGapPower`）。 */
+    gapPower,
     /**
      * **要下发的这几条里**差额的真实最大值。
      *

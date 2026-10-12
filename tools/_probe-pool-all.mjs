@@ -87,7 +87,8 @@ const scoreTeams = (teams) => {
   const cap = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * SCORING.teamPlanGapCapPct))];
   for (const r of rows) {
     r.strengthPct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
-    r.gapPct = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap)));
+    // ⚠️ 曲线指数跟着生产走（见 `SCORING.teamPlanGapPower`）：线性复算会与界面名次对不上。
+r.gapPct = 100 * Math.max(0, Math.min(1, 1 - r.gap / cap)) ** (Number(SCORING.teamPlanGapPower) || 1);
     // 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。
     r.total_score = 0.5 * r.strengthPct + 0.5 * r.gapPct;
   }

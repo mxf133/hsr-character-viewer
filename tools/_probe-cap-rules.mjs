@@ -9,7 +9,7 @@
 import { createApp } from '../src/server/app.js';
 import {
   buildConclusion, eidolonsOf, lightConeRanksOf, marginalCostOf, ownedCharacters,
-  VERSION_WINDOW,
+  SCORING, VERSION_WINDOW,
 } from '../public/scripts/advice.js';
 import { AccountStore } from '../src/server/store.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
@@ -123,7 +123,9 @@ console.log(`池内差额分位：min ${gaps[0]} / p25 ${quantile(0.25)} / p50 $
 
 /** 反推规则：先按 p50 排一遍，取第 15 名的 gap，令它的 ② 为 50 分 ⇒ 封顶 = 2×gap。 */
 const scoreWith = (cap) => rows.map((r) => {
-  const gapPct = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap)));
+  // ⚠️ 曲线指数要跟着生产走（v4.6.92 起 = 1.5，用户第 9 条「给要补大量金的队伍的分太多」）：
+//    只按线性复算，探针给出的名次会与界面上的对不上。
+const gapPct = 100 * Math.max(0, Math.min(1, 1 - r.gap / cap)) ** (Number(SCORING.teamPlanGapPower) || 1);
   // 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。
   return { ...r, gapPct, total_score: 0.5 * r.strengthPct + 0.5 * gapPct };
 }).sort((a, b) => b.total_score - a.total_score);
