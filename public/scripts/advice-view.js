@@ -2643,8 +2643,12 @@ const teamPlanTip = (row, plan) => {
     rows: [
       // ⚠️ 「本队取值」是**纯强度**的原始值（2026-10-12 第 3 条起 ① 换了口径）：
       // 它不含金数项，与右边「总榜整包分」是两把尺子，所以这里印的是强度、不是队分。
+      // ⚠️ 刻度那一格必须写出**下限是池内分位**（用户 2026-10-12 第 7 条）：下限若被读成
+      //    「池内最弱的那支队」，读者会以为 99 分意味着「离最强只差一点」，其实下面一大截
+      //    都被压在 0 分（实测池内 p75 = 891，而争冠队伍是 1330~1397）。
       ['强度得分', `强度 ${Math.round(Number(row.strength) || 0)}`,
-        `${Math.round(Number(plan.strengthLo) || 0)} ~ ${Math.round(Number(plan.strengthHi) || 0)}`,
+        `池内 p${Math.round((Number(plan.strengthFloorPct) || 0.75) * 100)} `
+        + `${Math.round(Number(plan.strengthLo) || 0)} ~ ${Math.round(Number(plan.strengthHi) || 0)}`,
         `${num(row.strengthPct)} × ${ws}`],
       // ② 只有这一个刻度（用户 2026-10-12 第 6 条）。「账面 N 金」放在「本队取值」里当
       // 参考信息，**不进公式** —— 它已经不参与任何折算（想让它参与就是 v4.6.87 那个
@@ -2956,6 +2960,8 @@ const renderTeamPlan = (conclusion) => {
   // ⚠️ v4.6.83 起候选池的来源是**逐档榜**（每角色 × 每星魂档各一条），不再是总榜 ——
   //    文案必须跟着改，否则读者会拿「总榜 84 支」去对「候选 245 支」，以为算错了。
   const capPct = Math.round((Number(plan.gapCapPct) || 0.75) * 100);
+  // 强度得分的下限是**池内分位**（用户 2026-10-12 第 7 条），与 ② 的封顶值同一个分位。
+  const floorPct = Math.round((Number(plan.strengthFloorPct) || 0.75) * 100);
   const capped = plan.rows.filter((r) => r.gap >= plan.gapMax).length;
   const drawFoot = plan.drawWeights || normalizeDrawWeights(state.drawWeights || {});
   el.teamPlanBody.appendChild(text('p', 'muted small advice-plan-team-foot',
@@ -2964,8 +2970,11 @@ const renderTeamPlan = (conclusion) => {
     + `去掉补金 0 金的之后剩 ${plan.pool} 支 —— `
     + '**这样同一支队伍的低配档位也在池内**，便宜但强度略低的队伍能靠补金少拉分；'
     + `**下面这 ${plan.rows.length} 条是其中最靠前的**（按补金推荐分排，截断只影响显示）；`
-    + `强度得分 = **纯强度**（档位 × 行动值 × 版本加权，不含金数项）按**候选池**归一`
-    + `（${Math.round(plan.strengthLo)} ~ ${Math.round(plan.strengthHi)} → 0~100）；`
+    + `强度得分 = **纯强度**（档位 × 行动值 × 版本加权，不含金数项）按**候选池**归一：`
+    + `**池内 p${floorPct}**（${Math.round(plan.strengthLo)}）记 0 分、`
+    + `池内最高（${Math.round(plan.strengthHi)}）记 100`
+    + `（用户 2026-10-12 第 7 条：争冠队伍全挤在最高那 5% 里，下限若取池内最弱的一支，`
+    + `它们会一起算成 95+，那一栏就失去了区分度）；`
     // ⚠️ 用户 2026-10-12 第 6 条之后这里**只有一个刻度**（差额接近度）——
     //    别再写成「差额 × a + 压金 × b」：那层合成已删（它等于同一个数的两种名字）。
     + `性价比（差额接近度）= 1 − 补金 ÷ ${plan.gapMax} 金`
