@@ -5,7 +5,7 @@
 //       （seasons.slice(idx-window+1, idx+1)）—— 回退把 4.6 **整个删出窗口**，
 //       于是 砂金•戏浪 在 4.6 的最便宜证据（9 金队）根本进不了计算。
 import { archiveFrontier, archiveFrontierAll, archiveIndex, archiveTeams, loadI18n, zhName } from '../src/server/archive.js';
-import { buildConclusion, VERSION_WINDOW } from '../public/scripts/advice.js';
+import { buildConclusion, VERSION_WINDOW } from '../src/core/advice.js';
 
 const index = await archiveIndex();
 const i18n = await loadI18n();

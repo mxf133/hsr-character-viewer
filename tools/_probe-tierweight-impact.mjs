@@ -18,7 +18,7 @@
 //   node tools/_probe-tierweight-impact.mjs --rows=20
 import { archiveIndex, archiveFrontierAll, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
-import { buildConclusion, VERSION_WINDOW } from '../public/scripts/advice.js';
+import { buildConclusion, VERSION_WINDOW } from '../src/core/advice.js';
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));

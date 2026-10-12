@@ -1264,8 +1264,15 @@ CDP 那两条新判据（残留 0 个 / 每格都有卡片与行线）跑 `node 
   `'frontier'`**（`archiveFrontierAll` / `frontierEnvWeight` / `frontierMeta[].weight`）；
   其余地方用默认的 `'plan'`。不要再写第三份权重表，也不要给 `buildConclusion`
   加「只给一个就两边都用」的兜底 —— 那正是用户要拆掉的耦合。
-- **两套口径在界面上各存一份**：`hsr.advice.weights.frontier` / `.plan`
+- **⚠️ 界面整体重做中（v4.6.85，详见 §4.2N）**：`public/` 只剩一页「开发中」占位页，
+  下面这些**界面**约定暂时**没有对象**（规则本身没被推翻，等新界面落地后按新结构重新钉）：
+  ① 浮层只有一个实现（`character-modal.js` + `character-panel.js`）；
+  ② 「数据状态」三格只有一份定义（`advice-view.js` 的 `dataStatusCells()`）；
+  ③ 两套权重在**界面**上各存一份 `localStorage['hsr.advice.weights.frontier' | '.plan']`
   （旧的单份 `hsr.advice.weights` 只作为两者的初值）。
+  ⚠️ 它们的**口径侧**对应物仍然活着（`frontierCostTermOf` / `frontierFactorsOf` /
+  `envWeightOf` / `tierTextOf` / `slimAvailability` 全在 `src/core/advice.js` 与
+  `src/server/conclusion.js` 里）—— 新界面必须继续调这些函数，**别自己再抄一份公式**。
 - **⚠️ 读取一律不联网（用户 2026-10 硬规矩）**：`snapshot` / `records` 两个路由
   **不许**因为缓存过期就自动重抓。要联网只有三条路：① 用户点刷新按钮
   （POST / `?refresh=1`，要 CSRF）；② 本地一份数据都没有（首次使用 / 换角色）；
@@ -1308,18 +1315,25 @@ CDP 那两条新判据（残留 0 个 / 每格都有卡片与行线）跑 `node 
   改代码时**保留这种风格**，并把被推翻的写法与被否定的方案留在注释里。
 - **改口径要同步四件套**：代码注释、`docs/评分模型设计.md`（加一节 vN 修正）、
   `README.md` 对应小节、`tools/herta-test.mjs` 的回归用例。
-- **浮层只有一个实现**：`character-modal.js`（浮层 + 开关 + 关闭接线）+
+- ~~**浮层只有一个实现**：`character-modal.js`（浮层 + 开关 + 关闭接线）+
   `character-panel.js`（面板本体）。两个分页的入口都走它，**不要在某一页另写一份**
-  或给同一个入口传不同的选项 —— 用户要的就是「两个入口看到相同的界面」。
-- **「数据状态」那三格只有一份定义**（v4.6.78）：`advice-view.js` 的 `dataStatusCells()`
+  或给同一个入口传不同的选项 —— 用户要的就是「两个入口看到相同的界面」。~~
+  ⚠️ **v4.6.85 起这两个文件随界面删除**，规则本身没变：新界面重做浮层时**仍然只许有一个
+  实现**，两个入口共用（用户要的就是「两个入口看到相同的界面」）。
+- ~~**「数据状态」那三格只有一份定义**（v4.6.78）：`advice-view.js` 的 `dataStatusCells()`
   （名字 / 空态 / 指路 / 读哪个 state）。三格**就是** `.data-freshness` 本身，不要再往
   中间套元素（`renderDataStatusCell()` 整块重写那一格的内容与 class）；黑塔网那一格的时间
   标签是「生成于」、状态词是「本机数据集 · 黑塔网聚合」，不要套账号缓存的「最后抓取」。
-  **同一份时间不要在别处再写一遍**（`#recordMeta`、① 那一节的说明都因此删过一轮）。
+  **同一份时间不要在别处再写一遍**（`#recordMeta`、① 那一节的说明都因此删过一轮）。~~
+  ⚠️ **v4.6.85 起 `advice-view.js` 随界面删除**，但用户当时的要求还在：新界面上
+  「角色快照 / 战斗记录 / 黑塔网数据」三份缓存的记录要**整合成一块**、顺序固定、
+  黑塔网那一格用它自己的词（「生成于」/「本机数据集 · 黑塔网聚合」），而且**同一份时间
+  只写一遍**（这一条与 DOM id 无关，是内容规则）。
 - **留档流程**：`node tools/run-tests.mjs` 全绿 → 提交（git 历史即留档，见 §9.3）
   → 版本号在 `src/version.js` + `package.json` 同步 +1。
-- **服务端改动要重启进程**：`public/` 是静态文件（刷新即可），但 `src/**` 与
-  `public/scripts/advice.js`（服务端 import 它）**必须重启**才生效。
+- **服务端改动要重启进程**：`public/` 现在是**占位页**（改它刷新即可，但它没有逻辑），
+  而 `src/**` 一律**必须重启**才生效 —— 算分核心 `src/core/advice.js`
+  （v4.6.85 从 `public/scripts/advice.js` 搬来，服务端 import 它）也算 `src/**`。
   忘了重启的症状：总榜一直显示「本地数据集里还没有可用的压金前沿数据」。
 - **探针命名** `tools/_probe-*.mjs`（`_` 前缀 = 手工调参用，不进测试套件）。
 - **`Number(null) === 0`**：数据里 `null` 表示「没有这项证据」，显示前必须过
@@ -1338,8 +1352,9 @@ CDP 那两条新判据（残留 0 个 / 每格都有卡片与行线）跑 `node 
   `README.md` 对应小节、`tools/herta-test.mjs` 的回归用例。
 - **留档流程**：`node tools/run-tests.mjs` 全绿 → 提交（git 历史即留档，见 §9.3）
   → 版本号在 `src/version.js` + `package.json` 同步 +1。
-- **服务端改动要重启进程**：`public/` 是静态文件（刷新即可），但 `src/**` 与
-  `public/scripts/advice.js`（服务端 import 它）**必须重启**才生效。
+- **服务端改动要重启进程**：`public/` 现在是**占位页**（改它刷新即可，但它没有逻辑），
+  而 `src/**` 一律**必须重启**才生效 —— 算分核心 `src/core/advice.js`
+  （v4.6.85 从 `public/scripts/advice.js` 搬来，服务端 import 它）也算 `src/**`。
   忘了重启的症状：总榜一直显示「本地数据集里还没有可用的压金前沿数据」。
 - **探针命名** `tools/_probe-*.mjs`（`_` 前缀 = 手工调参用，不进测试套件）。
 
@@ -1446,6 +1461,48 @@ CDP 那两条新判据（残留 0 个 / 每格都有卡片与行线）跑 `node 
 **验证**：`team-plan-test.mjs` **24 项全绿**；
 `CHECK_ADVICE_URL='http://127.0.0.1:8390/?view=advice' node tools/run-tests.mjs`
 **17 个套件全绿**（含 CDP —— 界面文案改了，CDP 那套照旧通过）。
+
+### 4.2N 本轮（v4.6.85）改过的文件 —— 网页界面整体删除、对外只说「开发中，敬请期待」
+
+**用户原话**：「看下我的 GitHub，目前此项目的网页界面写的十分的糟糕，删掉，我还没定好
+最终版本呢，就先说明此程序还在更新，敬请期待就行。」追问后确认的取舍：
+① 要的是**换成占位页**（不是只改文档，也不是连后端一起删）；② 改完**提交并推送到
+`origin/main`**；③ GitHub 上那个 `v4.6.84 · 公开便携包` 带旧界面与旧截图，**一并删掉**。
+
+**为什么不能只 `rm -rf public/`**：`public/scripts/advice.js`（302 KB，抽卡推荐算分核心）
+与 `public/scripts/format.js` 被 `src/server/archive.js`、`src/server/conclusion.js` 与
+**30 多个 `tools/*.mjs`** import —— 直接删目录会让服务与整个测试套件一起跑不起来。
+所以这轮是「**界面**删掉、**共用逻辑**搬家」。
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `src/core/advice.js` | ← `git mv public/scripts/advice.js`（服务端/工具共用的算分核心） |
+| `src/core/format.js` | ← `git mv public/scripts/format.js`（实测 payload → 显示形状） |
+| `src/server/{archive,conclusion}.js` | import 改 `../core/advice.js`；两处注释标注旧界面已删 |
+| `tools/**`（48 个文件） | import 改 `../src/core/*.js`（含全部 `_probe-*`；`src/version.js` 的历史 changelog **不动**） |
+| `public/index.html` | 换成**占位页**：只写「程序还在更新中，敬请期待」+ 状态说明，**一个 `<script>` 都没有**、不发任何 `/api/*` 请求 |
+| `public/styles/placeholder.css` | 新增，占位页唯一样式（旧 `app.css` 111 KB 已删） |
+| 删除（界面） | `scripts/{app,access,advice-view,battle-record,character-panel,character-modal,advice-tip-window,advice-gold-modal}.js`、`styles/{app,advice-tip-window}.css`、`docs/screenshots/*.png`（3 张旧界面截图） |
+| 删除（界面专用工具） | `check-advice-layout.mjs`（157 KB CDP 布局套件）、`gui-shot.mjs`、`gui-fixture.mjs`、`_probe-{tip-shot,tip-structure,packs-tip,panel-shot,data-status,icon-health,weights,tier-text,yinjin-toggle,record-tabs,42-cone-side,seed-localstorage}.mjs`、`_shot-record-tabs.mjs` |
+| `tools/run-tests.mjs` | 去掉「抽卡推荐界面布局 (CDP)」套件与那层「9222 有没有浏览器」探测、`CHECK_ADVICE_URL` 管路 |
+| `tools/herta-test.mjs` | 删掉 6 组**读前端文件**的源码级护栏（界面无其他游戏入口 / 战斗记录不写「新鲜」/ chip 白色边框 / 数据状态三格 / 隐金按钮位置 / 禁词表只扫 `advice-view.js`）→ 禁词表改为只扫 `src/core/advice.js`；`readFile`/`stat` import 随之删掉 |
+| `tools/e2e-test.mjs` | 静态资源那一组改写：断言 `/` 是占位页、无 `<script>`、不引旧资源，且 `/scripts/{app,advice-view,format}.js`、`/styles/app.css`、`/scripts/advice.js` 必须 **404** |
+| `README.md` | 顶部改成「🚧 程序还在更新中，敬请期待」+「现在能做什么」表 + 下线发布包说明；删掉界面截图表格；给「功能」「抽卡推荐分页」两节加「讲的是服务与算法、界面待重做」的横幅；测试表删掉已删套件两行；项目结构补 `src/core/` 与占位页 |
+| `AGENTS.md` | 代码/测试地图跟着改（`public/scripts/advice.js` → `src/core/advice.js`，UI 行标注「重做中」） |
+| `src/version.js` + `package.json` | 版本号 4.6.84 → **4.6.85**，changelog 加一条 |
+
+**验证**：`node tools/run-tests.mjs` **16/16 全绿**（e2e 133 项；⚠️ 该脚本靠管道抓子进程
+输出，在受限沙箱里 `spawn` 会 EPERM，需要放开文件沙箱才跑得动 —— 这不是本轮的改动引起的）。
+
+**留给新界面的待办**（别照抄旧 DOM id，那些正是这轮删掉的东西）：
+1. 浮层/面板重新落地时**仍然只许有一个实现**（§4.4 那条规则没被推翻）；
+2. 「数据状态」三格仍要整合成一块、顺序固定、同一份时间只写一遍；
+3. 两套权重仍要独立存放（`hsr.advice.weights.frontier` / `.plan`）；
+4. 界面必须调 `src/core/advice.js` 的 `frontierFactorsOf` / `frontierCostTermOf` /
+   `tierTextOf`，**不许**自己抄公式（抄的那份一定会在某次改口径时变成假话）；
+5. 重新加一条「界面无其他游戏入口」与几何回归（旧的那两条已随界面删除）。
+
+---
 
 ## 5. 测试命令 / 如何验证
 
@@ -1899,8 +1956,14 @@ git commit -F <消息文件>
 后面加 `!`。**一轮功能改动**通常同时改 `src/version.js`（加 changelog 条目 + 末位 +1）
 与 `package.json`（同步版本号）；**只改文档的提交不用动版本号**。
 
-**远端**：本仓库 `git remote -v` 目前为空，所以只有本地提交、`git push` 无处可推。
-要推就先 `git remote add origin <地址>`，再 `git push -u origin main`。
+**远端**：`origin` = `https://github.com/mxf133/hsr-character-viewer.git`（公开仓库，
+默认分支 `main`）。⚠️ 本机 git 的默认 TLS 后端（schannel）连 GitHub 会报
+`AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS`，加 `-c http.sslBackend=openssl`
+即可正常 `fetch` / `push`（凭证由 Git Credential Manager 里的 `gh` 提供）：
+
+```bash
+git -c http.sslBackend=openssl push origin main
+```
 
 ### 9.2 多 agent 并行 —— 各自更新不打架
 

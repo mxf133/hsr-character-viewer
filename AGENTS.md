@@ -13,8 +13,8 @@ Keep each task focused. This repository has extensive historical documentation; 
 
 | Change area | Main files | Focused checks |
 | --- | --- | --- |
-| Recommendation data, scoring, or conclusion algorithms | `public/scripts/advice.js`, `src/server/conclusion.js` | `herta-test.mjs`, `team-plan-test.mjs`; add `e2e-test.mjs` for API payload changes |
-| Recommendation rendering or styles | `public/scripts/advice-view.js`, `public/scripts/battle-record.js`, `public/index.html`, `public/styles/` | `herta-test.mjs`, `e2e-test.mjs`; `check-advice-layout.mjs` for browser geometry |
+| Recommendation data, scoring, or conclusion algorithms | `src/core/advice.js`, `src/server/conclusion.js` | `herta-test.mjs`, `team-plan-test.mjs`; add `e2e-test.mjs` for API payload changes |
+| Web UI (⚠️ being rebuilt — `public/` is only a "开发中" placeholder; the old page was deleted in v4.6.85) | `public/index.html`, `public/styles/placeholder.css`, and whatever new files the rebuild adds | `e2e-test.mjs` asserts the placeholder (no `<script>`, old UI assets must 404). The old CDP geometry suite was deleted with the old UI; re-add one when the new UI lands |
 | Server routes, records, cache, or persistence | `src/server/` | `e2e-test.mjs` plus the matching focused test (`cache-policy-test.mjs`, `request-throttle-test.mjs`, or `team-plan-test.mjs`) |
 | Login, signing, or Star Rail payload parsing | `src/mihoyo/` | `qr-poll-regression.mjs`, `api-wiring-test.mjs`, `hsr-parse-test.mjs`, or `devicefp-test.mjs` as applicable |
 | QR encoding/decoding | `src/qr/` | `qr-tables-check.mjs`, `qr-selftest.mjs` |
@@ -29,7 +29,7 @@ node tools/run-tests.mjs --suite herta-test.mjs
 node tools/run-tests.mjs --suite herta-test.mjs --suite e2e-test.mjs
 ```
 
-Run `node tools/run-tests.mjs` for the full suite before handing off code changes, as required by `HANDOFF.md` §9.1. The CDP layout suite is included only when port 9222 is available; it uses the existing browser and can take several minutes. Run it deliberately when a UI geometry change needs that coverage. Documentation-only changes do not need the test suite.
+Run `node tools/run-tests.mjs` for the full suite before handing off code changes, as required by `HANDOFF.md` §9.1. ⚠️ That script captures child output through pipes, so under a file sandbox it fails with `spawn EPERM`; run it with full access, or run the suites directly (`node tools/herta-test.mjs`) as an equivalent. Documentation-only changes do not need the test suite.
 
 ## Repository Invariants
 

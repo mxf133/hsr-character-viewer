@@ -3,7 +3,7 @@
 //
 // 跑法：node tools/_probe-yinjin-cost-formula.mjs
 
-import { charCostOf, coneCostOf, eidolonTierOf, VERSION_WINDOW } from '../public/scripts/advice.js';
+import { charCostOf, coneCostOf, eidolonTierOf, VERSION_WINDOW } from '../src/core/advice.js';
 import { archiveFrontierAll, archiveIndex } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
 

@@ -6,7 +6,7 @@ import { AccountStore } from '../src/server/store.js';
 import {
   buildConclusion, charCostOf, eidolonsOf, lightConeRanksOf, marginalCostOf, ownedCharacters,
   unitPullsOf, VERSION_WINDOW,
-} from '../public/scripts/advice.js';
+} from '../src/core/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
 

@@ -12,7 +12,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
   VERSION_WEIGHTS, VERSION_WINDOW, envWeightOf, versionWeightOf,
-} from '../../public/scripts/advice.js';
+} from '../core/advice.js';
 
 const DEFAULT_DIR = resolve(process.cwd(), 'theherta');
 
@@ -435,7 +435,7 @@ export const archiveIndex = async () => {
 };
 
 // 版本权重表（`VERSION_WEIGHTS` / `VERSION_WINDOW` / `versionWeightOf`）定义在
-// `public/scripts/advice.js` —— 它是浏览器与服务端**共用**的那一份，总榜在客户端
+// `src/core/advice.js` —— 它是浏览器与服务端**共用**的那一份，总榜在客户端
 // 按版本加权时读的是同一张表。见那里的注释（用户 2026-10 第 7 条）。
 
 /**
@@ -578,7 +578,7 @@ export const archiveFrontier = async (mode, options = {}) => {
  * 而客户端评分用的是 `SCORING.envWeight`（1.875 / 1.75 / 1 / 0.8 / 0.5），
  * 于是同一个界面里「前沿强度」与「单位性价比」用的是两套系数，权重输入框的
  * 提示值又正好是这里那套 —— 三处对不上。现在统一走 `envWeightOf`
- * （`public/scripts/advice.js` 是唯一来源）。
+ * （`src/core/advice.js` 是唯一来源）。
  *
  * 但**用户覆盖**是两套（用户 2026-10 要求总榜与方案的权重相互独立）：
  * 这里属于「性价比总榜」那条链，所以固定读 `'frontier'` 口径。

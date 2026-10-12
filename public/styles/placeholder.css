@@ -1,0 +1,105 @@
+/* 占位页样式（v4.6.85 起）。
+ *
+ * 只有这一个页面用它，所以刻意写得很短：一屏居中、跟随系统深浅色、窄屏不溢出。
+ * 旧界面的 `app.css`（111 KB）与 `advice-tip-window.css` 已随界面一起删除；
+ * 重做界面时另写一套样式文件，不要往这份里加组件规则 —— 它只服务「界面还没接上」
+ * 这一段过渡期。
+ */
+
+:root {
+  color-scheme: dark light;
+  --bg: #0b0d16;
+  --bg-soft: #141827;
+  --fg: #eceaf6;
+  --fg-dim: #a5a3bb;
+  --line: rgba(255, 255, 255, 0.12);
+  --accent: #8fd3ff;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f6f7fb;
+    --bg-soft: #ffffff;
+    --fg: #1b1c26;
+    --fg-dim: #5c5d70;
+    --line: rgba(0, 0, 0, 0.12);
+    --accent: #1f6feb;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Segoe UI", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  line-height: 1.7;
+}
+
+/* 星点的底纹：纯 CSS 的点阵，不引外部图片（这一页不该有任何网络请求）。 */
+.starfield {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(1px 1px at 12% 18%, rgba(255, 255, 255, 0.55), transparent 100%),
+    radial-gradient(1px 1px at 78% 12%, rgba(255, 255, 255, 0.4), transparent 100%),
+    radial-gradient(1px 1px at 34% 82%, rgba(255, 255, 255, 0.45), transparent 100%),
+    radial-gradient(1px 1px at 88% 68%, rgba(255, 255, 255, 0.35), transparent 100%),
+    radial-gradient(1px 1px at 58% 46%, rgba(255, 255, 255, 0.3), transparent 100%);
+}
+
+.notice {
+  position: relative;
+  width: min(560px, 100%);
+  padding: 32px 28px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--bg-soft);
+  text-align: center;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+}
+
+.badge {
+  display: inline-block;
+  margin: 0 0 12px;
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: clamp(22px, 5vw, 28px);
+  font-weight: 700;
+}
+
+.lead {
+  margin: 0 0 16px;
+  color: var(--fg-dim);
+  font-size: 15px;
+}
+
+.hint {
+  margin: 0 0 20px;
+  font-size: 14px;
+  word-break: break-all;
+}
+
+a { color: var(--accent); }
+
+.foot {
+  margin: 0;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+  color: var(--fg-dim);
+  font-size: 13px;
+}

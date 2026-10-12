@@ -21,7 +21,7 @@ import { conclusionEnvs } from '../src/server/conclusion.js';
 import {
   buildConclusion, frontierFactorsOf, hiddenReductionOf, setHiddenCosts,
   DEFAULT_HIDDEN_COSTS, NO_HIDDEN_COSTS, VERSION_WINDOW, SCORING,
-} from '../public/scripts/advice.js';
+} from '../src/core/advice.js';
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a === `--${name}` || a.startsWith(`--${name}=`));

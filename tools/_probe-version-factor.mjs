@@ -15,7 +15,7 @@ import { conclusionEnvs } from '../src/server/conclusion.js';
 import {
   buildConclusion, VERSION_WINDOW, frontierFactorsOf, perfFactorOf,
   eidolonTierOf,
-} from '../public/scripts/advice.js';
+} from '../src/core/advice.js';
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));

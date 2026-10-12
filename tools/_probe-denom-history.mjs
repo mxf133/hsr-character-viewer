@@ -4,7 +4,7 @@
 //   用户在性价比详情窗口看到末日幻影那行的金数项是 `7÷1（7.00）`，问：
 //   「7÷1 的缺陷，**v4.6.69 之前是怎么设计的**？」
 //
-//   三行代码就是全部答案（`public/scripts/advice.js` 的 `buildConclusionInner`）：
+//   三行代码就是全部答案（`src/core/advice.js` 的 `buildConclusionInner`）：
 //     算分式：score = SCORING.frontierPackScale(100) × perfFactorOf(…) × (分母 ÷ row.cost)
 //     v4.6.69 起：分母 = denomCostOf(season) = minCostBySeasonBest = 该版本 **perfect 档**
 //                 最小金数；该版本没有 perfect 档才退回 minCostBySeason（全档最小）。
@@ -37,7 +37,7 @@ import { archiveIndex, archiveFrontierAll, loadArchive, loadI18n, zhName } from 
 import { conclusionEnvs } from '../src/server/conclusion.js';
 import {
   buildConclusion, frontierFactorsOf, perfFactorOf, SCORING, VERSION_WINDOW,
-} from '../public/scripts/advice.js';
+} from '../src/core/advice.js';
 
 /** 取值支持 `--rows=6` 与 `--rows 6` 两种写法（照抄 _probe-rank.mjs）。 */
 const arg = (name, dflt) => {
