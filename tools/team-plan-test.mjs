@@ -6,7 +6,7 @@
 //   A. 合成夹具（不碰数据集）：候选池去重、两个指标、归一化上下限、剔除 0 金、
 //      补金顺序（每抽收益 + 载体约束）、三月七两命途。
 //   B. 真数据 + 真服务（`createApp` 注入假 store，不经 DPAPI）：
-//      `/conclusion` 的 `payload: 8` 与 `availability` / `frontierTiers` / `strength` 存在性 +
+//      `/conclusion` 的 `payload: 7` 与 `availability` / `frontierTiers` 存在性 +
 //      界面上那份 `teamPlan` 在真载荷上跑通、且差额与「服务端口径」一致。
 //
 //   node tools/team-plan-test.mjs
@@ -153,32 +153,26 @@ check('刻度的取样集合是**整个候选池**（不是写死的常数，也
   const plan = fixturePlan();
   // 候选池 = 3 支（差额 0 的那支被剔除）：队分 600 / 800 / 1000。
   //
-  // ⚠️ ① 的刻度**下限是分位数**（用户 2026-10-12 第 7 条：「为什么现在有很多队伍的强度得分
-  //    直接达到接近 100」—— 下限取池内最小值时，争冠队伍全挤在最高那 5% 里，会一起算成 95+），
-  //    上限仍是最大值。所以这里**按规则复算**，不写死数字（分位本身也可能再调）。
-  // ⚠️ ② 的封顶值同理：它 = 候选池差额的 `SCORING.teamPlanGapCapPct` 分位，
+  // ⚠️ ① 的刻度就是**角色总榜整包分**（`total`）的池内最小 ~ 最大值（用户 2026-10-12 第 8 条：
+  //    「同样是绝境 0T，9 金队要比 16 金队强得多」）。v4.6.87 曾换成不含金数项的「纯强度」、
+  //    v4.6.90 又把下限抬到池内 p75，**两条都已在 v4.6.91 撤销** —— 所以这里又可以不写死
+  //    分位、直接按 min/max 复算。
+  // ⚠️ ② 的封顶值：它 = 候选池差额的 `SCORING.teamPlanGapCapPct` 分位，
   //    这条规则改过两次（p50 → p75，见 `SCORING` 的注释）。取法与实现逐字一致。
   const ceilIdx = (arr, p) => arr[Math.min(arr.length - 1, Math.floor(arr.length * p))];
-  const strengths = plan.rows.map((r) => r.strength).sort((a, b) => a - b);
-  assert.equal(plan.strengthLo, ceilIdx(strengths, SCORING.teamPlanStrengthFloorPct),
-    `① 的下限应是候选池强度的 p${SCORING.teamPlanStrengthFloorPct * 100}`);
-  assert.equal(Math.round(plan.strengthHi), 1000);
-  assert.equal(plan.strengthFloorPct, SCORING.teamPlanStrengthFloorPct);
+  // ⚠️ 行上的 `total` 是**补金推荐分**（总分），① 的原始值是 `teamScore`（整包分）。
+  const totals = plan.rows.map((r) => r.teamScore).sort((a, b) => a - b);
+  assert.equal(plan.strengthLo, totals[0], '① 的下限应是候选池整包分的最小值');
+  assert.equal(plan.strengthHi, totals[totals.length - 1], '① 的上限应是候选池整包分的最大值');
   const gaps = plan.rows.map((r) => r.gap).sort((a, b) => a - b);
   const expectCap = ceilIdx(gaps, SCORING.teamPlanGapCapPct);
   assert.equal(plan.gapMax, expectCap,
     `② 的封顶值应是候选池差额的 p${SCORING.teamPlanGapCapPct * 100} = ${expectCap} 金，实际 ${plan.gapMax}`);
   assert.equal(plan.gapCapPct, SCORING.teamPlanGapCapPct);
   assert.equal(plan.gapRealMax, 3, `展示批次的真实最大差额应是 3 金，实际 ${plan.gapRealMax}`);
-  // 分最高的那支拿 ①=100（⚠️ 按**强度**排，不是按总榜分 —— ① 在 v4.6.87 换了口径）
-  const top = [...plan.rows].sort((a, b) => b.strength - a.strength)[0];
-  assert.equal(Math.round(top.strengthPct), 100, '强度最高的那支应拿满分');
-  // ⚠️ 下限是分位数 ⇒ 低于它的队伍拿 **0**（而不是「接近 0 的几分」）。夹具 3 支里
-  //    强度是 300/600/900，p75 取到第 ⌊3×0.75⌋ = 2 个（= 900）→ 只有最强的拿分。
-  //    这条钉住「下限确实在切分，而不是个装饰品」。
-  const below = plan.rows.filter((r) => r.strength < plan.strengthLo);
-  assert.ok(below.every((r) => r.strengthPct === 0),
-    '低于下限的队伍必须拿 0 分（分位下限的意义就在这）');
+  // 整包分最高的那支拿 ①=100。
+  const top = [...plan.rows].sort((a, b) => b.teamScore - a.teamScore)[0];
+  assert.equal(Math.round(top.strengthPct), 100, '整包分最高的那支应拿满分');
 });
 
 check('⭐ 展示条数（maxRows）**不参与任何计算**：改条数不改分数、不改名次', () => {
@@ -215,50 +209,57 @@ check('⭐ 展示条数（maxRows）**不参与任何计算**：改条数不改�
   assert.deepEqual(two.rows.map((r) => r.key), bestFirst.slice(0, 2), 'maxRows=2 应回总分前两条');
 });
 
-section('A1. 抽卡权重（强度 / 性价比，用户 2026-10-12 第 3、4 条）');
+section('A1. 抽卡权重（强度 / 性价比，用户 2026-10-12 第 3、4、8 条）');
 
 /**
- * 两支**故意反着来**的队伍，用来证明 ① 吃的是 `strength` 而不是 `total`：
+ * 两支**故意反着来**的队伍，用来证明两条轴各管一头：
  *
- *   * `k-strong`：纯强度 900（池内最高），但总榜整包分只有 400（池内最低）→ 补金 3 金；
- *   * `k-cheap` ：纯强度 300（池内最低），总榜整包分 1000（池内最高）→ 补金 1 金。
+ *   * `k-strong`：角色总榜整包分 900（池内最高）→ 补金 3 金（你自己要补的多）；
+ *   * `k-cheap` ：角色总榜整包分 400（池内最低）→ 补金 1 金（你自己要补的少）。
  *
- * 若哪天有人把 ① 改回「队伍在角色总榜上的分」，第三条断言（强度档排第一）会当场红。
+ * ⚠️ ① 的原始值就是 `total`（**含金数项**，用户 2026-10-12 第 8 条原话：「就抽卡方案提供的
+ * 强度而言，同样是绝境 0T，9 金队要比 16 金队强得多，唯有通过此才能区分哪个队伍值得被
+ * 用户补金」）。v4.6.87~v4.6.90 这里曾经放一个独立的 `strength`（纯强度）——已撤销，
+ * 所以夹具里也不再有那个字段；**下面的断言会钉住「行上没有 strength、① 就是 total」**。
  */
 const strengthFixture = {
   ...conclusionFixture,
   frontierUnits: [
     { key: 'k-strong', name: 'charX', eidolon: 0, lc: 'coneB', superimp: 1,
-      total: 400, strength: 900, envCount: 1,
-      envs: [{ id: 'env1', value: 400, bestTeamGold: 4, members: TEAMS.carrier }] },
+      total: 900, envCount: 1,
+      envs: [{ id: 'env1', value: 900, bestTeamGold: 9, members: TEAMS.carrier }] },
     { key: 'k-cheap', name: 'charY', eidolon: 0, lc: null, superimp: 1,
-      total: 1000, strength: 300, envCount: 1,
-      envs: [{ id: 'env2', value: 1000, bestTeamGold: 3, members: TEAMS.bodyGap }] },
+      total: 400, envCount: 1,
+      envs: [{ id: 'env2', value: 400, bestTeamGold: 16, members: TEAMS.bodyGap }] },
   ],
 };
 const strengthPlan = (drawWeights) => teamPlan(strengthFixture, accountFixture,
   { availability, drawWeights });
 
-check('⭐ ① 取**纯强度**，不是「队伍在角色总榜上的分」（两个刻度各自独立）', () => {
+check('⭐ ① = **角色总榜整包分**（含金数项）：同为 0T，金数更少的那支分更高', () => {
   const plan = strengthPlan();
-  // 两个刻度必须分开：强度刻度来自 `strength`，总榜分刻度来自 `total`。
-  // ⚠️ 强度刻度下限是**池内分位**（第 7 条），而这个夹具只有 2 支 ⇒ p75 落在第
-  //    ⌊2×0.75⌋ = 1 个（= 900），也就是「下限 = 上限」；上限与总榜分那对数仍各归各的。
-  //    真实池子（220 支）的分位下限实测是 891，不会退化。
-  assert.equal(plan.strengthLo, 900, '强度刻度下限应是池内 p75（夹具只有 2 支 ⇒ 就是 900）');
-  assert.equal(Math.round(plan.strengthHi), 900, '强度刻度上限应是 900');
-  assert.equal(Math.round(plan.scoreLo), 400, '总榜分刻度下限应是 400');
-  assert.equal(Math.round(plan.scoreHi), 1000, '总榜分刻度上限应是 1000');
+  // ① 的刻度 = 候选池整包分的最小 / 最大值（v4.6.91 起：不再是纯强度的池内分位）。
+  assert.equal(plan.strengthLo, 400, '① 的下限应是池内整包分最低的那支');
+  assert.equal(plan.strengthHi, 900, '① 的上限应是池内整包分最高的那支');
+  // ⚠️ 旧字段名不许复活：`scoreLo/scoreHi`（v4.6.87 把同一对数拆成两个名字）与
+  //    `strengthFloorPct`（v4.6.90 的分位下限）都已删除。
+  assert.equal(plan.scoreLo, undefined, 'scoreLo 已删除（它与 strengthLo 是同一对数）');
+  assert.equal(plan.scoreHi, undefined, 'scoreHi 已删除');
+  assert.equal(plan.strengthFloorPct, undefined, 'strengthFloorPct 已删除（分位下限已撤销）');
   // ⚠️ 判定必须按**成员**找行，不能按 `key`：下发的 `key` 是 roster 键（成员整包键拼的），
   // 不是整包自己的 `k-*` 键。
   const rowOf = (plan2, char) => plan2.rows.find((r) => r.members.some((m) => m.char === char));
-  const strong = rowOf(plan, 'charX');
-  const cheap = rowOf(plan, 'charY');
-  // 总榜分最低的那支，强度却是满分 —— 这正是「高金、低行动值的队伍在强度轴上排得上」。
-  assert.equal(Math.round(strong.strengthPct), 100);
-  assert.equal(Math.round(strong.teamScore), 400, '队分仍如实下发（只作参考，不参与总分）');
-  assert.equal(Math.round(cheap.strengthPct), 0);
-  assert.equal(Math.round(cheap.teamScore), 1000);
+  const cheap = rowOf(plan, 'charX');
+  const pricey = rowOf(plan, 'charY');
+  // 数据集里更便宜（整包分 900）的那支拿 100，更贵的那支拿 0 —— 「9 金 ≫ 16 金」在界面上
+  // 就是这一格的差别。
+  assert.equal(Math.round(cheap.strengthPct), 100);
+  assert.equal(Math.round(pricey.strengthPct), 0);
+  // ① 的原始值就是队分本身（`teamScore`），且**行上不再有独立的 `strength`**。
+  assert.equal(Math.round(cheap.teamScore), 900);
+  assert.equal(Math.round(pricey.teamScore), 400);
+  assert.ok(plan.rows.every((r) => r.strength === undefined),
+    '行上不许再出现 strength（纯强度那套已撤销）');
 });
 
 check('⭐ 抽卡权重只认**相对大小**：3:1 与 0.75:0.25 得到同一个榜', () => {
@@ -271,13 +272,14 @@ check('⭐ 抽卡权重只认**相对大小**：3:1 与 0.75:0.25 得到同一�
   }
 });
 
-check('⭐ 强度权重高 → 强队在前；性价比权重高 → 补金少的在前', () => {
-  // 判定按**成员**（`key` 是 roster 键）：charX 那支 = 补 3 金的强队，charY 那支 = 补 1 金的弱队。
+check('⭐ 强度权重高 → 整包分高的在前；性价比权重高 → 补金少的在前', () => {
+  // 判定按**成员**（`key` 是 roster 键）：charX 那支 = 整包分 900、补 3 金；charY 那支 =
+  // 整包分 400、补 1 金。
   const first = (plan) => (plan.rows[0].members.some((m) => m.char === 'charX') ? 'strong' : 'cheap');
-  // 强度档：只有强度算数 → 纯强度 900 的那支（补 3 金）第一。
+  // 强度档：只有 ① 算数 → 整包分 900 的那支（补 3 金）第一。
   const byStrength = strengthPlan({ strength: 1, cost: 0 });
   assert.equal(first(byStrength), 'strong',
-    '强度权重拉满时该推纯强度最高的那支（补 3 金）');
+    '强度权重拉满时该推整包分最高的那支（补 3 金）');
   // 性价比档：只有差额接近度算数 → 补 1 金的那支第一。
   const byCost = strengthPlan({ strength: 0, cost: 1 });
   assert.equal(first(byCost), 'cheap', '性价比权重拉满时该推补金最少的那支');
@@ -298,23 +300,25 @@ check('抽卡权重的边界：两侧都清空 / 非法值 → 退回默认等�
     '不给参数时用默认值（默认 1:1 → 等权）');
 });
 
-check('⭐ 性价比只有**差额接近度**一个刻度：差额与强度都相同时同分（用户 2026-10-12 第 6 条）', () => {
+check('⭐ 性价比只有**差额接近度**一个刻度：差额与整包分都相同时同分（用户 2026-10-12 第 6 条）', () => {
   // 用户原话：「性价比得分、差额接近分、压金度，三者是不是过于重叠了，我只想保留差额接近度
   // 的得分」。所以：**账面金数不进分数**，也不再有「性价比得分」这个中间量。
   //
   // 这条用例是原来那条「差额相同时更压金的排前面」（v4.6.87）的**反向钉法**：
-  // 同差额 + 同纯强度的两支，现在必须**同分**，名次只由确定性兜底键（rosterKey）决定。
-  // 一旦有人把第二个金数刻度加回来，这两支就会分出高下 —— 这条断言立刻红。
+  // 同差额 + 同整包分的两支，现在必须**同分**，名次只由确定性兜底键（rosterKey）决定。
+  // 一旦有人把第二个金数刻度（「压金度」那类）加回来，这两支就会分出高下 —— 立刻红。
+  // ⚠️ 夹具两支的整包分必须**相同**（`total` 一样）且账面金数不同（4 vs 3），
+  //    否则测的就不是「账面金数不进分数」了。
   const pairs = [
     // P：账面 4 金（charA E1 + coneA + charB），补金 2 金（charA E0→E1 + coneA）
-    { key: 'k-pricey', name: 'charA', eidolon: 1, lc: 'coneA', superimp: 1, total: 400, strength: 500,
+    { key: 'k-pricey', name: 'charA', eidolon: 1, lc: 'coneA', superimp: 1, total: 500,
       envCount: 1,
-      envs: [{ id: 'env1', value: 400, bestTeamGold: 4,
+      envs: [{ id: 'env1', value: 500, bestTeamGold: 4,
         members: [member('charA', 1, 'coneA'), member('charB'), member('freeC')] }] },
     // Q：账面 3 金（charY + coneB + charB），补金同样 2 金（charY 本体 + coneB）
-    { key: 'k-budget', name: 'charY', eidolon: 0, lc: 'coneB', superimp: 1, total: 300, strength: 500,
+    { key: 'k-budget', name: 'charY', eidolon: 0, lc: 'coneB', superimp: 1, total: 500,
       envCount: 1,
-      envs: [{ id: 'env2', value: 300, bestTeamGold: 3,
+      envs: [{ id: 'env2', value: 500, bestTeamGold: 3,
         members: [member('charY', 0, 'coneB'), member('charB'), member('freeC')] }] },
   ];
   const plan = teamPlan({ ...conclusionFixture, frontierUnits: pairs }, accountFixture,
@@ -322,7 +326,7 @@ check('⭐ 性价比只有**差额接近度**一个刻度：差额与强度都�
   assert.equal(plan.rows.length, 2, '两支都该进结果');
   assert.deepEqual(plan.rows.map((r) => r.gap), [2, 2],
     '两支的补金差额必须相同 —— 否则这条用例测的是差额');
-  // 纯强度也一样（都是 500 → 都拿 100 分），所以总分只可能由**差额**那一侧决定。
+  // 整包分也一样（都是 500 → 都拿 100 分），所以总分只可能由**差额**那一侧决定。
   assert.deepEqual(plan.rows.map((r) => Math.round(r.strengthPct)), [100, 100]);
   // 账面金数确实不同（4 vs 3）—— 它**不再**影响名次，这正是本条要钉的点。
   assert.deepEqual(plan.rows.map((r) => r.gold).sort((a, b) => a - b), [3, 4],
@@ -568,9 +572,11 @@ check('⭐ 真载荷上：逐档榜的池**包含**总榜的池（两条口径�
   void SCORING;
 });
 
-check('/conclusion 回 payload: 8（availability + frontierTiers + strength 那一版）', () => {
+check('/conclusion 回 payload: 7（availability + frontierTiers 那一版）', () => {
   assert.equal(live.status, 200);
-  assert.equal(livePayload.payload, 8, `实际 payload=${livePayload.payload}`);
+  // ⚠️ v4.6.87 曾把它写成 8（每个整包多一个 `strength` = 纯强度），v4.6.91 按用户
+  //    2026-10-12 第 8 条撤销了那个字段 —— 形状**回到 7**，别再改回 8。
+  assert.equal(livePayload.payload, 7, `实际 payload=${livePayload.payload}`);
 });
 
 check('/conclusion 带 availability（星级 / 常驻标记），界面靠它算差额', () => {
@@ -649,43 +655,49 @@ check('界面现算的差额 = 服务端口径（同一份 availability、同一
   }
 });
 
-check('⭐ 真载荷带 `strength`（纯强度），且它 ≥ 总榜整包分', () => {
-  // 用户 2026-10-12 第 3、4 条：抽卡方案的「强度得分」靠服务端下发的 `strength`。
-  // 它是 `Σ 副本权重 × (100 × 表现)`，**不乘金数项**；而 `total` 乘了金数项
-  // （封顶 ×1，只有「隐金后 0 金通关」那一档是 ×1.2）—— 空账号没有隐金，
-  // 所以池内 `strength ≥ total` 必然成立（0 金通关那几支进不了榜，见 buildConclusionInner）。
-  const plan = teamPlan(livePayload, {
-    owned: new Set(), eidolons: new Map(), cones: new Map(),
-  }, { availability: livePayload.availability, maxRows: 100000 });
-  const missing = plan.rows.filter((r) => !Number.isFinite(Number(r.strength)));
-  assert.equal(missing.length, 0, `有 ${missing.length} 条缺 strength`);
-  const inverted = plan.rows.filter((r) => r.strength < r.teamScore - 1e-6);
-  assert.equal(inverted.length, 0,
-    `纯强度不该低于总榜分：${inverted.slice(0, 3).map((r) => `${r.key}(${r.strength} < ${r.teamScore})`).join(' / ')}`);
-  // ⚠️ 端点必须**在整池**上量：`options.maxRows` 只能往下夹（`SCORING.teamPlanMaxRows`），
-  // 上面那句 `maxRows: 100000` 拿到的仍是前 15 条 —— 这正是 §6 里记过的那个坑。
+check('⭐ 真载荷：① 就是整包分（含金数项），同为 0T 时金数更少的队分更高', () => {
+  // 用户 2026-10-12 第 8 条原话：「就抽卡方案提供的强度而言，同样是绝境 0T，9 金队要比
+  // 16 金队强得多，唯有通过此才能区分哪个队伍值得被用户补金」。所以：
+  //   * ① 的原始值 = 整包的 `total`（含 `min(1, 该版本最便宜金数 ÷ 本队金数)`），
+  //     载荷里**不再**单发一个不含金数项的 `strength`（v4.6.91 撤销，见 changelog）；
+  //   * 下面那条数据事实钉住「9 金 ≫ 16 金」确实成立（不是靠文案说的）。
+  const account = { owned: new Set(), eidolons: new Map(), cones: new Map() };
+  // ⚠️ 端点必须**在整池**上量：`options.maxRows` 只能往下夹（`SCORING.teamPlanMaxRows`）。
   const keepRows = SCORING.teamPlanMaxRows;
   SCORING.teamPlanMaxRows = 100000;
   let whole;
   try {
-    whole = teamPlan(livePayload, {
-      owned: new Set(), eidolons: new Map(), cones: new Map(),
-    }, { availability: livePayload.availability });
+    whole = teamPlan(livePayload, account, { availability: livePayload.availability });
   } finally {
     SCORING.teamPlanMaxRows = keepRows;
   }
-  const byStrength = [...whole.rows].sort((a, b) => b.strength - a.strength);
-  assert.equal(Math.round(byStrength[0].strengthPct), 100, '纯强度最高的那支应拿 100');
-  assert.equal(Math.round(byStrength[byStrength.length - 1].strengthPct), 0, '纯强度最低的那支应拿 0');
-  // ⚠️ **逐副本的 `strength` 刻意不下发**（`slimFrontierUnit` 只发顶层那一个数）：
-  // 抽卡方案要的就是「这一整包的纯强度是多少」，逐条再带一遍会让载荷白涨
-  // （1 个数字 × 每条 5 个副本 × 266 条）。这里只钉「顶层那个数真的在」。
-  const unit = livePayload.frontierUnits.find((u) => Number(u.strength) > 0);
-  assert.ok(unit, '真载荷里应当有带 strength 的整包');
-  assert.ok(Number(unit.strength) >= Number(unit.total),
-    `${unit.key}: 纯强度 ${unit.strength} 不该低于总榜分 ${unit.total}`);
-  assert.ok(!('strength' in (unit.envs?.[0] || {})),
-    '逐副本明细里不该重复带 strength（省载荷，见 slimFrontierUnit 的注释）');
+  const byScore = [...whole.rows].sort((a, b) => b.teamScore - a.teamScore);
+  assert.ok(byScore.length > 50, `整池应当有几十支，实际 ${byScore.length}`);
+  assert.equal(Math.round(byScore[0].strengthPct), 100, '整包分最高的那支应拿 100');
+  assert.equal(Math.round(byScore[byScore.length - 1].strengthPct), 0, '整包分最低的那支应拿 0');
+  // ① 的原始值与队分是同一个数（界面那一列印的就是它）。
+  for (const r of byScore.slice(0, 20)) {
+    assert.ok(Math.abs(Number(r.strengthPct) - 100 * (r.teamScore - whole.strengthLo)
+      / (whole.strengthHi - whole.strengthLo)) < 0.51,
+      `${r.key}: ① 应当是整包分在池内的位置`);
+  }
+  // 数据事实：同为满分档，9 金那批的最高分远高于 16 金那批（用户点名的那个对比）。
+  const bestByGold = (g) => Math.max(0, ...whole.rows.filter((r) => r.gold === g).map((r) => r.teamScore));
+  const best9 = bestByGold(9);
+  const best16 = bestByGold(16);
+  if (best9 > 0 && best16 > 0) {
+    assert.ok(best9 > best16 * 1.2,
+      `同为绝境 0T：9 金那支（${best9.toFixed(0)}）应当明显强于 16 金那支（${best16.toFixed(0)}）`);
+  } else {
+    console.log(`      · 池内没有 9 金 / 16 金的整包（9=${best9} / 16=${best16}），本条只验了不变量`);
+  }
+  // ⚠️ 撤销得干净：**载荷的任何一层都不该再有 `strength`**
+  //    （v4.6.87 顶层发过它、逐副本刻意没发；现在两层都不发）。
+  const withStrength = livePayload.frontierUnits.filter((u) => 'strength' in u);
+  assert.equal(withStrength.length, 0, '顶层整包不该再带 strength');
+  const envWithStrength = livePayload.frontierUnits
+    .flatMap((u) => u.envs || []).filter((e) => 'strength' in e);
+  assert.equal(envWithStrength.length, 0, '逐副本明细也不该带 strength');
 });
 
 check('/conclusion 载荷仍在 600 KB 硬上限内（e2e 有同一断言）', () => {
@@ -718,15 +730,17 @@ check('账面金数与「最佳证据 N 金」是同一个尺子（数据集口�
   }
 });
 
-check('⭐⭐ 真载荷：那支 16 金的队伍不再排第 1（v4.6.89 起靠版本窗口，不靠金数刻度）', () => {
+check('⭐⭐ 真载荷：那支 16 金的队伍不再排第 1', () => {
   // 用户 2026-10-12 第 5 条的原话：「目前我的账号的抽卡方案，优先推荐的队伍是
   // 遐蝶E2S1、风堇E2、昔涟E2S1、长夜月E2，这个队伍已经过时了，已被更能压成本的队伍
   // 取代」。实测那支在真数据集上是 **16 金**（4.6 要 20 金才满分），而 4.6 最便宜的满分
   // 只要 9 金。这一条钉「它不再排第 1」。
   //
-  // ⚠️ v4.6.89 起把它压下去的**不是金数刻度**（那个已被用户第 6 条删掉），而是
-  // **版本窗口 7 → 3**：它的代表性整包有 32.1% 的分来自窗口外的旧版本，收窗后它的
-  // 纯强度 1390.8 → 1378.5，靠纯强度就压不过 11 金那支了（账号 1 实测它落在 #2）。
+  // 它被压下去的原因有三层，**都在 ① 那一侧**（用户第 8 条之后 ① = 含金数项的整包分）：
+  //   ① 金数项直接惩罚它（同为 0T，16 金的金数项约 0.53，11 金那支约 0.63）；
+  //   ② 版本窗口 7 → 3 砍掉它 32.1% 的旧版本分；
+  //   ③ 它的补金差额与第 1 名相同（都是 4 金），② 那一侧帮不上忙。
+  // 实测（账号 1，默认权重）它落在 **#3**：补金推荐分 66.4 = 强度 61.4 + 差额 71.4。
   //
   // ⚠️ 判定用**成员名单**（`key` 是 roster 键，读不出人话）：那支队四个成员是
   // 遐蝶 / 昔涟 / 长夜月 / 风堇，且账面 16 金、补金 4 金。

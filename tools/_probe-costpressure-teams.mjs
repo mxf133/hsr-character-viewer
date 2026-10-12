@@ -8,11 +8,11 @@
 //   Q3 最新版本的绝境王棋关里，最便宜的满分（行动值 <300）配置是几金。
 //
 // 口径全部复用生产实现：`archiveFrontierAll` 取原始前沿行、`buildConclusion` 出总榜、
-// `teamPlan` 出当前首推、`perfFactorOf`/`frontierCostTermOf`/`packStrengthOf` 复算分。
+// `teamPlan` 出当前首推、`perfFactorOf`/`frontierCostTermOf` 复算分。
 import { AccountStore } from '../src/server/store.js';
 import {
   buildConclusion, eidolonTierOf, frontierCostTermOf, marginalCostOf, normalizeDrawWeights,
-  ownedCharacters, eidolonsOf, lightConeRanksOf, packStrengthOf, perfFactorOf,
+  ownedCharacters, eidolonsOf, lightConeRanksOf, perfFactorOf,
   perfLineWeightsOf, teamPlan, teamPoolUnits, versionWeightOf, VERSION_WINDOW,
 } from '../public/scripts/advice.js';
 import { archiveFrontier, archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
@@ -121,18 +121,19 @@ for (const s of seasonsAsc) {
 }
 
 // ---- 复算某一行的**单版本分**（与 buildConclusionInner 同一批原语）-------------
+// ⚠️ 这里刻意复刻 `buildConclusionInner` 的 `score`（含金数项）：抽卡方案那个「纯强度」
+// （`packStrengthOf`，不含金数项）已按用户 2026-10-12 第 8 条删除 —— ① 现在就是它。
 const scoreOfRow = (r) => {
   const perf = perfFactorOf(r.actionValue, plightEnv?.tierLines, true, r.tier, perfW);
-  if (!(perf > 0)) return { perf, score: 0, strength: 0, costFactor: null };
+  if (!(perf > 0)) return { perf, score: 0, costFactor: null };
   const cf = frontierCostTermOf(denomOf(r.season), r.cost);
-  return { perf, score: 100 * perf * (cf ?? 1), strength: packStrengthOf(perf), costFactor: cf };
+  return { perf, score: 100 * perf * (cf ?? 1), costFactor: cf };
 };
 
 // ---- 首推队伍（teamPlan #1）----------------------------------------------------
 const head = plan.rows[0];
 const headKey = rosterKeyOf(head.members);
-console.log(`\n=== 当前抽卡方案 #1（账面 ${head.gold} 金 / 补金 ${head.gap} 金 / 队分 ${head.teamScore.toFixed(1)}`
-  + ` / 强度 ${head.strength.toFixed(1)}）===`);
+console.log(`\n=== 当前抽卡方案 #1（账面 ${head.gold} 金 / 补金 ${head.gap} 金 / 队分 ${head.teamScore.toFixed(1)}）===`);
 console.log(`  ${teamText(head.members)}`);
 console.log(`  证据：${head.bestEnv?.label} ${head.bestEnv?.bestTeamGold} 金 · ${head.bestEnv?.actionValue} 行动值`
   + ` · 版本 ${head.bestEnv?.season} · 档位 ${head.bestEnv?.tier}`);
@@ -145,41 +146,42 @@ for (const r of headRows) {
   if (!cur || r.actionValue < cur.actionValue) headBySeason.set(r.season, r);
 }
 console.log('\n=== Q2：这支队在绝境的逐版本证据（实测原始投稿）===');
-console.log('  版本     权重  金数  行动值  档位     表现分   金数项   单版本分   纯强度');
-let num = 0; let den = 0; let sNum = 0;
+console.log('  版本     权重  金数  行动值  档位     表现分   金数项   单版本分');
+let num = 0; let den = 0;
 for (const s of seasonsDesc) {
   const r = headBySeason.get(s);
   const w = weightOf(s);
   if (!r) { console.log(`  ${String(s).padEnd(7)} ${String(w).padStart(4)}   —— 无该版本证据`); continue; }
-  const { perf, score, strength, costFactor } = scoreOfRow(r);
-  num += w * score; den += w; sNum += w * strength;
+  const { perf, score, costFactor } = scoreOfRow(r);
+  num += w * score; den += w;
   console.log(`  ${String(s).padEnd(7)} ${String(w).padStart(4)} ${String(r.cost).padStart(5)}`
     + ` ${String(r.actionValue).padStart(7)}  ${String(r.tier).padEnd(8)}`
     + ` ${perf.toFixed(4).padStart(8)} ${String(costFactor === null ? '—' : costFactor.toFixed(3)).padStart(8)}`
-    + ` ${score.toFixed(2).padStart(9)} ${strength.toFixed(2).padStart(9)}`);
+    + ` ${score.toFixed(2).padStart(9)}`);
 }
-console.log(`  版本加权平均：分 ${(num / den).toFixed(2)}（权重和 ${den}）｜纯强度 ${(sNum / den).toFixed(2)}`);
+console.log(`  版本加权平均：分 ${(num / den).toFixed(2)}（权重和 ${den}）`);
 // 与生产总榜上那条整包的值对照（验证复算口径）
 const headUnit = (conclusion.frontierUnits || []).find((u) => {
   const m = (u.envs || []).find((e) => (e.members || []).length);
   return m && rosterKeyOf(m.members) === headKey;
 });
 const headEnv = headUnit?.envs?.find((e) => e.id === 'aa/plight');
-console.log(`  生产总榜同一整包的 aa/plight 条目：score ${headEnv?.score} · strength ${headEnv?.strength}`
-  + `（整包 ${headUnit?.name} E${headUnit?.eidolon} 总榜分 ${headUnit?.total} 强度 ${headUnit?.strength}）`);
+console.log(`  生产总榜同一整包的 aa/plight 条目：score ${headEnv?.score}`
+  + `（整包 ${headUnit?.name} E${headUnit?.eidolon} 总榜分 ${headUnit?.total}）`);
 
-// ---- 队伍分索引：roster -> {strength,total,gold}（与 teamPlan 同一口径）---------
+// ---- 队伍分索引：roster -> {total,gold}（与 teamPlan 同一口径）------------------
 const units = teamPoolUnits(conclusion);
 const bestByRoster = new Map();
 for (const unit of units) {
   const ev = (unit.envs || []).find((e) => (e.members || []).length);
   if (!ev) continue;
   const key = rosterKeyOf(ev.members);
-  const strength = Number.isFinite(Number(unit.strength)) ? Number(unit.strength) : Number(unit.total) || 0;
+  // ⚠️ ① 就是角色总榜的整包分（`unit.total`，含金数项）：v4.6.87~v4.6.90 那个独立的
+  // `unit.strength`（纯强度）已按用户 2026-10-12 第 8 条删除，所以这里直接按 `total` 收敛。
   const total = Number(unit.total) || 0;
   const prev = bestByRoster.get(key);
-  if (prev && !(strength > prev.strength || (strength === prev.strength && total > prev.total))) continue;
-  bestByRoster.set(key, { key, members: ev.members, strength, total, unit });
+  if (prev && !(total > prev.total)) continue;
+  bestByRoster.set(key, { key, members: ev.members, total, unit });
 }
 
 // ---- Q1：更低账面金数 + 相当或更好的成绩 ---------------------------------------
@@ -214,12 +216,12 @@ for (const [key, rows] of rosterRows) {
 cand.sort((a, b) => a.gold - b.gold || a.av - b.av);
 console.log(`\n=== Q1：账面金数 < ${HEAD_GOLD} 且最新版本满分（行动值 ≤ ${HEAD_AV}）的队伍`
   + `（共 ${cand.length} 支，按金数升序）===`);
-console.log('  #  金数  行动值  版本   强度分   总榜分   队伍');
+// ⚠️ 「强度分 / 总榜分」合成一列：① 现在**就是**角色总榜的整包分（`total`）。
+console.log('  #  金数  行动值  版本   总榜分   队伍');
 cand.forEach((c, i) => {
-  const sp = c.score ? c.score.strength.toFixed(1) : '—';
   const tp = c.score ? c.score.total.toFixed(1) : '—';
   console.log(`  ${String(i + 1).padStart(2)} ${String(c.gold).padStart(5)} ${String(c.av).padStart(7)}`
-    + `  ${String(c.season).padEnd(6)} ${String(sp).padStart(7)} ${String(tp).padStart(8)}   ${teamText(c.members)}`);
+    + `  ${String(c.season).padEnd(6)} ${String(tp).padStart(8)}   ${teamText(c.members)}`);
 });
 
 // ---- Q1b：最新 3 个版本里的最便宜满分配置（不看账号）---------------------------

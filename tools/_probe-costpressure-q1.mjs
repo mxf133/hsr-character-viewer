@@ -4,13 +4,13 @@
 //
 // 两张表：
 //   A 表：**候选池内**的队伍（总榜有对应条目 → 有生产口径的强度分/总榜分），
-//         条件 = 账面金数 < 首推 16 金、绝境满分（行动值 <300）、行动值 ≤ 首推的 286；
+//         条件 = 账面金数 < 生产首推那支、绝境满分（行动值 <300）、行动值 ≤ 首推的行动值；
 //   B 表：**数据集原始投稿**里最近 3 版最便宜的满分配置（含不在候选池的那些），
-//         附账号补金差额、是否在候选池、以及用生产原语算的「该四人名单口径」强度代理。
+//         附账号补金差额、是否在候选池（总榜分 + ① 强度得分）。
 import { AccountStore } from '../src/server/store.js';
 import {
   buildConclusion, charCostOf, coneCostOf, eidolonTierOf, marginalCostOf, normalizeDrawWeights,
-  ownedCharacters, eidolonsOf, lightConeRanksOf, packStrengthOf, perfFactorOf,
+  ownedCharacters, eidolonsOf, lightConeRanksOf, perfFactorOf,
   perfLineWeightsOf, teamPlan, teamPoolUnits, VERSION_WINDOW,
 } from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
@@ -99,34 +99,6 @@ for (const f of frontierAll) {
   });
 }
 
-/**
- * 「该四人名单口径」的强度代理（**推断，不是生产口径**）：
- *   Σ_副本 副本权重 × [ Σ_{窗口内该名单有证据的版本} W(s) × 该版本最好表现 ÷ Σ W(s) ]
- * 生产总榜的强度是按**整包**记的（同一整包的不同队友会合并），所以两者只在
- * 「这个四人组合恰好就是那个整包的最佳证据队」时才相等。
- */
-const rosterStrength = (rosterKey, seasons = null) => {
-  let total = 0; const parts = [];
-  for (const info of envInfo.values()) {
-    const subs = seasons ? info.seasonsDesc.filter((s) => seasons.includes(s)) : info.seasonsDesc;
-    const rows = (info.rowsByRoster.get(rosterKey) || []).filter((r) => subs.includes(r.season));
-    if (!rows.length) continue;
-    let num = 0; let den = 0;
-    for (const s of subs) {
-      const inSeason = rows.filter((r) => r.season === s);
-      if (!inSeason.length) continue;
-      const w = info.weightOf(s) || 0;
-      num += w * Math.max(...inSeason.map((r) => r.perf));
-      den += w;
-    }
-    if (!den) continue;
-    const envStrength = packStrengthOf(num / den);
-    total += info.weight * envStrength;
-    parts.push(`${info.env}=${envStrength.toFixed(0)}×${info.weight}`);
-  }
-  return { strength: Number(total.toFixed(1)), parts };
-};
-
 const pct = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
 const units = teamPoolUnits(conclusion);
 const byRoster = new Map();
@@ -134,11 +106,12 @@ for (const unit of units) {
   const ev = (unit.envs || []).find((e) => (e.members || []).length) || null;
   if (!ev?.members?.length) continue;
   const key = rosterKeyOf(ev.members);
-  const strength = Number.isFinite(Number(unit.strength)) ? Number(unit.strength) : Number(unit.total) || 0;
+  // ⚠️ ① 就是角色总榜的整包分（`unit.total`，含金数项）：v4.6.87~v4.6.90 那个独立的
+  // `unit.strength`（纯强度）已按用户 2026-10-12 第 8 条删除，所以这里直接按 `total` 收敛。
   const total = Number(unit.total) || 0;
   const prev = byRoster.get(key);
-  if (prev && !(strength > prev.strength || (strength === prev.strength && total > prev.total))) continue;
-  byRoster.set(key, { key, members: ev.members, strength, total, unit });
+  if (prev && !(total > prev.total)) continue;
+  byRoster.set(key, { key, members: ev.members, total, unit });
 }
 const pool = [];
 for (const t of byRoster.values()) {
@@ -146,14 +119,14 @@ for (const t of byRoster.values()) {
   if (!(cost.pulls > 0)) continue;
   pool.push({ ...t, gap: cost.pulls, gold: t.members.reduce((n, m) => n + datasetGoldOf(m), 0) });
 }
-const strengthLo = Math.min(...pool.map((t) => t.strength));
-const strengthHi = Math.max(...pool.map((t) => t.strength));
+const strengthLo = Math.min(...pool.map((t) => t.total));
+const strengthHi = Math.max(...pool.map((t) => t.total));
 const gapSorted = [...pool.map((t) => t.gap)].sort((a, b) => a - b);
 const gapCap = pct(gapSorted, 0.75);
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
 for (const t of pool) {
   t.strengthPct = 100 * clamp01(strengthHi - strengthLo < 1e-9
-    ? 1 : (t.strength - strengthLo) / (strengthHi - strengthLo));
+    ? 1 : (t.total - strengthLo) / (strengthHi - strengthLo));
   t.gapPct = 100 * clamp01(1 - (gapCap > 0 ? t.gap / gapCap : 0));
   t.score = 0.5 * t.strengthPct + 0.5 * t.gapPct;
 }
@@ -224,4 +197,4 @@ console.log(`    绝境原始投稿：${(plight.rowsByRoster.get(headKey) || [])
   .map((r) => `${r.season}:${r.cost}金/${r.actionValue}AV/${r.tier}`).join('  ') || '—'}`);
 console.log(`    在候选池：${poolByKey.has(headKey) ? '是' : '否'}`);
 console.log(`    生产口径（代表整包 Evernight E2S1 = 长夜月 E2 + 致长夜的星光 S1）：`
-  + `总榜分 ${head.teamScore} / 纯强度 ${head.strength}`);
+  + `队分（= 总榜分）${head.teamScore}`);

@@ -4,7 +4,7 @@
 //
 // A 段先复刻 `teamPlan()` 的候选池与排序，并与生产 `teamPlan()` 的前 15 名逐条对齐
 // （不对齐就说明复刻跑偏了，下面的改法结论都不可信）。
-// B 段列出「账面金数更低、成绩相当或更好」的候选（含强度分 / 总榜分 / 当前总分）。
+// B 段列出「账面金数更低、成绩相当或更好」的候选（含总榜分 / 当前总分）。
 // C 段按几种候选改法重排，打印各自的新前 5 名。
 import { AccountStore } from '../src/server/store.js';
 import {
@@ -89,11 +89,12 @@ for (const unit of units) {
   const members = ev?.members || [];
   if (!members.length) continue;
   const key = rosterKeyOf(members);
-  const strength = Number.isFinite(Number(unit.strength)) ? Number(unit.strength) : Number(unit.total) || 0;
+  // ⚠️ ① 就是角色总榜的整包分（`unit.total`，含金数项）：v4.6.87~v4.6.90 那个独立的
+  // `unit.strength`（纯强度）已按用户 2026-10-12 第 8 条删除，所以这里直接按 `total` 收敛。
   const total = Number(unit.total) || 0;
   const prev = byRoster.get(key);
-  if (prev && !(strength > prev.strength || (strength === prev.strength && total > prev.total))) continue;
-  byRoster.set(key, { key, members, strength, total, unit, best: ev });
+  if (prev && !(total > prev.total)) continue;
+  byRoster.set(key, { key, members, total, unit, best: ev });
 }
 const pool = [];
 for (const t of byRoster.values()) {
@@ -102,8 +103,6 @@ for (const t of byRoster.values()) {
   pool.push({ ...t, gap: cost.pulls, gold: t.members.reduce((n, m) => n + datasetGoldOf(m), 0) });
 }
 const pct = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))];
-const strengthLo = Math.min(...pool.map((t) => t.strength));
-const strengthHi = Math.max(...pool.map((t) => t.strength));
 const totalLo = Math.min(...pool.map((t) => t.total));
 const totalHi = Math.max(...pool.map((t) => t.total));
 const gapSorted = [...pool.map((t) => t.gap)].sort((a, b) => a - b);
@@ -111,25 +110,29 @@ const goldSorted = [...pool.map((t) => t.gold)].sort((a, b) => a - b);
 const gapCap = pct(gapSorted, 0.75);
 const goldCap = pct(goldSorted, 0.75);
 console.log(`=== A. 候选池复刻（对照生产 teamPlan）===`);
-console.log(`  生产：poolAll ${prod.poolAll} / 候选 ${prod.pool} / 强度刻度 ${prod.strengthLo}~${prod.strengthHi}`
+console.log(`  生产：poolAll ${prod.poolAll} / 候选 ${prod.pool} / ① 刻度（总榜分）${prod.strengthLo}~${prod.strengthHi}`
   + ` / 差额封顶 ${prod.gapMax}（p${prod.gapCapPct * 100}）`);
-console.log(`  复刻：poolAll ${byRoster.size} / 候选 ${pool.length} / 强度刻度 ${strengthLo.toFixed(1)}~${strengthHi.toFixed(1)}`
-  + ` / 差额封顶 ${gapCap}；总榜分刻度 ${totalLo.toFixed(1)}~${totalHi.toFixed(1)}`
+console.log(`  复刻：poolAll ${byRoster.size} / 候选 ${pool.length} / ① 刻度（总榜分）${totalLo.toFixed(1)}~${totalHi.toFixed(1)}`
+  + ` / 差额封顶 ${gapCap}`
   + `；账面金数 p50=${pct(goldSorted, 0.5)} p75=${goldCap} max=${goldSorted[goldSorted.length - 1]}`);
 
-/** 通用打分：① 二选一（strength 或 total），② 的刻度轴二选一（gap 或 gold）。 */
+/**
+ * 通用打分：① 只有**一个**口径（角色总榜整包分 `unit.total`，含金数项），
+ * ② 的刻度轴二选一（gap 或 gold）。
+ * ⚠️ v4.6.91 撤销「纯强度」之后，① 那第二根轴没有了 —— 调用点传的 `axisA` 已不起作用。
+ */
 const scorePool = (opts) => {
   const {
-    axisA = 'strength', axisB = 'gap', weights = { strength: 0.5, cost: 0.5 },
+    axisB = 'gap', weights = { strength: 0.5, cost: 0.5 },
     strengthWeightCap = null,
   } = opts;
-  const aLo = axisA === 'strength' ? strengthLo : totalLo;
-  const aHi = axisA === 'strength' ? strengthHi : totalHi;
+  const aLo = totalLo;
+  const aHi = totalHi;
   const bCap = axisB === 'gap' ? (opts.gapCapOverride ?? gapCap) : (opts.goldCapOverride ?? goldCap);
   const span = (v, lo, hi) => (hi - lo < 1e-9 ? 1 : (v - lo) / (hi - lo));
   const clamp01 = (v) => Math.max(0, Math.min(1, v));
   for (const t of pool) {
-    const a = axisA === 'strength' ? t.strength : t.total;
+    const a = t.total;
     const b = axisB === 'gap' ? t.gap : t.gold;
     t.aPct = 100 * clamp01(span(a, aLo, aHi));
     t.bPct = 100 * clamp01(1 - span(b, 0, bCap));
@@ -148,13 +151,13 @@ const show = (title, ranked, n = 5) => {
   console.log(`\n--- ${title} ---`);
   ranked.slice(0, n).forEach((t, i) => {
     console.log(`  #${i + 1} 分 ${t.score.toFixed(1)}｜账面 ${t.gold} 金｜补金 ${t.gap} 金`
-      + `｜强度分 ${t.aPct.toFixed(1)}（纯强度 ${t.strength.toFixed(1)} / 总榜分 ${t.total.toFixed(1)}）`
+      + `｜① ${t.aPct.toFixed(1)}（总榜分 ${t.total.toFixed(1)}）`
       + `｜② ${t.bPct.toFixed(1)}｜${teamText(t.members)}`);
   });
 };
 
-// 与生产逐条对齐（同一把尺子：强度 + 差额）
-const replica = scorePool({ axisA: 'strength', axisB: 'gap' });
+// 与生产逐条对齐（同一把尺子：① 总榜分 + 差额）
+const replica = scorePool({ axisB: 'gap' });
 const prodRows = prod.rows.map((r) => r.key);
 const repRows = replica.slice(0, prodRows.length).map((t) => t.key);
 const same = prodRows.every((k, i) => k === repRows[i]);
@@ -194,43 +197,44 @@ for (const t of pool) {
     || a.actionValue - b.actionValue)[0];
   cheaper.push({ ...t, evCost: best.cost, evAv: best.actionValue, evSeason: best.season, evTier: best.tier });
 }
-const rankedCheaper = scorePool({ axisA: 'strength', axisB: 'gap' })
+const rankedCheaper = scorePool({ axisB: 'gap' })
   .filter((t) => cheaper.some((c) => c.key === t.key));
 rankedCheaper.forEach((t) => {
   const c = cheaper.find((x) => x.key === t.key);
   t.evCost = c.evCost; t.evAv = c.evAv; t.evSeason = c.evSeason;
 });
 console.log(`  共 ${cheaper.length} 支；按当前总分降序前 15：`);
-console.log('  #  分     金数 补金  证据(金/行动值/版本)     强度分  纯强度   总榜分   队伍');
+console.log('  #  分     金数 补金  证据(金/行动值/版本)     ① 分    总榜分   队伍');
 rankedCheaper.slice(0, 15).forEach((t, i) => {
   console.log(`  ${String(i + 1).padStart(2)} ${t.score.toFixed(1).padStart(5)} ${String(t.gold).padStart(5)}`
     + ` ${String(t.gap).padStart(4)}  ${String(t.evCost).padStart(2)}金/${String(t.evAv).padStart(3)}AV/${String(t.evSeason).padEnd(4)}`
-    + ` ${t.aPct.toFixed(1).padStart(6)} ${t.strength.toFixed(1).padStart(7)} ${t.total.toFixed(1).padStart(8)}`
+    + ` ${t.aPct.toFixed(1).padStart(6)} ${t.total.toFixed(1).padStart(8)}`
     + `   ${teamText(t.members)}`);
 });
 const cheaperByGold = [...cheaper].sort((a, b) => a.evCost - b.evCost || a.evAv - b.evAv).slice(0, 10);
 console.log('\n  同集合按「证据金数」升序前 10（最压金的一批）：');
 cheaperByGold.forEach((t, i) => {
   console.log(`  ${String(i + 1).padStart(2)} 证据 ${String(t.evCost).padStart(2)}金/${String(t.evAv).padStart(3)}AV/${String(t.evSeason).padEnd(4)}`
-    + `｜账面 ${t.gold}金 补金 ${t.gap}｜强度分 ${t.aPct.toFixed(1)} 总榜分 ${t.total.toFixed(1)}｜${teamText(t.members)}`);
+    + `｜账面 ${t.gold}金 补金 ${t.gap}｜① ${t.aPct.toFixed(1)} 总榜分 ${t.total.toFixed(1)}｜${teamText(t.members)}`);
 });
 
 // ---- C. 候选改法 ---------------------------------------------------------------
 console.log('\n\n=== C. 候选改法下的新前 5 名 ===');
-show('C0 现状（① 纯强度 + ② 补金差额，50/50）', replica);
+show('C0 现状（① 总榜分 + ② 补金差额，50/50）', replica);
 
-// 改法 A：① 换成「含金数项的总榜分」（即 v4.6.87 之前的 ① 口径）
-show('A ① 换成总榜分（含金数项，min(1,sMinCost/本队金数)）', scorePool({ axisA: 'total', axisB: 'gap' }));
+// 改法 A：① 换成「含金数项的总榜分」—— ⚠️ v4.6.91 起这**就是**现状（C0），
+// 所以这一段与 C0 逐条相同，留着只为对照。
+show('A ① 换成总榜分（含金数项）—— 已是现状，与 C0 相同', scorePool({ axisB: 'gap' }));
 
 // 改法 B：② 的刻度轴从补金差额换成账面金数
-show('B ② 换成账面金数接近度（1 − 金数/p75金数）', scorePool({ axisA: 'strength', axisB: 'gold' }));
+show('B ② 换成账面金数接近度（1 − 金数/p75金数）', scorePool({ axisB: 'gold' }));
 
 // 改法 C：② 同时看差额与账面金数（各半）
 const rankC = (() => {
   const span = (v, lo, hi) => (hi - lo < 1e-9 ? 1 : (v - lo) / (hi - lo));
   const clamp01 = (v) => Math.max(0, Math.min(1, v));
   for (const t of pool) {
-    t.aPct = 100 * clamp01(span(t.strength, strengthLo, strengthHi));
+    t.aPct = 100 * clamp01(span(t.total, totalLo, totalHi));
     t.gapPct = 100 * clamp01(1 - span(t.gap, 0, gapCap));
     t.goldPct = 100 * clamp01(1 - span(t.gold, 0, goldCap));
     t.bPct = (t.gapPct + t.goldPct) / 2;
@@ -245,7 +249,7 @@ const window3 = await run(await archiveFrontierAll(envs, { window: 3 }), normali
 console.log(`\n--- D 只取最近 3 个版本（window=3；poolAll ${window3.plan.poolAll} / 候选 ${window3.plan.pool}）---`);
 window3.plan.rows.slice(0, 5).forEach((row, i) => {
   console.log(`  #${i + 1} 分 ${row.total.toFixed(1)}｜账面 ${row.gold} 金｜补金 ${row.gap} 金`
-    + `｜强度分 ${row.strengthPct.toFixed(1)}（纯强度 ${row.strength.toFixed(1)}）`
+    + `｜① ${row.strengthPct.toFixed(1)}（总榜分 ${row.teamScore.toFixed(1)}）`
     + `｜证据 ${row.bestEnv?.label} ${row.bestEnv?.bestTeamGold}金/${row.bestEnv?.actionValue}AV/${row.bestEnv?.season}`
     + `｜${teamText(row.members)}`);
 });
@@ -269,19 +273,19 @@ for (const [s, c] of [[1, 2], [1, 3], [0, 1]]) {
 // 改法 F：**放宽候选池** —— 把「最近 3 版里绝境满分的四人配置」直接并入候选池。
 //
 // ⚠️ 这是**我的复刻口径**，生产里没有这条路径：新并入的队伍没有自己的总榜条目，
-// 所以强度/总榜分取「它四个成员各自整包中最好的那一条」（teamPoolUnits 里按
-// 角色 × 档位收敛后的整包强度），与 teamPlan 对池内队伍的做法同源但不等价。
+// 所以总榜分取「它四个成员各自整包中最好的那一条」（teamPoolUnits 里按
+// 角色 × 档位收敛后的整包分），与 teamPlan 对池内队伍的做法同源但不等价。
 {
   const packKeyOfMember = (m) => `${m.char}|E${eidolonTierOf(m.eidolon)}|${m.lc || '-'}|`
     + `S${Math.max(1, Math.round(Number(m.superimp) || 1))}`;
   const unitByPack = new Map();
   for (const unit of units) {
     const k = packKeyOfMember({ char: unit.name, eidolon: unit.eidolon, lc: unit.lc, superimp: unit.superimp });
-    const s = Number.isFinite(Number(unit.strength)) ? Number(unit.strength) : Number(unit.total) || 0;
+    // ⚠️ ① 就是总榜分（`unit.total`），不再单独收敛一份纯强度（v4.6.91 已删除）。
     const t = Number(unit.total) || 0;
     const prev = unitByPack.get(k);
-    if (prev && !(s > prev.strength || (s === prev.strength && t > prev.total))) continue;
-    unitByPack.set(k, { strength: s, total: t });
+    if (prev && !(t > prev.total)) continue;
+    unitByPack.set(k, { total: t });
   }
   const recent3 = seasonsDesc.slice(0, 3);
   const known = new Set(pool.map((t) => t.key));
@@ -292,24 +296,24 @@ for (const [s, c] of [[1, 2], [1, 3], [0, 1]]) {
       && r.actionValue < 300);
     if (!inRecent.length) continue;
     const members = inRecent[0].members;
-    let strength = null; let total = null;
+    let total = null;
     for (const m of members) {
       const u = unitByPack.get(packKeyOfMember(m));
       if (!u) continue;
-      if (strength === null || u.strength > strength) { strength = u.strength; total = u.total; }
+      if (total === null || u.total > total) total = u.total;
     }
-    if (strength === null) continue;
+    if (total === null) continue;
     const cost = marginalCostOf(members, availability, acct);
     if (!(cost.pulls > 0)) continue;
     added.push({
-      key, members, strength, total, gap: cost.pulls,
+      key, members, total, gap: cost.pulls,
       gold: members.reduce((n, m) => n + datasetGoldOf(m), 0),
       added: true, best: inRecent[0],
     });
   }
   const poolF = [...pool, ...added];
-  const sLo = Math.min(...poolF.map((t) => t.strength));
-  const sHi = Math.max(...poolF.map((t) => t.strength));
+  const sLo = Math.min(...poolF.map((t) => t.total));
+  const sHi = Math.max(...poolF.map((t) => t.total));
   const gSorted = [...poolF.map((t) => t.gap)].sort((a, b) => a - b);
   const gCap = gSorted[Math.min(gSorted.length - 1, Math.floor(gSorted.length * 0.75))];
   const gdSorted = [...poolF.map((t) => t.gold)].sort((a, b) => a - b);
@@ -319,14 +323,16 @@ for (const [s, c] of [[1, 2], [1, 3], [0, 1]]) {
   console.log(`\n--- F 放宽候选池：并入「最近 3 版绝境满分」的四人配置 ${added.length} 支`
     + `（池 ${pool.length} → ${poolF.length}）---`);
   const variants = [
-    ['F1 池放宽 + 现状打分', (t) => 0.5 * (100 * clamp01(span(t.strength, sLo, sHi)))
+    ['F1 池放宽 + 现状打分', (t) => 0.5 * (100 * clamp01(span(t.total, sLo, sHi)))
       + 0.5 * (100 * clamp01(1 - span(t.gap, 0, gCap)))],
-    ['F2 池放宽 + ② 含账面金数', (t) => 0.5 * (100 * clamp01(span(t.strength, sLo, sHi)))
+    ['F2 池放宽 + ② 含账面金数', (t) => 0.5 * (100 * clamp01(span(t.total, sLo, sHi)))
       + 0.5 * (0.5 * (100 * clamp01(1 - span(t.gap, 0, gCap)))
         + 0.5 * (100 * clamp01(1 - span(t.gold, 0, gdCap))))],
-    ['F3 池放宽 + ① 用总榜分', (t) => 0.5 * (100 * clamp01(span(t.total, Math.min(...poolF.map((x) => x.total)),
-      Math.max(...poolF.map((x) => x.total)))))
-      + 0.5 * (100 * clamp01(1 - span(t.gap, 0, gCap)))],
+    // ⚠️ F3 与 F1 现在是同一条（① 只有一个口径）；「① 用总榜分」这个画面 v4.6.91 起已经落地。
+    ['F3 池放宽 + ① 用总榜分（与 F1 相同）',
+      (t) => 0.5 * (100 * clamp01(span(t.total, Math.min(...poolF.map((x) => x.total)),
+        Math.max(...poolF.map((x) => x.total)))))
+        + 0.5 * (100 * clamp01(1 - span(t.gap, 0, gCap)))],
   ];
   for (const [title, fn] of variants) {
     const ranked = poolF.map((t) => ({ ...t, score: fn(t) }))
@@ -334,23 +340,24 @@ for (const [s, c] of [[1, 2], [1, 3], [0, 1]]) {
     console.log(`\n  --- ${title} ---`);
     ranked.slice(0, 5).forEach((t, i) => {
       console.log(`    #${i + 1} 分 ${t.score.toFixed(1)}｜账面 ${t.gold} 金｜补金 ${t.gap} 金`
-        + `｜强度分 ${(100 * clamp01(span(t.strength, sLo, sHi))).toFixed(1)}`
-        + `（纯强度 ${t.strength.toFixed(1)} / 总榜分 ${t.total.toFixed(1)}）`
+        + `｜① ${(100 * clamp01(span(t.total, sLo, sHi))).toFixed(1)}`
+        + `（总榜分 ${t.total.toFixed(1)}）`
         + `${t.added ? '｜【新并入池】' : ''}｜${teamText(t.members)}`);
     });
     const idx = ranked.findIndex((t) => t.key === prod.rows[0].key);
-    console.log(`    遐蝶/风堇/昔涟/长夜月（16 金）名次 #${idx + 1}`);
+    // ⚠️ 这里跟的是**生产首推那一支**，不是固定的某支队（v4.6.91 起首推是 11 金那支）。
+    console.log(`    生产首推队伍（${prod.rows[0].gold} 金）名次 #${idx + 1}`);
   }
 }
 
 // 顺带：改法 A / B 下当前首推队伍的名次
 for (const [title, ranked] of [['现状', replica],
-  ['A 总榜分', scorePool({ axisA: 'total', axisB: 'gap' })],
-  ['B 账面金数', scorePool({ axisA: 'strength', axisB: 'gold' })],
+  ['A 总榜分', scorePool({ axisB: 'gap' })],
+  ['B 账面金数', scorePool({ axisB: 'gold' })],
   ['C 差额+金数', rankC]]) {
   const headKey = prod.rows[0].key;
   const idx = ranked.findIndex((t) => t.key === headKey);
   const alt = ranked.findIndex((t) => t.gold <= 12 && t.gap <= 6);
-  console.log(`  [${title}] 遐蝶/风堇/昔涟/长夜月 名次 #${idx + 1}；`
+  console.log(`  [${title}] 生产首推队伍（${prod.rows[0].gold} 金）名次 #${idx + 1}；`
     + `首个「账面 ≤12 金且补金 ≤6」的候选名次 #${alt + 1}`);
 }
