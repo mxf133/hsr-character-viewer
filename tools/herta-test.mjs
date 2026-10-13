@@ -25,12 +25,14 @@ import {
   pullCostOf,
   recommendPlan, scoreOf,
   teamPullsOf, TIER_PLACEHOLDER, tierLabelsOf, tierMoveText, tierScoreOf, tierTextOf,
-  unitPullsOf, VERSION_WINDOW, weightInputOf,
+  unitPullsOf, VERSION_WINDOW, VERSION_WEIGHTS, versionWeightOf, weightInputOf,
   // 隐金设置（用户 2026-10-11）
   DEFAULT_HIDDEN_COSTS, HIDDEN_COST_IDS, HIDDEN_COST_SETTINGS, NO_HIDDEN_COSTS,
   hiddenReductionOf, normalizeHiddenCosts, packGoldOf,
 } from '../public/scripts/advice.js';
-import { archiveConclusion, conclusionEnvs, listEnvs } from '../src/server/conclusion.js';
+import {
+  archiveCharacterPacks, archiveConclusion, conclusionEnvs, listEnvs,
+} from '../src/server/conclusion.js';
 import { baseName, compareRosters } from '../src/server/compare.js';
 import { normalizeBattleRecords } from '../src/server/records.js';
 
@@ -1601,7 +1603,9 @@ checkAsync('综合结论：每个副本都挑样本足够的版本，并在各�
   assert.equal(empty.ok, true);
   assert.equal(empty.payload, 7,
     'v4 = 整包口径；v5 = hiddenCosts 回显；v6 = availability（队伍方案在界面现算差额）；'
-    + 'v7 = 逐星魂档的 frontierTiers（两支并行分支各占过 v6，合并后形状号取 7）');
+    + 'v7 = 逐星魂档的 frontierTiers（两支并行分支各占过 v6，合并后形状号取 7）。'
+    + '⚠️ **没有 v8**：v4.6.87 曾写过 8（整包多一个 strength = 纯强度），'
+    + 'v4.6.91 按用户 2026-10-12 第 8 条删掉了那个字段，形状回到 7。');
   assert.ok(empty.envs.length >= 4, `至少要覆盖 4 个副本，实际 ${empty.envs.length}`);
   const minRuns = index.minSeasonRuns ?? 20;
   for (const env of empty.envs) {
@@ -2384,19 +2388,22 @@ check('性价比总榜：只有 E2 的证据时，E2 整包照样按自己的队
     '没有 E0 配置时不该凭空生成 E0 整包');
 });
 
-check('性价比总榜：版本权重按 2:2:2:1:1:1:1 —— 同样的一套分，落在新版本的更高', () => {
-  // ⚠️ 口径变更（v16，用户第 7 条）：v15 曾把版本维度整个拿掉（那条用例只因为夹具
-  // 没传 `frontier` 表、版本权重退化成 1 才通过，注释却写着「新近度不进分数」，与第 7
-  // 条直接矛盾）。v16 明确：近 1-3 个版本各 2 分、近 4-7 个版本各 1 分。
+check('性价比总榜：版本窗口 = 3 版、窗口内等权、窗口外权重 0（用户 2026-10-12 第 5 条）', () => {
+  // ⚠️ 口径变更史（别改回去）：
+  //   * v16（用户 2026-10 第 7 条）：近 1-3 版各 2 分、近 4-7 版各 1 分，窗口 7。
+  //   * v4.6.87（用户 2026-10-12 第 5 条原话：「把角色总榜的版本窗口收到 3 版」）：
+  //     窗口收到 **3 版**，于是「近 4-7 版各 1 分」那一档从表里消失，
+  //     `VERSION_WEIGHTS` 变回 **三版等权** `2:2:2`。
+  //     依据是实测：用户点名那支（遐蝶/昔涟/长夜月/风堇）有 **32.1%** 的分来自权重 1 的
+  //     那四个旧版本，而它那四个人一起上场在 4.6 根本没有投稿（最新满分证据停在 4.5）。
   //
-  // 这条用例给两个整包**完全相同的分数集合**，只把「高分落在哪个版本」对调 ——
-  // 落在新版本的那个必须更高。这样测的是版本权重本身，而不是分数高低。
-  // 分数只由「**该版本**最便宜金数 ÷ 本配置金数」决定（不给行动值 → 行动值项退化成 1）。
-  // ⚠️ 用户 2026-10-10 第 5 轮起，金数项的分母是**每个版本自己的**最便宜金数，所以要
-  // 让这个用例只测「版本权重」，必须让**每个版本的最便宜金数相同** —— 否则测出来的是
-  // 版本间的金数水位差，不是版本权重（实测就是这么红的：Recent 94.44 而不是 72.22）。
-  // 办法：每个版本都塞一条固定的 2 金陪跑（Pacer），于是每版 minCost 恒为 2，
-  // cost 2 → 100、cost 3 → 66.67、cost 4 → 50，与改动前的期望值一致。
+  // 所以这条用例现在测的是两件事：① 表本身是 2:2:2、窗口是 3；
+  // ② **窗口外的版本对分数没有任何贡献**（权重 0 = 不进分子也不进分母）。
+  assert.deepEqual(VERSION_WEIGHTS, [2, 2, 2], '版本权重表应是三版等权 2:2:2');
+  assert.equal(VERSION_WINDOW, 3, '版本窗口应是 3');
+  assert.equal(versionWeightOf(2), 2, '第 3 个版本仍是 2 分');
+  assert.equal(versionWeightOf(3), 0, '第 4 个版本起权重 0（不进窗口，不是「权重很小」）');
+
   const availability = {
     characters: {
       Recent: { rarity: 5, limited: true }, Stale: { rarity: 5, limited: true },
@@ -2405,15 +2412,19 @@ check('性价比总榜：版本权重按 2:2:2:1:1:1:1 —— 同样的一套分
     lightCones: {},
   };
   const seasons = ['4.0', '4.1', '4.2', '4.3', '4.4', '4.5'];
-  // 近 3 个（4.5/4.4/4.3）2 分，近 4-6 个（4.2/4.1/4.0）1 分 —— 与 VERSION_WEIGHTS 同构。
-  const seasonWeights = { 4.5: 2, 4.4: 2, 4.3: 2, 4.2: 1, 4.1: 1, 4.0: 1 };
+  // ⚠️ 键必须写成**带引号的字符串**：对象字面量里的 `4.0` 是数字字面量，
+  // `{ 4.0: 1 }` 的键是 `"4"` 而不是 `"4.0"` —— 实测过：那样写会让 4.0 这一版
+  // 查不到权重，静默退回 `versionWeightOf(5)`，旧表里是 1、新表里是 0，
+  // 于是这条用例在收窗之后凭空红了（夹具 bug，不是生产 bug）。
+  const seasonWeights = { '4.5': 2, '4.4': 2, '4.3': 2, '4.2': 0, '4.1': 0, '4.0': 0 };
   const rowsOf = (char, bestSeason) => seasons.map((season) => ({
     cost: season === bestSeason ? 2 : (season === '4.0' || season === '4.5' ? 4 : 3),
     tier: 'perfect',
     newestSeason: season,
     members: [{ char, eidolon: 2 }],
   }));
-  // 每个版本一条 2 金陪跑 → 各版本 minCost 统一为 2（见上面注释）。
+  // 每个版本一条 2 金陪跑 → 各版本 minCost 统一为 2，这样测出来的只是版本权重，
+  // 不是版本间的金数水位差。
   const pacers = seasons.map((season) => ({
     cost: 2, tier: 'perfect', newestSeason: season, members: [{ char: 'Pacer', eidolon: 0 }],
   }));
@@ -2430,27 +2441,31 @@ check('性价比总榜：版本权重按 2:2:2:1:1:1:1 —— 同样的一套分
   const recent = out.frontierUnits.find((unit) => unit.name === 'Recent');
   const stale = out.frontierUnits.find((unit) => unit.name === 'Stale');
   assert.ok(recent && stale, '两个整包都应进榜');
-  // 每个整包的证据都铺满 6 个版本 → 既没有「不参与」也没有「无人使用」的版本，
-  // 分数只由版本权重决定。
-  assert.equal(recent.envs[0].absentSeasons, 0, '铺满版本时不该有「不参与」的版本');
-  assert.equal(recent.envs[0].droppedSeasons, 0, '铺满版本时不该有「无人使用」的版本');
-  // Recent：2×100 + 2×66.67 + 2×66.67 + 1×66.67 + 1×66.67 + 1×50 = 650，Σw = 9
-  // Stale ：2×50  + 2×66.67 + 2×66.67 + 1×66.67 + 1×66.67 + 1×100 = 600，Σw = 9
+  // 分母只含**权重 > 0** 的那三版（4.5/4.4/4.3），窗口外的三版连分母都不进。
+  assert.equal(recent.envs[0].absentSeasons, 0,
+    '权重 0 的版本是「不进窗口」，不是「早于登场」—— 不该被记成不参与平均');
+  assert.equal(recent.envs[0].droppedSeasons, 0, '权重 0 的版本也不该被记成「无人使用算 0 分」');
+  // Recent：4.5 拿 2 金 → 100；4.4 / 4.3 各 3 金 → 66.67。Σw = 6。
   const perEnv = (u) => u.total / 10; // 绝境权重 10
-  assert.ok(Math.abs(perEnv(recent) - 650 / 9) < 0.01,
-    `Recent 的加权分应为 650/9≈72.22，实际 ${perEnv(recent).toFixed(4)}`);
-  assert.ok(Math.abs(perEnv(stale) - 600 / 9) < 0.01,
-    `Stale 的加权分应为 600/9≈66.67，实际 ${perEnv(stale).toFixed(4)}`);
+  const expectRecent = (2 * 100 + 2 * (200 / 3) + 2 * (200 / 3)) / 6;
+  assert.ok(Math.abs(perEnv(recent) - expectRecent) < 0.01,
+    `Recent 的三版等权平均应为 ${expectRecent.toFixed(2)}，实际 ${perEnv(recent).toFixed(4)}`);
+  // Stale：4.5 是 4 金 → 50；4.4 / 4.3 各 3 金 → 66.67（它「最便宜的那一版」4.0 在窗口外，
+  // 权重 0 —— 这正是收窗要治的那件事：旧版本的便宜优势不再能拉住分数）。
+  const expectStale = (2 * 50 + 2 * (200 / 3) + 2 * (200 / 3)) / 6;
+  assert.ok(Math.abs(perEnv(stale) - expectStale) < 0.01,
+    `Stale 的三版应为 ${expectStale.toFixed(2)}（它的 4.0 那版不进窗口），实际 ${perEnv(stale).toFixed(4)}`);
   assert.ok(recent.total > stale.total,
-    '分数集合相同、只把高分从旧版本换到新版本 → 新版本那个必须更高（第 7 条）');
-  // 版本元数据要真的下发到界面（界面据此写「按 N 个版本加权」）。
+    '分数集合相同、只把高分从窗口外换到窗口内 → 窗口内那个必须更高');
+  // 版本元数据要真的下发到界面（界面据此写「按 N 个版本加权」与那张比例）。
   // ⚠️ 顺序是**新的在前**（内部 `seasonOrder` 就是这个顺序，权重表按下标取），
   // 别按升序断言；也不要在这里改字典序排序 —— 版本号迟早出现 4.10，字典序会把它
   // 排到 4.2 前面。
   assert.deepEqual(out.frontierEnvs[0].seasons, [...seasons].reverse(),
     '副本元数据要带版本列表（新的在前）');
-  assert.equal(out.frontierEnvs[0].seasonWeights['4.5'], 2, '近 3 个版本各 2 分');
-  assert.equal(out.frontierEnvs[0].seasonWeights['4.0'], 1, '近 4-7 个版本各 1 分');
+  assert.equal(out.frontierEnvs[0].seasonWeights['4.5'], 2, '窗口内第 1 版 2 分');
+  assert.equal(out.frontierEnvs[0].seasonWeights['4.3'], 2, '窗口内第 3 版也是 2 分（等权）');
+  assert.equal(out.frontierEnvs[0].seasonWeights['4.2'], 0, '窗口外的版本权重 0');
 });
 
 check('性价比总榜：早于「登场版本」的版本**不参与平均**（不奖不罚，用户 2026-10-10 第二轮）', () => {
@@ -3005,7 +3020,7 @@ check('金数项：封顶 ×1、0 金通关 ×1.2（用户 2026-10-11 第 3 条�
   assert.equal(frontierCostTermOf(null, 3), null, '分母缺失同样给 null');
 });
 
-await checkAsync('金数项封顶：真实数据集上没有任何明细超过 ×1（0 金那条除外）', async () => {
+await checkAsync('金数项封顶 ×1 + 0 金通关 ×1.2：真实数据集上的两条口径', async () => {
   const index = await archiveIndex();
   const { envs } = await conclusionEnvs(index);
   const frontierAll = await archiveFrontierAll(envs, { window: VERSION_WINDOW });
@@ -3046,6 +3061,21 @@ await checkAsync('金数项封顶：真实数据集上没有任何明细超过 �
   assert.ok(rows > 0, '总榜明细不该为空');
   assert.ok(capped > 0, `当前数据集上应有被封顶的行（实测 19 条），实际 ${capped}`);
   assert.ok(zeroGold > 0, `界面默认（隐金全勾）下应有 0 金通关的行（实测 7 条），实际 ${zeroGold}`);
+
+  // ---- 撤销检查：整包上**不该**再有 `strength`（纯强度，v4.6.91 已按用户第 8 条删除）----
+  //
+  // v4.6.87 曾在每个整包上多发一个 `strength` = Σ_副本 副本权重 × (100 × 表现)（不乘金数项），
+  // 供抽卡方案的「强度得分」用。用户 2026-10-12 第 8 条把它改回「含金数项的整包分」
+  // （「同样是绝境 0T，9 金队要比 16 金队强得多」），那个字段与 `packStrengthOf()` 一并删除。
+  // 这条断言钉住「别让它悄悄复活」——载荷里多一个没人读的字段，下一个人就会拿它当口径。
+  let withStrength = 0;
+  for (const unit of result.frontierUnits || []) {
+    if ('strength' in unit) withStrength += 1;
+    for (const env of unit.envs || []) if ('strength' in env) withStrength += 1;
+  }
+  assert.equal(withStrength, 0,
+    `整包与逐副本都不该再带 strength（实际 ${withStrength} 处）`);
+  assert.ok((result.frontierUnits || []).length > 0, '总榜不该为空（上面那条断言空跑会让人误以为它过了）');
 });
 
 check('性价比总榜：证据广度只展示，不压低单条记录', () => {
@@ -3402,7 +3432,8 @@ check('数据状态：角色快照 / 战斗记录 / 黑塔网数据三份缓存�
 checkAsync('隐金：真实数据集上确实改变了总榜，且**只**动总榜（抽卡方案一字不变）', async () => {
   const off = await archiveConclusion({ owned: [] }, { window: 6, hiddenCosts: NO_HIDDEN_COSTS });
   const on = await archiveConclusion({ owned: [] }, { window: 6, hiddenCosts: DEFAULT_HIDDEN_COSTS });
-  assert.equal(on.payload, 7, '载荷形状应升到 v7（多了 hiddenCosts 回显 + availability + frontierTiers）');
+  assert.equal(on.payload, 7,
+    '载荷形状是 v7（hiddenCosts 回显 + availability + frontierTiers；strength 已撤销）');
   assert.ok(on.frontierTiers && ['0', '1', '2', '6'].every((t) => Array.isArray(on.frontierTiers[t])),
     '逐星魂档的总榜 frontierTiers 必须四档都在（界面 E0/E1/E2/E6 筛选器靠它）');
   assert.deepEqual(on.hiddenCosts, { ...DEFAULT_HIDDEN_COSTS }, '服务端要回显归一化后的隐金设置');
@@ -3649,6 +3680,55 @@ checkAsync('贡献值来源：真实数据集上因子能还原每一行的分�
   assert.ok(weighted > 0, '真实数据里应当有「权重 ≠ 1」的行（绝境是 10）');
   assert.ok(movedCost > 0, '真实数据里应当有「金数比 ≠ 1」的行（否则这一列是摆设）');
   assert.ok(movedAv > 0, '真实数据里应当有「行动值项 ≠ 1」的行（否则这一列是摆设）');
+});
+
+checkAsync('⭐ 面板（/api/archive/packs）那一路的 env 也要能还原因子：跨版本发挥恒 ≤ 1', async () => {
+  // ⚠️ v4.6.88 修的真 bug：**逐档榜**的浮层只随结论载荷带 1 个 env，界面会用
+  // `/api/archive/packs` 的数据**整份替换** `unit.envs` 再重画「贡献值来源」表
+  // （`advice-view.js` 的 `enrichTierDetail()`）。而 `slimCharacterPack()` 当时**没发
+  // `seasonMinCost`** —— `frontierFactorsOf()` 于是退回 `meta.minCost`（**全窗口**最小值，
+  // 比「该版本最便宜」更小），金数项与 base 一起变小，余数 = score ÷ base **超过 1**。
+  // 实测：305 行里 **119 行（39%）> 1**、最大 **×5.76**（`_probe-packs-season-factor.mjs`）。
+  //
+  // 上面那条用例只扫了**结论载荷**（它一直带着 `seasonMinCost`，所以永远绿）——
+  // 这就是它没能拦住这个 bug 的原因。这里改扫**面板载荷**，规则同上。
+  const data = await archiveConclusion({ owned: [] }, { window: 6 });
+  const metaOf = (id) => (data.frontierEnvs || []).find((e) => e.id === id);
+  // 只抽会被界面补齐的那类角色（`envCount > envs.length` 的逐档榜条目），它们最省时间。
+  const tierUnits = Object.values(data.frontierTiers || {}).flat();
+  const names = [...new Set(tierUnits
+    .filter((u) => Number(u.envCount) > (u.envs || []).length)
+    .map((u) => u.name))].slice(0, 3);
+  assert.ok(names.length > 0, '逐档榜里应当有「明细被截断」的整包（否则这条用例空跑）');
+  let rows = 0;
+  let withSeasonMinCost = 0;
+  let maxFactor = 0;
+  for (const name of names) {
+    const packs = await archiveCharacterPacks(name, { window: VERSION_WINDOW });
+    assert.equal(packs.ok, true, `${name}：面板接口应当可用`);
+    for (const pack of packs.packs || []) {
+      for (const env of pack.envs || []) {
+        rows += 1;
+        // ① 字段必须在（缺了就是上面那个 bug 的形态）
+        assert.ok(Number.isFinite(Number(env.seasonMinCost)),
+          `${name} / ${env.id}：面板的 env 必须带 seasonMinCost`);
+        withSeasonMinCost += 1;
+        // ② 因子必须能还原成榜上的分，且**恒 ≤ 1**
+        const f = frontierFactorsOf(env, metaOf(env.id));
+        if (!(f.base > 0)) continue;
+        maxFactor = Math.max(maxFactor, Number(f.seasonFactor) || 0);
+        assert.ok(f.seasonFactor <= 1 + 1e-4,
+          `${name} / ${env.id}：跨版本发挥必须 ≤ 1，实际 ${f.seasonFactor}`
+          + `（minCost ${f.minCost}/${f.cost}）`);
+        const rebuilt = 100 * f.perfFactor * (f.costFactor ?? 1) * f.seasonFactor;
+        assert.ok(Math.abs(rebuilt - f.score) < 1e-6,
+          `${name} / ${env.id}：因子乘回去要等于分（${rebuilt} vs ${f.score}）`);
+      }
+    }
+  }
+  assert.ok(rows > 20, `至少要检查到几十行面板明细，实际 ${rows}`);
+  assert.equal(withSeasonMinCost, rows, '每一行都要带 seasonMinCost');
+  assert.ok(maxFactor > 0, '这条用例不能空跑：至少要有一行算出正的跨版本发挥');
 });
 
 // ------------------------------------------------------------------- report

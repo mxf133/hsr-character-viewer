@@ -1,10 +1,11 @@
 // 探针：直接调**生产实现** `teamPlan()`（不再是探针里手抄一份口径），核对结果。
 //
 //   node tools/_probe-team-plan.mjs --account=1 --rows=12
+//   node tools/_probe-team-plan.mjs --account=1 --strength=1 --cost=3   # 抽卡权重（相对大小）
 import { AccountStore } from '../src/server/store.js';
 import {
-  buildConclusion, eidolonsOf, lightConeRanksOf, ownedCharacters, teamPlan, unitPullsOf,
-  VERSION_WINDOW,
+  buildConclusion, eidolonsOf, lightConeRanksOf, normalizeDrawWeights, ownedCharacters, teamPlan,
+  unitPullsOf, VERSION_WINDOW,
 } from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
@@ -18,6 +19,10 @@ const arg = (name, dflt) => {
 };
 const ROWS = Math.max(1, Number(arg('rows', '12')) || 12);
 const ACC = Math.max(1, Number(arg('account', '1')) || 1);
+const draw = normalizeDrawWeights({
+  strength: arg('strength', undefined),
+  cost: arg('cost', undefined),
+});
 
 const index = await archiveIndex();
 const i18n = await loadI18n();
@@ -51,12 +56,14 @@ const conclusion = buildConclusion(envs, {
 const cn = (n) => zhName(i18n, 'characters', n) || zhName(i18n, 'lightCones', n) || n;
 const cnCone = (n) => zhName(i18n, 'lightCones', n) || n;
 
-const plan = teamPlan(conclusion, acct, { availability });
+const plan = teamPlan(conclusion, acct, { availability, drawWeights: draw });
 console.log(`账号 ${ACC}：${role.nickname} · 已有 ${acct.owned.size} 角色 / ${acct.cones.size} 光锥`);
+console.log(`抽卡权重：强度 ${(draw.strength * 100).toFixed(0)}% / 性价比 ${(draw.cost * 100).toFixed(0)}%`);
 console.log(`候选池：总榜 ${conclusion.frontierUnits.length} 条 → 队伍 ${plan.poolAll} 支`
   + ` → 去掉补金 0 金后 ${plan.pool} 支；下发 ${plan.rows.length} 条（截断=${plan.truncated}）`);
-console.log(`归一化上下限（现算）：性价比 ${plan.scoreLo.toFixed(1)} ~ ${plan.scoreHi.toFixed(1)}`
-  + `；差额 1 ~ ${plan.gapMax} 金`);
+console.log(`归一化上下限（现算）：强度 = 角色总榜整包分 ${plan.strengthLo.toFixed(1)}`
+  + ` ~ ${plan.strengthHi.toFixed(1)}`
+  + `；差额封顶 ${plan.gapMax} 金（性价比 = 差额接近度，只有一个刻度）`);
 
 const stepText = (it) => (it.kind === 'cone'
   ? (Number(it.from) >= 1 ? `S${it.from}→S${it.target}` : `未见→S${it.target}`)
@@ -64,8 +71,10 @@ const stepText = (it) => (it.kind === 'cone'
 
 plan.rows.slice(0, ROWS).forEach((row, i) => {
   console.log('');
-  console.log(`#${i + 1} 总分 ${row.total.toFixed(1)} = 性价比 ${row.scorePct.toFixed(1)} + 差额 ${row.gapPct.toFixed(1)}`
-    + `｜队伍分 ${row.teamScore.toFixed(1)}｜账面 ${row.gold} 金｜补金 ${row.gap} 金（约 ${row.pullsExpected} 抽）`);
+  console.log(`#${i + 1} 补金推荐分 ${row.total.toFixed(1)} = 强度 ${row.strengthPct.toFixed(1)}`
+    + ` × ${draw.strength.toFixed(2)} + 差额接近度 ${row.gapPct.toFixed(1)} × ${draw.cost.toFixed(2)}`
+    + `｜账面 ${row.gold} 金｜补金 ${row.gap} 金（约 ${row.pullsExpected} 抽）`
+    + `｜队分 ${row.teamScore.toFixed(1)}`);
   console.log(`    队伍：${row.members.map((m) => `${cn(m.char)}[${m.owned ? '有' : '缺'}]E${m.eidolon}`
     + `${m.lc ? `+${cnCone(m.lc)}S${m.superimp}` : ''}`).join(' / ')}`);
   console.log(`    证据：${row.bestEnv?.label || '—'} ${row.bestEnv?.bestTeamGold ?? '—'} 金`
@@ -82,8 +91,15 @@ ok(plan.rows.every((r) => r.total >= 0 && r.total <= 100), '总分必须落在 0
 ok(plan.rows.every((r, i, a) => i === 0 || a[i - 1].total >= r.total - 1e-9), '总分必须降序');
 ok(plan.rows.every((r) => r.fill.reduce((n, it) => n + it.pulls, 0) === r.gap),
   '补金顺序各笔之和 = 差额');
-ok(plan.rows.every((r) => Math.abs(r.total - (0.5 * r.scorePct + 0.5 * r.gapPct)) < 1e-4),
-  '总分 = 0.5×性价比 + 0.5×差额接近度');
+ok(plan.rows.every((r) => Math.abs(r.total
+  - (draw.strength * r.strengthPct + draw.cost * r.gapPct)) < 1e-4),
+  '总分 = 强度得分 × 强度权重 + 差额接近度 × 性价比权重');
+// ⚠️ 用户 2026-10-12 第 6 条：性价比这一侧**只有**差额接近度 —— 再出现第二个金数刻度
+//    （v4.6.87 的「压金度」）就是「三者重叠」，那条已被用户否掉。
+ok(plan.rows.every((r) => r.costPct === undefined && r.goldPct === undefined),
+  '不再下发 costPct / goldPct（性价比 == 差额接近度）');
+ok(plan.rows.every((r) => r.strength === undefined),
+  '行上不再有独立的 strength 字段（① 就是 teamScore，用户 2026-10-12 第 8 条）');
 ok(plan.rows.every((r) => r.fill.every((it) => it.pullsExpected === unitPullsOf(it.kind, it.pulls))),
   '每笔的期望抽数与 unitPullsOf 同源');
 ok(plan.rows.every((r) => r.fill.every((it, i, a) => i === 0

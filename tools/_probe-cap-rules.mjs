@@ -1,3 +1,6 @@
+// ⚠️ 口径变更：分项① 在 v4.6.87~v4.6.90 一度是**纯强度**（不含金数项）；v4.6.91 回到
+// **总榜分含金数项**归一化（`rows[].strengthPct` 是池内位置，原始值 `rows[].teamScore`）。
+//
 // ① 量当前结论载荷的余量（e2e 的硬断言是 < 600 KB）；
 // ② 在 **B 池**（每角色 × 每星魂档）上对照几种 ② 封顶规则，看哪一种既不压死强队、
 //    又给便宜队机会。
@@ -6,7 +9,7 @@
 import { createApp } from '../src/server/app.js';
 import {
   buildConclusion, eidolonsOf, lightConeRanksOf, marginalCostOf, ownedCharacters,
-  VERSION_WINDOW,
+  SCORING, VERSION_WINDOW,
 } from '../public/scripts/advice.js';
 import { AccountStore } from '../src/server/store.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
@@ -100,7 +103,7 @@ const lo = Math.min(...rows.map((r) => r.total));
 const hi = Math.max(...rows.map((r) => r.total));
 const gaps = rows.map((r) => r.gap).sort((a, b) => a - b);
 const quantile = (p) => gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * p))];
-for (const r of rows) r.scorePct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
+for (const r of rows) r.strengthPct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
 
 /** 几种 ② 封顶规则。 */
 const RULES = [
@@ -120,8 +123,11 @@ console.log(`池内差额分位：min ${gaps[0]} / p25 ${quantile(0.25)} / p50 $
 
 /** 反推规则：先按 p50 排一遍，取第 15 名的 gap，令它的 ② 为 50 分 ⇒ 封顶 = 2×gap。 */
 const scoreWith = (cap) => rows.map((r) => {
-  const gapPct = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap)));
-  return { ...r, gapPct, total_score: 0.5 * r.scorePct + 0.5 * gapPct };
+  // ⚠️ 曲线指数要跟着生产走（v4.6.92 起 = 1.5，用户第 9 条「给要补大量金的队伍的分太多」）：
+//    只按线性复算，探针给出的名次会与界面上的对不上。
+const gapPct = 100 * Math.max(0, Math.min(1, 1 - r.gap / cap)) ** (Number(SCORING.teamPlanGapPower) || 1);
+  // 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。
+  return { ...r, gapPct, total_score: 0.5 * r.strengthPct + 0.5 * gapPct };
 }).sort((a, b) => b.total_score - a.total_score);
 const p50Sorted = scoreWith(quantile(0.5));
 const midGap = p50Sorted[14]?.gap ?? 1;
@@ -135,7 +141,7 @@ for (const [label, cap] of RULES) {
     + `\n${'─'.repeat(92)}`);
   ranked.slice(0, 10).forEach((r, i) => {
     console.log(`  #${String(i + 1).padStart(2)} ${r.total_score.toFixed(1)}`
-      + ` = ①${r.scorePct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
+      + ` = ①${r.strengthPct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
       + `｜补 ${String(r.gap).padStart(2)} 金｜${nameOf(r.members)}`);
   });
 }

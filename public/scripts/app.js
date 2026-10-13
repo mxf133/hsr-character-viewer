@@ -39,6 +39,11 @@ const el = {
   logoutBtn: $('logoutBtn'),
   accountList: $('accountList'),
   addAccountBtn: $('addAccountBtn'),
+  // 虚拟账号（用户 2026-10-12）：账号与角色面板上的「＋ 虚拟账号」与它的预设列表。
+  virtualAccountBtn: $('virtualAccountBtn'),
+  virtualAccountPanel: $('virtualAccountPanel'),
+  virtualAccountList: $('virtualAccountList'),
+  virtualAccountClose: $('virtualAccountClose'),
   viewLogin: $('viewLogin'),
   viewDashboard: $('viewDashboard'),
   loginTitle: $('loginTitle'),
@@ -372,6 +377,16 @@ const renderAccounts = () => {
     const card = document.createElement('div');
     card.className = `account-card${account.id === state.activeAccountId ? ' active' : ''}`;
 
+    // 虚拟账号（用户 2026-10-12）：卡片上先挂一枚标记，一眼能区分「真实登录的账号」
+    // 与「为试各种角色池而建的假账号」—— 免得用户以为自己的账号被动过。
+    if (account.source === 'virtual') {
+      const flag = document.createElement('span');
+      flag.className = 'virtual-flag';
+      flag.textContent = '虚拟账号';
+      flag.title = '本机构造的角色池，用来试抽卡方案；与你的米游社账号无关。';
+      card.appendChild(flag);
+    }
+
     const chips = document.createElement('div');
     chips.className = 'role-chips';
     const roles = (account.roles || []).filter(roleIsEnabled);
@@ -504,9 +519,17 @@ const selectAccount = async (accountId, uid) => {
   el.snapshot.hidden = true;
   renderAccounts();
   renderRoleSelect();
-  renderView();
   setStatus('已登录', 'pill-ok');
+  // ⚠️ **先等快照，再画页面**：抽卡方案的差额是**按当前快照现算**的
+  // （`mountAdviceView` 通过 `getSnapshot()` 现取），早画会让它拿上一份（或空）快照
+  // 算出另一套名次。代价只是切换时多转一会儿圈（加载态本来就有）。
   if (state.activeUid) await loadSnapshot();
+  renderView();
+  // ⚠️ 还必须**显式重画一次抽卡页**：`renderView()` 只切登录/面板的显隐，抽卡那页是
+  //    `selectTab('advice')` 调的 `show()` 画的 —— 不补这一句，切账号后方案会静静停在
+  //    旧账号的数字上（实测踩到：切到「虚拟·白厄队」后首卡仍是「全新账号」那套）。
+  //    只在抽卡页当前可见时才画，免得白算一遍 teamPlan。
+  if (activeTab() === 'advice') await adviceOf().show();
 };
 
 // ---------------------------------------------- 1034 验证（Geetest）
@@ -750,18 +773,27 @@ const renderSnapshot = (snapshot) => {
   const hasStaleSections = Object.values(snapshot.sectionFreshness || {}).some((section) =>
     ['stale', 'partial', 'failed'].includes(section?.status));
   const isCached = cache?.cached ?? state.snapshotResponse?.cached ?? snapshot.cached;
-  // 「本地缓存」现在是**常态**（用户 2026-10 要求：读取一律读本地，不自动联网），
-  // 所以这里必须写清楚「要最新请点刷新」，否则用户会以为数据一直在自动更新。
-  const suffix = cache?.stale
-    ? ` · ⚠ ${cache.staleReason || '这是旧数据，请点刷新获取最新'}`
-    : (snapshot.partial || hasStaleSections
-      ? ' · 部分更新（个别板块沿用旧数据或未取得）'
-      : (isCached ? ' · 本地缓存（不会自动联网更新，点「刷新米游社战绩」取最新）' : ' · 本次同步'));
-  el.snapshotUpdated.textContent = `数据更新时间：${formatDateTime(snapshot.fetchedAt)}${suffix}`;
-  el.snapshotUpdated.title = isCached
-    ? '这是上次抓取后保存在本机的数据。打开页面、切换分页都不会重新请求米游社；需要最新数据请点「刷新米游社战绩」。'
-    : '';
-  el.snapshotUpdated.hidden = false;
+  // 虚拟账号（用户 2026-10-12）：角色数据是**本机构造**的（服务端不会去请求米游社），
+  // 所以那一行的措辞要改成「虚拟账号」，别写「本地缓存 / 点刷新取最新」——那两句会误导。
+  const isVirtual = Boolean(state.snapshotResponse?.virtual || snapshot.source === 'virtual');
+  if (isVirtual) {
+    el.snapshotUpdated.textContent = '虚拟账号：角色数据由本机构造（用来试各种角色池），没有米游社战绩';
+    el.snapshotUpdated.title = '虚拟账号只用来演示抽卡方案在不同角色池下怎么推；它不是你的真实账号数据。';
+    el.snapshotUpdated.hidden = false;
+  } else {
+    // 「本地缓存」现在是**常态**（用户 2026-10 要求：读取一律读本地，不自动联网），
+    // 所以这里必须写清楚「要最新请点刷新」，否则用户会以为数据一直在自动更新。
+    const suffix = cache?.stale
+      ? ` · ⚠ ${cache.staleReason || '这是旧数据，请点刷新获取最新'}`
+      : (snapshot.partial || hasStaleSections
+        ? ' · 部分更新（个别板块沿用旧数据或未取得）'
+        : (isCached ? ' · 本地缓存（不会自动联网更新，点「刷新米游社战绩」取最新）' : ' · 本次同步'));
+    el.snapshotUpdated.textContent = `数据更新时间：${formatDateTime(snapshot.fetchedAt)}${suffix}`;
+    el.snapshotUpdated.title = isCached
+      ? '这是上次抓取后保存在本机的数据。打开页面、切换分页都不会重新请求米游社；需要最新数据请点「刷新米游社战绩」。'
+      : '';
+    el.snapshotUpdated.hidden = false;
+  }
 
   const info = playerInfoOf(snapshot);
   const index = snapshot.index || {};
@@ -874,7 +906,11 @@ const characterCard = (character) => {
   const fallbackInitial = () => {
     avatar.textContent = name.slice(0, 1);
   };
-  if (icon && /^https?:\/\//.test(icon)) {
+  // ⚠️ **同源 `/icons/...` 也要认**（2026-10-12 修）：数据集图标表里存的是
+  // `/icons/icon/character/1407.png?fallback=<cdn>`，本地没有该文件时 `/icons` 路由会 302
+  // 到 CDN（见 app.js 那条静态路由）。原来这里只认 `^https?://`，于是**虚拟账号的图标
+  // 全变成首字占位**（虚拟快照用的就是这串同源地址）—— 这条判断放宽之后图标就正常了。
+  if (icon && (/^https?:\/\//.test(icon) || String(icon).startsWith('/icons/'))) {
     const img = document.createElement('img');
     img.src = icon;
     img.alt = name;
@@ -1051,6 +1087,85 @@ const wireTabs = () => {
 const wireEvents = () => {
   wireTabs();
   el.qrRefresh.addEventListener('click', startQrLogin);
+  // ---- 虚拟账号（用户 2026-10-12）------------------------------------------
+  //
+  // 「＋ 虚拟账号」列出预设（全新账号 / 单核 / 单推厨 / 辅助优先 / 中氪 / 重氪 /
+  // 专锥收集党 / 老玩家偏科 / 全图鉴 …），点一个就建一个**虚拟账号**：
+  //   * 强度那一档用**真实数据集**算（黑塔网投稿），只有「你拥有什么」是假的；
+  //   * 只写进本机账号库，**绝不动你已登录的真实账号**（服务端只增不删）。
+  const renderVirtualPresets = async () => {
+    if (!el.virtualAccountList) return;
+    el.virtualAccountList.innerHTML = '';
+    const loading = document.createElement('p');
+    loading.className = 'muted small';
+    loading.textContent = '正在读取预设…';
+    el.virtualAccountList.appendChild(loading);
+    let presets = [];
+    try {
+      const data = await api('/api/virtual-accounts/presets');
+      presets = data.presets || [];
+    } catch (err) {
+      loading.textContent = `读取预设失败：${err.message}`;
+      return;
+    }
+    el.virtualAccountList.innerHTML = '';
+    if (!presets.length) {
+      loading.textContent = '数据集还没采集，暂时没有预设可用。';
+      el.virtualAccountList.appendChild(loading);
+      return;
+    }
+    for (const p of presets) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'virtual-item';
+      btn.dataset.preset = p.id;
+      const title = document.createElement('span');
+      title.className = 'virtual-item-title';
+      title.textContent = p.title;
+      const hint = document.createElement('span');
+      hint.className = 'virtual-item-hint';
+      hint.textContent = `${p.hint}（${p.chars} 限定角色 / ${p.cones} 专锥）`;
+      btn.append(title, hint);
+      el.virtualAccountList.appendChild(btn);
+    }
+  };
+  el.virtualAccountBtn?.addEventListener('click', async () => {
+    if (!el.virtualAccountPanel) return;
+    el.virtualAccountPanel.hidden = !el.virtualAccountPanel.hidden;
+    if (!el.virtualAccountPanel.hidden) await renderVirtualPresets();
+  });
+  el.virtualAccountClose?.addEventListener('click', () => {
+    if (el.virtualAccountPanel) el.virtualAccountPanel.hidden = true;
+  });
+  el.virtualAccountList?.addEventListener('click', async (event) => {
+    const btn = event.target.closest?.('.virtual-item');
+    if (!btn || btn.disabled) return;
+    const preset = btn.dataset.preset;
+    btn.disabled = true;
+    btn.classList.add('is-busy');
+    try {
+      const data = await api('/api/virtual-accounts', { method: 'POST', body: { preset } });
+      toast(`已新建 ${data.account?.nickname || '虚拟账号'}`, 'ok');
+      if (el.virtualAccountPanel) el.virtualAccountPanel.hidden = true;
+      // 刷新账号列表并**直接切到新账号**，省得用户自己再找一遍。
+      const keepId = data.account?.id || null;
+      await loadConfig();
+      if (keepId) {
+        const acc = state.accounts.find((a) => a.id === keepId);
+        const uid = acc?.roles?.[0]?.uid || null;
+        if (acc && uid) {
+          await selectAccount(acc.id, uid);
+          return;
+        }
+      }
+      renderView();
+    } catch (err) {
+      toast(err.message, 'err');
+    } finally {
+      btn.disabled = false;
+      btn.classList.remove('is-busy');
+    }
+  });
   el.addAccountBtn.addEventListener('click', async () => {
     state.addingAccount = true;
     renderView();
