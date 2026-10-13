@@ -14,9 +14,16 @@
 // 差距榜 / 星魂榜，那三者都已不在界面上。副本权重因此收敛成单 scope
 // （`WEIGHT_SCOPE = 'frontier'`）。
 //
-// ⚠️ **抽卡权重（强度 / 性价比）是第二类权重**（用户 2026-10-12 第 2、3、4 条）：
-// 它**不进服务端请求**（只决定浏览器里 `teamPlan()` 那两个分项怎么加权），所以改它不需要
-// 重算结论载荷，只重画「抽卡方案」那一块 —— 见 `renderTeamPlan()` 与输入框的接线。
+// ⚠️ **抽卡权重（强度 / 性价比 / 泛用性）是第二类权重**（用户 2026-10-12 第 2、3、4 条 +
+// 2026-10-13 第 1、2 条）：
+//   * **强度 / 性价比** —— 既进角色总榜的两个分项，也进浏览器里 `teamPlan()` 的加权
+//     （方案里这两项再两两归一，所以泛用性旋钮不动方案）；
+//   * **泛用性** —— 只进角色总榜的第三个分项。
+//
+// ⚠️ 因此它**从 v4.6.95 起必须进服务端请求**（v4.6.94 那版刻意不进，因为它当时只服务
+// 抽卡方案）：角色得分 = 三个分项按它加权，而总榜「每角色只留一条」的**收敛**发生在
+// 服务端的 `buildConclusion` 里 —— 只在浏览器里加权会让收敛选错代表整包。
+// 所以改它要重算结论（与关卡权重、隐金设置同一条路），见输入框的接线。
 //
 // 2026-10 删掉的两节：「你的补强路径」与「推荐阵容 · 按金数分档」——前者被
 // 「抽卡方案」完全覆盖，后者的信息在「性价比总榜 + 环境统计」里已经给全。
@@ -1000,6 +1007,8 @@ const conclusionKey = () => {
     Object.entries(p.cones).sort().map(([k, v]) => `${k}:${v}`).join(','),
     weightSignature(WEIGHT_SCOPE),
     `hidden[${hiddenCostsSignature()}]`,
+    // 抽卡权重（用户 2026-10-13 第 2 条起它进服务端请求，所以必须进这个键）。
+    `draw[${drawWeightsSignature()}]`,
   ].join('|');
 };
 
@@ -1187,26 +1196,34 @@ const saveDrawWeights = () => {
 
 /**
  * 抽卡权重旁边那行状态：印**归一化后的比例**（用户只有相对大小可调，所以真正生效的是
- * 百分比，光看两个输入框里的原值看不出「谁占多少」）。
+ * 百分比，光看输入框里的原值看不出「谁占多少」）。
  *
- * 与副本权重那一行同一个理由：只写「生效结果」，不把两个框里的数再抄一遍。
+ * ⚠️ 2026-10-13 第 1 条加了第三个旋钮（泛用性）之后，这里按 `DRAW_WEIGHT_ROWS`
+ * **逐个印**（不再手抄 strength/cost 两个键）—— 加旋钮时这里不会再漏一个。
+ *
+ * ⚠️ 三个百分比说的是**角色总榜**的口径。抽卡方案只吃强度/性价比两项（它内部再两两
+ * 归一），所以同一行末尾补一句，免得用户以为方案也跟着泛用性走。
  */
 const renderDrawWeightsMeta = () => {
   const meta = el.drawWeightsMeta;
   if (!meta) return;
   const draw = normalizeDrawWeights(state.drawWeights || {});
   const defaults = normalizeDrawWeights(drawWeightDefaults());
-  const changed = Math.abs(draw.strength - defaults.strength) > 1e-9;
-  meta.textContent = `生效：强度 ${(draw.strength * 100).toFixed(0)}% · `
-    + `性价比 ${(draw.cost * 100).toFixed(0)}%`
-    + (changed ? '' : '（默认等权）');
+  const changed = DRAW_WEIGHT_ROWS.some((row) => Math.abs(draw[row.key] - defaults[row.key]) > 1e-9);
+  const parts = DRAW_WEIGHT_ROWS
+    .map((row) => `${row.label} ${(draw[row.key] * 100).toFixed(0)}%`)
+    .join(' · ');
+  meta.textContent = `角色总榜：${parts}`
+    + (changed ? '' : '（默认三等分）')
+    + '；抽卡方案只用强度/性价比。';
 };
 
 /**
- * 画抽卡权重的两个输入框（用户 2026-10-12 第 2 条：权重分两大类，这是第二类）。
+ * 画抽卡权重的**三个**输入框（用户 2026-10-12 第 2 条 + 2026-10-13 第 1 条：
+ * 权重分两大类，这是第二类）。
  *
- * 旋钮清单来自 `advice.js` 的 `DRAW_WEIGHT_ROWS`（只有那一份），所以以后要加第三个
- * 旋钮只改那一张表。输入框的值是**用户敲的原值**，比例由 `renderDrawWeightsMeta()` 印。
+ * 旋钮清单来自 `advice.js` 的 `DRAW_WEIGHT_ROWS`（**只有那一份**），所以再加旋钮
+ * 依然只改那一张表。输入框的值是**用户敲的原值**，比例由 `renderDrawWeightsMeta()` 印。
  */
 const renderDrawWeightRow = () => {
   const grid = el.drawWeightRow;
@@ -1275,6 +1292,22 @@ const saveHiddenCosts = () => {
 /** 隐金设置的签名（进缓存键 / 结论键）：`gift:1,giftCone:1,…`。 */
 const hiddenCostsSignature = () => HIDDEN_COST_IDS
   .map((id) => `${id}:${state.hiddenCosts?.[id] === true ? 1 : 0}`).join(',');
+
+/**
+ * 抽卡权重的签名（进 `conclusionKey`、角色面板的缓存键与请求）。
+ *
+ * ⚠️ 用户 2026-10-13 第 2 条起它**必须进服务端请求**：角色得分 = 三个分项按它加权，
+ * 而总榜「每角色只留一条」的收敛在服务端 —— 所以它和关卡权重、隐金设置一样是结论
+ * 口径的输入。漏进 `conclusionKey` 会立刻复现 v4.6.93 那类「改了旋钮、界面静默显示
+ * 旧结果」的 bug（键没变 → 在途的旧结果被当成最新一次收下）。
+ *
+ * 用**归一化后**的值签名：`3 : 1 : 1` 与 `0.6 : 0.2 : 0.2` 是同一个榜，
+ * 不该触发两次重算（与 `normalizeDrawWeights` 的「只认相对大小」同一条约定）。
+ */
+const drawWeightsSignature = () => {
+  const draw = normalizeDrawWeights(state.drawWeights || {});
+  return DRAW_WEIGHT_ROWS.map((row) => `${row.key}=${Number(draw[row.key]).toFixed(4)}`).join(',');
+};
 
 /** 有没有任何一项是勾上的（决定请求里要不要带这个字段 —— 接口默认是一项都不减）。 */
 const anyHiddenCostOn = () => HIDDEN_COST_IDS.some((id) => state.hiddenCosts?.[id] === true);
@@ -1735,15 +1768,17 @@ const renderUnitFilters = () => {
  * `tabindex=0` + `role="button"` 让键盘 Enter / 空格也能开；`aria-expanded` 随
  * `.is-open` 同步，读屏软件才知道这个按钮控制着窗口。
  */
-const valueBadge = (value, tip, format = scorePercent, label = '性价比得分') => {
+const valueBadge = (value, tip, format = scorePercent, label = '角色得分') => {
   const wrap = text('span', 'advice-value-wrap');
   wrap.tabIndex = 0;
   wrap.setAttribute('role', 'button');
   wrap.setAttribute('aria-expanded', 'false');
   wrap.setAttribute('aria-haspopup', 'true');
   wrap.title = '点击查看这个分数怎么来的';
-  // 用户 2026-10-10 第 5 条：「所有的『性价比』改为『性价比得分』」—— 徽标是最显眼的
-  // 那一处，先说清它是个**得分**（口径见 `advice.js` 的 `frontierBoard`）。
+  // ⚠️ 用户 2026-10-13 第 2 条把这个指标从「性价比得分」改名「**角色得分**」：
+  // 它不再是「含金数项的总分」一个量，而是强度 / 性价比 / 泛用性三个分项按抽卡权重
+  // 加权的结果（口径见 `advice.js` 的 `frontierBoard` 与 `SCORING.drawWeight`）。
+  // 榜名仍是「角色总榜」（用户 2026-10-12 第 1 条改的，没动）。
   wrap.appendChild(text('span', 'advice-unit-value', `${label} +${format(value)}`));
   if (tip) wrap.appendChild(tip);
   return wrap;
@@ -1751,6 +1786,16 @@ const valueBadge = (value, tip, format = scorePercent, label = '性价比得分'
 
 /** 总榜（整包口径）的显示值：分数量纲，四舍五入到整数。 */
 const packScoreText = (value) => Math.round(Number(value) || 0);
+
+/**
+ * 总榜一个整包的**角色得分**（用户 2026-10-13 第 1、2 条）。
+ *
+ * 服务端算好下发（`unit.characterScore`，0~100）。⚠️ 退回 `unit.total` 是给
+ * **合成夹具 / 老服务端**的兜底：它们手搓 `frontierUnits`，没有三个分项。
+ * 那时显示的是老的「性价比原始分」（几百的量纲）—— 这是刻意的：宁可显示一个能对上
+ * 老口径的数，也不要显示 `undefined` 或 `0`。
+ */
+const unitRoleScore = (unit) => Number(unit?.characterScore ?? unit?.total) || 0;
 
 /**
  * 「N 金」：数字用**白色加粗**（用户 2026-10-10 第 3 条：「3金要用白色加粗」）。
@@ -1863,7 +1908,7 @@ const tipChain = (chain, result) => {
  *
  * 单元格可以是字符串，也可以是上面那几个 `tip*()` 造出来的节点（`Node` 直接收下）。
  */
-const tipTable = (headers, rows, foot) => {
+const tipTable = (headers, rows, foot, extraClass) => {
   const cell = (value, idx, len) => {
     const td = text('td', idx === 0 ? '' : (idx === len - 1 ? 'is-val' : 'is-num'));
     if (value instanceof Node) td.appendChild(value);
@@ -1871,7 +1916,11 @@ const tipTable = (headers, rows, foot) => {
     return td;
   };
   const table = document.createElement('table');
-  table.className = 'advice-value-tip-table';
+  // ⚠️ `extraClass`（用户 2026-10-13）：角色得分的浮层里现在有**两张**表（三个分项那张 +
+  // 逐关卡来源那张）。`check-advice-layout.mjs` 的探针按 class 选表，不区分就会量到上面
+  // 那张 —— 所有「表头/列数/因子」的断言会在**不报错**的情况下全部量错对象。
+  // 主表（逐关卡来源）因此带 `is-source`，探针按它选。
+  table.className = extraClass ? `advice-value-tip-table ${extraClass}` : 'advice-value-tip-table';
   const thead = document.createElement('thead');
   const hr = document.createElement('tr');
   for (const h of headers) hr.appendChild(text('th', '', h));
@@ -1914,12 +1963,17 @@ const tipTable = (headers, rows, foot) => {
  *     （`td { border-bottom: 1px solid rgba(255,255,255,.05) }`）；
  *   * 第 5 条「从属」左细线（`.advice-value-tip-sub`）保留 —— 那是另一件事。
  */
-const tipBox = ({ head, eq, headers, rows, foot, extra, notes }) => {
+const tipBox = ({ head, eq, headers, rows, foot, pre, extra, notes, tableClass }) => {
   const tip = text('span', 'advice-value-tip');
   tip.appendChild(text('span', 'advice-value-tip-head', head));
   const sub = text('span', 'advice-value-tip-sub');
   if (eq) sub.appendChild(text('span', 'advice-value-tip-eq', eq));
-  if (headers?.length && rows?.length) sub.appendChild(tipTable(headers, rows, foot));
+  // ⚠️ `pre`（用户 2026-10-13）：插在等式与主表**之间**。三个分项那张表必须在这里 ——
+  // 主表（关卡 × 权重 × 表现 × 金数 × 跨版本发挥 × 贡献）现在只是「**性价比**分项」
+  // 的原始来源，读者得先看到总分怎么由三个分项合成，再往下看其中一项的明细。
+  // 放进 `extra` 会跑到主表**后面**，读起来像先有明细后有结论。
+  for (const node of pre || []) if (node) sub.appendChild(node);
+  if (headers?.length && rows?.length) sub.appendChild(tipTable(headers, rows, foot, tableClass));
   for (const node of extra || []) if (node) sub.appendChild(node);
   if (notes?.length) {
     // 脚注收进一个容器（2026-10 用户要求「优化排版」）：改前六条各自是浮层的直接子节点、
@@ -2037,7 +2091,7 @@ const wireValueTips = (container) => {
     fillPackList(tip.querySelector('.advice-packs-slot'));
     openTipWindow(tip, {
       // 标题写总分那一行（「性价比得分 +293」），用户一眼知道这个窗口是谁的详情。
-      title: tip.querySelector('.advice-value-tip-head')?.textContent || '性价比得分详情',
+      title: tip.querySelector('.advice-value-tip-head')?.textContent || '角色得分详情',
       onClose: () => hideTip(wrap),
     });
   };
@@ -2107,10 +2161,15 @@ const fetchPacks = async (charKey) => {
   // 后面板仍显示按**默认权重**算出来的旧分数（实测浮层 +399 / 面板 +725）。
   // 权重一变，缓存键就变 → 重新取一次；否则同一个角色会一直吃旧权重的那份结果。
   // **隐金设置同理**（同一天新增）：它也是总榜口径的输入，漏进缓存键会立刻复现同一个 bug。
+  //
+  // ⚠️ **抽卡权重也必须进**（用户 2026-10-13 第 2 条）：面板给的是**角色得分**，
+  // 而它是「三个分项按抽卡权重加权的**榜内归一分**」—— 归一用的极值取自整张表，
+  // 权重不同，同一个整包的面板分就会与徽标分不一致。
   const weights = activeWeights('frontier');
   const wSig = Object.entries(weights).sort().map(([k, v]) => `${k}=${v}`).join(',');
   const hSig = hiddenCostsSignature();
-  const cacheKey = `${key}|${wSig}|${hSig}`;
+  const dSig = drawWeightsSignature();
+  const cacheKey = `${key}|${wSig}|${hSig}|${dSig}`;
   const hit = packsCache.get(cacheKey);
   if (hit) return hit;
   try {
@@ -2120,6 +2179,9 @@ const fetchPacks = async (charKey) => {
     // 隐金设置：**只要有一项勾着就必须带**（接口默认是「一项都不减」），
     // 不带的话面板会按原价算，与榜上的分对不上。
     if (anyHiddenCostOn()) params.set('hiddenCosts', JSON.stringify(state.hiddenCosts));
+    // 抽卡权重：接口默认 = 三等分，所以界面这把也**总是带**（它一定有值），
+    // 免得用户调过之后面板仍按默认权重算（这类「权重没带过去」的 bug 修过两次）。
+    params.set('drawWeights', JSON.stringify(normalizeDrawWeights(state.drawWeights || {})));
     const res = await fetch(`/api/archive/packs?${params.toString()}`,
       { headers: { Accept: 'application/json' } });
     const data = await res.json().catch(() => null);
@@ -2166,17 +2228,17 @@ const fillPackList = async (slot) => {
     return;
   }
   box.innerHTML = '';
-  // 排序按**性价比得分**从高到低（用户 2026-10-10 第 6 条）。服务端 `byChar` 已经按
-  // `total` 排过一遍（`advice.js` 的 `frontierPacksByChar`），这里再排一次是**故意的**：
-  // 客户端按自己收到的那份数据排，界面上那句「按性价比得分从高到低」才不会因为哪天
-  // 服务端的排序口径变了而变成假话（两处排序口径一致时它等价于恒等）。
-  const list = [...(hit.packs || [])].sort((a, b) => (Number(b.total) || 0) - (Number(a.total) || 0));
+  // 排序按**角色得分**从高到低（用户 2026-10-10 第 6 条定的「按分降序」，2026-10-13
+  // 第 2 条把这个指标改名为角色得分）。服务端 `byChar` 已按 `rankFrontier` 排过一遍，
+  // 这里再排一次是**故意的**：客户端按自己收到的那份数据排，界面上那句
+  // 「按角色得分从高到低」才不会因为哪天服务端的排序口径变了而变成假话。
+  const list = [...(hit.packs || [])].sort((a, b) => unitRoleScore(b) - unitRoleScore(a));
   if (!list.length) {
     box.appendChild(text('span', 'advice-packs-loading', '（这个角色没有压金配队记录）'));
     return;
   }
   box.appendChild(text('span', 'advice-packs-count',
-    `${list.length} 个配队 · 按性价比得分从高到低`));
+    `${list.length} 个配队 · 按角色得分从高到低`));
   // 副本元数据（判据线在里面）：这一节要把档位写成游戏内实际的量
   // （`0T` / `行动值 <300`），而判据线只随元数据下发 —— 见 `tierTextOf()`。
   const metaById = new Map((hit.envs || []).map((env) => [env.id, env]));
@@ -2246,7 +2308,7 @@ const packRow = (pack, metaById) => {
   gold.appendChild(text('span', '', '整包 '));
   gold.appendChild(goldText(Number(pack.gold) || 0));
   head.appendChild(gold);
-  head.appendChild(text('span', 'advice-packs-score', `性价比得分 +${packScoreText(pack.total)}`));
+  head.appendChild(text('span', 'advice-packs-score', `角色得分 +${packScoreText(unitRoleScore(pack))}`));
   row.appendChild(head);
   // 逐副本：这一条在哪些副本有分、最佳证据是哪支队伍。
   for (const env of pack.envs || []) {
@@ -2364,6 +2426,60 @@ const fillTeamCards = (slot) => {
 };
 
 /**
+ * 「角色得分是怎么加出来的」——三个分项那张表（用户 2026-10-13 第 1、2 条）。
+ *
+ * 榜面那个数（`unit.characterScore`）是三个分项按**抽卡权重**加权的结果，而三个分项的
+ * **原始量纲完全不同**（强度/性价比是 0~100 的分数，泛用性是一个「不同队友数」），
+ * 所以加权前先在榜内 min-max 归一到 0~100。只给一个总分，读者看不出「它凭什么排这里」，
+ * 这张表把三个分项、各自的原始量、归一后的得分与权重逐行摆出来。
+ *
+ * 列的含义：
+ *   * **原始量** —— 强度是累计表现分（不含金数项）、性价比是原来的 `total`、
+ *     泛用性是这个角色能通关的队伍里出现过的**不同队友个数**；
+ *   * **得分** —— 上面那个原始量在榜内归一到 0~100 之后的值；
+ *   * **权重 / 贡献** —— 抽卡权重（归一化后）与「权重 × 得分」，三个贡献相加 = 角色得分。
+ *
+ * ⚠️ 权重取**服务端回显的那一份**（`state.conclusion.drawWeights`），不是界面上的
+ * `state.drawWeights`：前者是**实际生效**的归一化权重，后者可能刚拖动完还在防抖里，
+ * 那一刻两者的比例会短暂不一致（用后者会让表里的权重乘不出上面的总分）。
+ * ⚠️ 三个原始量都取不到时（合成夹具 / 老服务端）整张表返回 null —— 宁可不画，
+ * 也不画一张全是 `NaN` 的表。
+ */
+const scoreBreakdownTable = (unit) => {
+  const w = normalizeDrawWeights(state.conclusion?.drawWeights ?? state.drawWeights ?? {});
+  if (!Number.isFinite(Number(unit.strengthScore))
+    || !Number.isFinite(Number(unit.costScore))
+    || !Number.isFinite(Number(unit.versatilityScore))) return null;
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const pct = (v) => `${(num(v) * 100).toFixed(0)}%`;
+  const one = (v) => num(v).toFixed(1);
+  const parts = [
+    ['强度', '打出来的成绩（不含金数项）', unit.strengthTotal, unit.strengthScore, w.strength],
+    ['性价比', '同成绩下金数越少越高', unit.total, unit.costScore, w.cost],
+    ['泛用性', '能通关队伍里的不同队友数', unit.versatilityRaw, unit.versatilityScore, w.versatility],
+  ];
+  const rows = parts.map(([name, why, raw, score, weight]) => [
+    tipFactor(name, why),
+    num(raw).toFixed(raw === unit.versatilityRaw ? 0 : 1),
+    one(score),
+    pct(weight),
+    one(num(weight) * num(score)),
+  ]);
+  const box = text('span', 'advice-score-split');
+  box.appendChild(text('span', 'advice-score-split-title',
+    '角色得分 = 强度 × 权重 + 性价比 × 权重 + 泛用性 × 权重（三个分项各自在榜内归一到 0~100）'));
+  box.appendChild(tipTable(
+    ['分项', '原始量', '得分', '权重', '贡献'],
+    rows,
+    // 合计行写**整数**（与徽标/头行同一个 `packScoreText`）：这三处必须是同一个字符串，
+    // 否则 `check-advice-layout.mjs` 那条「表里的合计 = 标题上的数」会因为 95.7 vs 96
+    // 判红。分项那一列仍留一位小数 —— 那是它们本身的量纲。
+    ['角色得分', '', '', '', String(packScoreText(unitRoleScore(unit)))],
+  ));
+  return box;
+};
+
+/**
  * 总榜行（整包口径）的浮层：**先把「这个数字怎么来的」拆成来源，再说和谁打出来的**。
  *
  * 用户 2026-10 的两条要求：
@@ -2377,6 +2493,12 @@ const fillTeamCards = (slot) => {
  * ⚠️ 因子由 `advice.js` 的 `frontierFactorsOf()` 现算（与算分共用同一批常量、
  * 同一对行动值分位边界），这里**不要**自己再写一遍公式：榜上一旦换口径，
  * 只有那边会跟着变，界面抄一份就会悄悄说谎。
+ *
+ * ⚠️ **用户 2026-10-13 第 2 条起，这个窗口是两层**：
+ *   * 最上面那张表 = **角色得分**（三个分项按抽卡权重加权）——`scoreBreakdownTable()`；
+ *   * 下面那张表 = **性价比分项**的原始来源（逐关卡的乘法链，合计 = `unit.total`）。
+ *   所以脚注里那句「贡献加起来 = 徽标上的数」必须改成「= 性价比分项」，
+ *   否则读者加出来的数与上面的角色得分对不上，会以为算错了。
  */
 const frontierTip = (unit) => {
   const rows = unit.envs.map((env) => {
@@ -2448,8 +2570,11 @@ const frontierTip = (unit) => {
     ];
   });
   // 合计只在多副本时给：一个副本时它就是徽标本身，再写一行纯属重复。
+  // 合计只在多副本时给：一个副本时它就是那一列本身，再写一行纯属重复。
+  // ⚠️ 标签写「性价比合计」而不是「合计」：2026-10-13 起这个窗口有两张表，
+  // 上面那张的合计是**角色得分**，这张只是其中一个分项（写「合计」读者会拿它去对徽标）。
   const foot = unit.envs.length > 1
-    ? ['合计', '', '', '', '', `+${packScoreText(unit.total)}`] : null;
+    ? ['性价比合计', '', '', '', '', `+${packScoreText(unit.total)}`] : null;
   const bestEnv = unit.envs[0];
   const bestMeta = bestEnv ? frontierEnvMeta(bestEnv.id) : null;
   // 实测证据数（副本 × 有观测的版本数）：用户 2026-10-11 缺陷 5 —— 新老角色的尺子不同
@@ -2514,7 +2639,12 @@ const frontierTip = (unit) => {
     // 而是把证据基础摆出来，让读者自己判断这个分数的可信度。
     `实测证据 ${evidenceUnits} 个（副本×版本）；证据越少，分数波动越大。`,
     '同队成员必然同分（分子分母都只来自队伍）；投稿条数不累加；与你的角色池无关。',
-    '这里的「权重」是关卡权重那一类，不影响抽卡方案的性价比旋钮。',
+    // ⚠️ 用户 2026-10-13 第 1、2 条之后，这个窗口里有**两类**权重同时在起作用，
+    // 所以这句必须说清分工（改前只说「这里的权重是关卡权重那一类」）。
+    '关卡权重决定哪些副本算数；抽卡权重决定三个分项怎么加权。',
+    // 泛用性的口径（用户 2026-10-13 第 1 条原话：「包含的不同队友越多得分越高」）。
+    // ⚠️ 它是**角色级**的：同一个角色的 E0 包与 E6 包共用同一个泛用性分。
+    '泛用性 = 能通关的队伍里出现过的不同队友数（角色级，与本包星魂无关）。',
   ];
   // 「最佳证据的队伍」那一块**已删除**（用户 2026-10-11 第 5 条「图标都放进表格内」）：
   // 队伍卡片现在长在表格第一格里（见上面 `labelCell`），关卡信息因此只出现一次。
@@ -2530,16 +2660,24 @@ const frontierTip = (unit) => {
     notes.push('（名次靠后：未展开队友名单。）');
   }
   const tip = tipBox({
-    // 用户 2026-10-10 第 5 条：这个数是「性价比**得分**」。
-    head: `性价比得分 +${packScoreText(unit.total)}`,
+    // ⚠️ 用户 2026-10-13 第 2 条：这个数从「性价比得分」改名「**角色得分**」。
+    head: `角色得分 +${packScoreText(unitRoleScore(unit))}`,
     // 用户 2026-10-10 第 6 轮：原来这里叫「版本」，与左边的版本权重表撞名、看不出在算什么。
     // 改叫「跨版本发挥」（＝各版本加权平均 ÷ 最好的那一版，恒 ≤ 1）。
-    eq: '贡献 = 副本权重 × 100 × 表现 ×（该副本最便宜金数 / 这支队金数）× 跨版本发挥',
+    // ⚠️ 这条等式描述的是**下面那张表**（= 性价比分项的原始来源），不是上面的角色得分 ——
+    // 所以开头写明「性价比分项」。
+    eq: '性价比分项 = 副本权重 × 100 × 表现 ×（该副本最便宜金数 / 这支队金数）× 跨版本发挥',
     // 用户 2026-10-11 第 2 条：表头第一列原名「副本/关卡」，与下面第一列实际写的
     // 内容（两级写法 + 版本小字 + 队伍图标）已经不一致了，用户点名改成**「关卡」**。
     headers: ['关卡', '权重', '表现', '金数', '跨版本发挥', '贡献'],
     rows,
     foot,
+    // 主表打 `is-source`：浮层里现在有两张表，探针（`check-advice-layout.mjs`）靠这个
+    // class 认准「逐关卡来源」这张，不会量到上面那张三个分项的表。
+    tableClass: 'is-source',
+    // 三个分项那张表（用户 2026-10-13 第 1、2 条）插在等式与下面那张明细表之间。
+    pre: [scoreBreakdownTable(unit), text('span', 'advice-score-split-title',
+      '下面是「性价比」这一项的逐关卡来源：')],
     extra,
     notes,
   });
@@ -3044,7 +3182,9 @@ const renderUnits = () => {
   }
   // 并列：分子只来自队伍，所以同一支队伍的成员必然同分。名次照旧按顺序编，
   // 但在行上加一个标记并说明「与哪些行并列」，否则看起来像排序坏了。
-  const sameScore = (a, b) => Math.abs(Number(a.total) - Number(b.total)) < 1e-9;
+  // ⚠️ 判据用**角色得分**（用户 2026-10-13 第 2 条起榜面按它排序）——
+  // 比较 `total` 会与排序键不同源，「并列」标记就会标错行。
+  const sameScore = (a, b) => Math.abs(unitRoleScore(a) - unitRoleScore(b)) < 1e-9;
   rows.forEach((unit, i) => {
     const row = text('div', 'advice-unit is-pack');
     const head = text('div', 'advice-unit-head');
@@ -3078,9 +3218,11 @@ const renderUnits = () => {
     // 整包的星魂档 + 光锥（含叠影）就是这一行的「身份」，代替旧的类型徽标。
     head.appendChild(text('span', 'advice-unit-kind', `E${Number(unit.eidolon) || 0}`));
     head.appendChild(packCostNode(unit));
-    // 性价比得分徽标紧跟在花费后面（用户要求「移到左边、靠近别的文字」），
+    // 角色得分徽标紧跟在花费后面（用户要求「移到左边、靠近别的文字」），
     // **点一下**开那个详情大窗口（`advice-tip-window.js`）。
-    head.appendChild(valueBadge(unit.total, frontierTip(unit), packScoreText));
+    // ⚠️ 值走 `unitRoleScore()`（= 服务端算好的三个分项加权分，用户 2026-10-13 第 2 条）；
+    // 合成夹具没有它时才退回老的 `total`。
+    head.appendChild(valueBadge(unitRoleScore(unit), frontierTip(unit), packScoreText));
     row.appendChild(head);
 
     // 这一行排在这里的**依据**：最佳证据那支队伍的档位 / 金数 / 行动值。
@@ -3227,6 +3369,10 @@ const loadConclusion = async () => {
         window: 6,
         frontierWeights: activeWeights(WEIGHT_SCOPE),
         hiddenCosts: { ...(state.hiddenCosts || {}) },
+        // 抽卡权重（用户 2026-10-13 第 1、2 条）：角色总榜的三个分项按它加权，
+        // 而总榜的「每角色只留一条」收敛在服务端 —— 所以**必须显式发**。
+        // 服务端会回显归一化后的那一份（`data.drawWeights`），界面据此印比例。
+        drawWeights: { ...(state.drawWeights || {}) },
       }),
     });
     const data = await res.json().catch(() => null);
@@ -3512,12 +3658,13 @@ export const mountAdviceView = (options = {}) => {
       });
     }
   }
-  // 权重两大类之二：**抽卡权重**输入（用户 2026-10-12 第 2、3、4 条）。
+  // 权重两大类之二：**抽卡权重**输入（用户 2026-10-12 第 2、3、4 条 + 2026-10-13 第 1、2 条）。
   //
-  // ⚠️ 与关卡权重不同，它**不进服务端请求**：那两个数只决定浏览器里 `teamPlan()` 的
-  // 「补金推荐分」怎么加权（见 advice.js 的 `normalizeDrawWeights`），结论载荷一个字节
-  // 都不受影响。所以这里**不重算结论**，只重画抽卡方案那一块 —— 省掉一次几秒的服务端
-  // 聚合，也让「拖旋钮」的手感是即时的。
+  // ⚠️ 它**现在也进服务端请求**（v4.6.95 起，与 v4.6.94 那版相反）：用户 2026-10-13 第 2 条
+  // 要求角色总榜受三个权重影响，而总榜的「每角色只留一条」收敛在服务端
+  // `buildConclusion` 里 —— 只在浏览器里加权会让收敛选错代表整包。
+  // 所以这里与关卡权重走同一条路（防抖 → `loadConclusion()` 重算），
+  // 重算完成后 `renderConclusion()` 会顺带重画抽卡方案那一块（它是结论的下游）。
   {
     const grid = el.drawWeightRow;
     if (grid) {
@@ -3525,9 +3672,16 @@ export const mountAdviceView = (options = {}) => {
         state.drawWeights = readDrawWeights(grid);
         saveDrawWeights();
         renderDrawWeightsMeta();
+        const meta = el.drawWeightsMeta;
+        if (meta) meta.classList.add('is-pending');
         clearTimeout(state.drawWeightsTimer);
-        state.drawWeightsTimer = setTimeout(() => {
-          if (state.conclusion) renderTeamPlan(state.conclusion);
+        state.drawWeightsTimer = setTimeout(async () => {
+          // 角色面板那份「全部配队」是按「总榜权重 + 隐金 + 抽卡权重」缓存的，旋钮一变
+          // 就必须作废 —— 否则同一个角色会一直吃旧权重的分（v4.6.69 修的就是这一类）。
+          packsCache.clear();
+          if (state.index) await loadConclusion();
+          else if (state.conclusion) renderTeamPlan(state.conclusion);
+          if (meta) meta.classList.remove('is-pending');
         }, WEIGHTS_DEBOUNCE);
       });
     }
@@ -3594,5 +3748,18 @@ export const mountAdviceView = (options = {}) => {
     },
     hide: () => {},
     isLoaded: () => Boolean(state.index),
+    /**
+     * 数据集索引（`/api/archive` 的载荷），给**虚拟账号的角色编辑器**用
+     * （用户 2026-10-13 第 3 条）：它要列出全部角色 / 命途 / 专属光锥 / 同命途光锥，
+     * 这些东西全在 `index.refs` 里，而 app.js 那一侧没有第二份。
+     *
+     * ⚠️ 必须是 `ensureIndex()`（会按需加载）而不是直接暴露 `state.index`：
+     * 用户可能先切到「角色信息」页就点「＋ 添加角色」，那一刻抽卡页还没加载过索引，
+     * 直接读会拿到 `null`，编辑器画出一张空名单（而且不报错）。
+     */
+    ensureIndex: async () => {
+      if (!state.index) await loadIndex();
+      return state.index;
+    },
   };
 };

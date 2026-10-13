@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import { charCostOf, coneCostOf } from '../public/scripts/advice.js';
 import { archiveIndex, loadI18n } from '../src/server/archive.js';
-import { VIRTUAL_PRESETS, buildVirtualAccount, presetContext } from '../src/server/virtual-accounts.js';
+import { VIRTUAL_PRESETS, buildVirtualAccount, presetContext, presetContextRefs } from '../src/server/virtual-accounts.js';
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -27,7 +27,7 @@ const index = await archiveIndex();
 const i18n = await loadI18n();
 const availability = index.refs?.availability || {};
 const ctx = presetContext({ availability, firstSeen: index.refs?.firstSeen?.characters,
-  charCostOf, coneCostOf });
+  charCostOf, coneCostOf, ...presetContextRefs(index) });
 
 const presets = VIRTUAL_PRESETS.filter((p) => !ONLY.length || ONLY.includes(p.id));
 const accounts = presets.map((preset, i) => buildVirtualAccount({

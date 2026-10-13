@@ -248,8 +248,8 @@ const main = async () => {
         && junkHidden.body?.hiddenCosts?.gift === true
         && junkHidden.body?.hiddenCosts?.bogus === undefined,
         `status=${junkHidden.status} hiddenCosts=${JSON.stringify(junkHidden.body?.hiddenCosts)}`);
-      check('conclusion payload 形状是 v7（hiddenCosts + availability + frontierTiers）',
-        hiddenOn.body?.payload === 7, `payload=${hiddenOn.body?.payload}`);
+      check('conclusion payload 形状是 v8（三个分项 + 角色得分 + drawWeights）',
+        hiddenOn.body?.payload === 8, `payload=${hiddenOn.body?.payload}`);
       // ⚠️ v4.6.87 曾在每个整包上多发一个 `strength`（纯强度，不含金数项）供抽卡方案的
       // 「强度得分」用；用户 2026-10-12 第 8 条改回「含金数项的整包分」（同为 0T，9 金队
       // 要比 16 金队强得多），那个字段已删除 —— 所以这里**反向**断言它不该再出现，
@@ -260,6 +260,64 @@ const main = async () => {
         && (hiddenOn.body?.frontierUnits || []).every((u) => (u.envs || []).every((e) => !('strength' in e))),
         `frontierUnits=${(hiddenOn.body?.frontierUnits || []).length}`
         + ` 多带 strength=${(hiddenOn.body?.frontierUnits || []).filter((u) => 'strength' in u).length}`);
+
+      // ---- 抽卡权重（用户 2026-10-13 第 1、2 条）--------------------------------
+      // 三个旋钮（强度 / 性价比 / 泛用性）从 v4.6.95 起**必须进服务端**：角色得分是三个
+      // 分项按它加权的结果，而总榜「每角色只留一条」的收敛在服务端 `buildConclusion` 里。
+      // 与隐金设置同一套路：既断言回显（穿四层没穿丢），也断言**榜面真的变了** ——
+      // 只比回显的话，「口径没接上」也能通过。
+      console.log('\n[archive/conclusion · 抽卡权重]');
+      const DRAW_DEFAULT = { strength: 1, cost: 1, versatility: 1 };
+      check('conclusion 回显归一化后的抽卡权重（默认三等分）',
+        Math.abs(Object.values(conclusion.body?.drawWeights || {})
+          .reduce((n, v) => n + Number(v), 0) - 1) < 1e-9
+        && Object.keys(conclusion.body?.drawWeights || {}).length === 3,
+        `drawWeights=${JSON.stringify(conclusion.body?.drawWeights)}`);
+      check('不传 drawWeights = 默认三等分（工具与老客户端的口径不变）',
+        ['strength', 'cost', 'versatility'].every((k) => Math.abs(conclusion.body.drawWeights[k] - 1 / 3) < 1e-9),
+        `drawWeights=${JSON.stringify(conclusion.body?.drawWeights)}`);
+      const versOnly = await post('/api/archive/conclusion', {
+        account: { owned: [], eidolons: {}, cones: {} }, drawWeights: DRAW_DEFAULT,
+      });
+      const versHeavy = await post('/api/archive/conclusion', {
+        account: { owned: [], eidolons: {}, cones: {} },
+        drawWeights: { strength: 0, cost: 0, versatility: 1 },
+      });
+      check('非法 drawWeights 退化成安全形状（不 500、缺键补默认）',
+        versOnly.status === 200
+        && (await post('/api/archive/conclusion', {
+          account: { owned: [], eidolons: {}, cones: {} },
+          drawWeights: { strength: -1, cost: 'abc', versatility: null, bogus: 9 },
+        })).body?.drawWeights?.bogus === undefined,
+        '非法输入把接口打崩了');
+      const drawSig = (body) => (body?.frontierUnits || [])
+        .map((u) => `${u.key}|${Math.round(Number(u.characterScore))}`).join(';');
+      check('⭐ 抽卡权重真的改变了角色总榜（不只是回显）',
+        drawSig(versOnly.body) !== drawSig(versHeavy.body),
+        '全押泛用性与默认三等分得到了同一张榜 —— 权重没接上');
+      check('角色得分 = 三个分项按权重加权（每个整包都对得上）',
+        (versHeavy.body?.frontierUnits || []).length > 0
+        && (versHeavy.body.frontierUnits).every((u) => {
+          const score = Number(u.versatilityScore);
+          return Number.isFinite(score) && Math.abs(Number(u.characterScore) - score) < 1e-3;
+        }),
+        '全押泛用性时角色得分应当等于泛用性那一项本身');
+      check('conclusion 每个整包带三个分项 + 角色得分（v4.6.95 新增）',
+        (hiddenOn.body?.frontierUnits || []).length > 0
+        && (hiddenOn.body.frontierUnits).every((u) => ['strengthScore', 'costScore',
+          'versatilityScore', 'characterScore', 'strengthTotal', 'versatilityRaw']
+          .every((k) => Number.isFinite(Number(u[k])))
+          && Number(u.characterScore) >= 0 && Number(u.characterScore) <= 100),
+        '有整包缺分项 / 角色得分，或角色得分不在 0~100');
+      check('conclusion 逐 env 带 envStrength / envStrengthValue（强度分项的来源）',
+        (hiddenOn.body?.frontierUnits || []).every((u) => (u.envs || []).every(
+          (e) => Number.isFinite(Number(e.envStrength)) && Number.isFinite(Number(e.envStrengthValue)),
+        )),
+        '有 env 缺强度分项字段，浮层拆不开三个分项');
+      check('⭐ 泛用性分项在榜内真的分得开（不是全员同分）',
+        new Set((hiddenOn.body?.frontierUnits || []).map((u) => Number(u.versatilityRaw))).size > 3,
+        `distinct versatilityRaw=${new Set((hiddenOn.body?.frontierUnits || [])
+          .map((u) => Number(u.versatilityRaw))).size}`);
       // 队伍口径的抽卡方案在**界面**现算差额，所以 availability 必须真的发过去；
       // 缺它时界面会把 4★ 也算成 1 金（见 conclusion.js 的 slimAvailability 注释）。
       check('conclusion 带成本口径表 availability（星级 / 常驻标记）',
@@ -390,14 +448,18 @@ const main = async () => {
       console.log('\n[archive/packs · 隐金设置]');
       const hiddenParam = encodeURIComponent(JSON.stringify(HIDDEN_ALL_ON));
       const boardTop = (hiddenOn.body.frontierUnits || [])[0];
+      // 抽卡权重也走查询串（用户 2026-10-13 第 2 条）：面板给的是**角色得分**，
+      // 它是三个分项按权重加权的**榜内归一分** —— 权重不同，同一个整包的面板分
+      // 就会与徽标分不一致。这里显式发「默认三等分」，与 `hiddenOn` 那份同口径。
+      const drawParam = encodeURIComponent(JSON.stringify({ strength: 1, cost: 1, versatility: 1 }));
       const packsHidden = await get(`/api/archive/packs?char=${encodeURIComponent(boardTop?.name || '')}`
-        + `&hiddenCosts=${hiddenParam}`);
+        + `&hiddenCosts=${hiddenParam}&drawWeights=${drawParam}`);
       check('GET /api/archive/packs 回显隐金设置（查询串版）',
         packsHidden.body?.hiddenCosts
         && Object.values(packsHidden.body.hiddenCosts).every((v) => v === true),
         `hiddenCosts=${JSON.stringify(packsHidden.body?.hiddenCosts)}`);
-      check('packs payload 形状升到 v3（hiddenCosts 回显 + env.seasonMinCost）',
-        packsHidden.body?.payload === 3, `payload=${packsHidden.body?.payload}`);
+      check('packs payload 形状升到 v4（hiddenCosts 回显 + env.seasonMinCost + 三个分项）',
+        packsHidden.body?.payload === 4, `payload=${packsHidden.body?.payload}`);
       // ⚠️ v4.6.88 修的真 bug：面板的 env 少发 `seasonMinCost` 时，逐档榜的浮层
       // （`enrichTierDetail()` 拿这份数据整份替换 `unit.envs` 再重画因子表）会把金数项
       // 的分母退回 `meta.minCost`（全窗口最小值）→「跨版本发挥」算出 > 1（实测 39% 的行）。
@@ -407,10 +469,15 @@ const main = async () => {
         panelEnvs.length > 0 && panelEnvs.every((e) => Number.isFinite(Number(e.seasonMinCost))),
         `envs=${panelEnvs.length}`
         + ` 缺值=${panelEnvs.filter((e) => !Number.isFinite(Number(e.seasonMinCost))).length}`);
-      const bestHiddenPack = Math.max(0, ...(packsHidden.body?.packs || []).map((p) => p.total));
-      check('隐金下面板与榜面同口径（最高分配装的分 = 榜上那一条的分）',
-        boardTop && Math.abs(bestHiddenPack - boardTop.total) < 1e-6,
-        `panel=${bestHiddenPack} board=${boardTop?.total}`);
+      // ⚠️ 比的是**角色得分**（用户 2026-10-13 第 2 条起榜面按它排序与收敛）：
+      // 榜上那一条就是「这个角色角色得分最高的那个整包」，所以面板里那个最大值必须
+      // 与它逐位相等。拿老的 `total` 比会漏判 —— 新排序键下「最高角色得分」的整包
+      // 未必是「最高 total」的那一个（口径变了，这条断言也得跟着换键）。
+      const bestHiddenPack = Math.max(0, ...(packsHidden.body?.packs || [])
+        .map((p) => Number(p.characterScore) || 0));
+      check('隐金 + 抽卡权重下面板与榜面同口径（最高分整装 = 榜上那一条）',
+        boardTop && Math.abs(bestHiddenPack - Number(boardTop.characterScore)) < 1e-6,
+        `panel=${bestHiddenPack} board=${boardTop?.characterScore}`);
       // 单点核对：兑换组（阮•梅）在面板里的金数必须真的被减掉，而且只减不增。
       // ⚠️ 不能断言「全部为 0」：她挂一把**不在兑换名单**里的限定光锥时那一金照旧要算
       // （用户口径是「以上角色及其星魂视为 0」，光锥只按它自己的那条规则）。
@@ -822,6 +889,98 @@ const main = async () => {
     check('虚拟账号的光锥带 icon / rarity',
       vconed.length > 0 && vconed.every((c) => c.equip.icon && (c.equip.rarity === 4 || c.equip.rarity === 5)),
       `光锥 ${vconed.length} 把｜首个=${JSON.stringify(vconed[0]?.equip)?.slice(0, 90)}`);
+
+    // ---- 用户 2026-10-13 第 4 条：新预设（无成本 / 大隐金 / 平铺 / 随机氪金）--------
+    //
+    // 这批预设全是**按数据集现算**的（专属光锥 / 常驻名单 / 随机分布），所以这里只钉
+    // 「它们在、且名单形状对」；「随机账号的金数精确等于 20/50/100」那条由
+    // `tools/make-virtual-accounts.mjs` 与 `herta-test` 的金数口径用例守着。
+    const NEW_PRESET_IDS = ['zero-cost', 'dayinjin-max', 'flat-0-0', 'flat-0-1', 'flat-2-1',
+      'flat-6-5', 'random-low', 'random-mid', 'random-high'];
+    const presetById = new Map(presetList.map((p) => [p.id, p]));
+    check('⭐ 用户 2026-10-13 第 4 条的 9 个新预设都在',
+      NEW_PRESET_IDS.every((id) => presetById.has(id)),
+      `缺 ${NEW_PRESET_IDS.filter((id) => !presetById.has(id)).join(',') || '（无）'}`);
+    check('无成本账号 = 有常驻角色 + 他们的专属光锥，且**没有限定角色**',
+      (presetById.get('zero-cost')?.chars || 0) >= 5
+      && (presetById.get('zero-cost')?.cones || 0) >= 5,
+      JSON.stringify(presetById.get('zero-cost')));
+    check('大隐金 MAX 的角色数 ≥ 常驻 + 大隐金两组（约 23）',
+      (presetById.get('dayinjin-max')?.chars || 0) >= 20,
+      JSON.stringify(presetById.get('dayinjin-max')));
+    check('四个平铺档位的人数一致（都是「全部角色」）',
+      ['flat-0-0', 'flat-0-1', 'flat-2-1', 'flat-6-5']
+        .map((id) => presetById.get(id)?.chars || 0)
+        .every((n, _, arr) => n > 80 && n === arr[0]),
+      ['flat-0-0', 'flat-0-1', 'flat-2-1', 'flat-6-5']
+        .map((id) => `${id}:${presetById.get(id)?.chars}`).join(' '));
+    check('平铺 0+0 一把光锥都不配，其余三档要配（专属光锥）',
+      (presetById.get('flat-0-0')?.cones || 0) === 0
+      && ['flat-0-1', 'flat-2-1', 'flat-6-5'].every((id) => (presetById.get(id)?.cones || 0) > 0),
+      ['flat-0-0', 'flat-0-1', 'flat-2-1', 'flat-6-5']
+        .map((id) => `${id}:${presetById.get(id)?.cones}`).join(' '));
+
+    // ---- 用户 2026-10-13 第 3 条：自定义角色名单（添加 / 修改 / 删除）------------
+    console.log('\n[virtual accounts · 自定义角色名单]');
+    const roster0 = await get(`/api/virtual-accounts/${virtualId}/roster`);
+    check('GET 自定义名单拿得到（编辑器靠它预填）',
+      roster0.status === 200 && roster0.body?.ok === true
+      && typeof roster0.body.roster?.chars === 'object'
+      && typeof roster0.body.roster?.cones === 'object',
+      JSON.stringify(roster0.body).slice(0, 140));
+    check('预设账号也记了一份名单原文（「预设 → 微调」才走得通）',
+      Object.keys(roster0.body?.roster?.chars || {}).length > 0,
+      JSON.stringify(Object.keys(roster0.body?.roster?.chars || {})));
+    const rosterNoCsrf = await post(`/api/virtual-accounts/${virtualId}/roster`,
+      { chars: {}, cones: {} });
+    check('POST 名单 without csrf -> 403', rosterNoCsrf.status === 403,
+      `status=${rosterNoCsrf.status}`);
+    const rosterReal = await post(`/api/virtual-accounts/${keeper.id}/roster`,
+      { chars: {}, cones: {} }, { 'x-hsr-csrf': csrf });
+    check('⭐ 真实账号不许改名单 -> 400（本地改写会让界面显示假角色表）',
+      rosterReal.status === 400, `status=${rosterReal.status}`);
+    // ① 清空 → 快照必须**真的变短**（这条证明是「整份替换」而不是「保留最长名单」的合并）
+    const beforeCount = (await get(`/api/accounts/${virtualId}/roles/${virtualUid}/snapshot`))
+      .body?.snapshot?.characters?.length || 0;
+    const cleared = await post(`/api/virtual-accounts/${virtualId}/roster`,
+      { chars: {}, cones: {} }, { 'x-hsr-csrf': csrf });
+    const clearedCount = (await get(`/api/accounts/${virtualId}/roles/${virtualUid}/snapshot`))
+      .body?.snapshot?.characters?.length || 0;
+    check('⭐ 清空名单后快照真的变短（删除不会被「保留最长名单」静默回滚）',
+      cleared.status === 200 && cleared.body?.ok === true && clearedCount < beforeCount,
+      `${beforeCount} → ${clearedCount}`);
+    // ② 加回一份自定义名单：星魂吸附 + 光锥挂到**它自己的角色**身上
+    const custom = await post(`/api/virtual-accounts/${virtualId}/roster`, {
+      chars: { Castorice: 2, Cyrene: 6, 'NotARealCharacter': 3 },
+      cones: { 'Make Farewells More Beautiful': 3 },
+    }, { 'x-hsr-csrf': csrf });
+    check('POST 自定义名单 -> 200 且回显收口后的名单',
+      custom.status === 200 && custom.body?.ok === true
+      && custom.body.roster?.chars?.Castorice === 2
+      && custom.body.roster?.chars?.Cyrene === 6
+      && custom.body.roster?.chars?.NotARealCharacter === undefined
+      && custom.body.roster?.cones?.['Make Farewells More Beautiful'] === 3,
+      JSON.stringify(custom.body?.roster));
+    const customSnap = (await get(`/api/accounts/${virtualId}/roles/${virtualUid}/snapshot`))
+      .body?.snapshot?.characters || [];
+    check('自定义名单里的星魂写进了快照',
+      customSnap.some((c) => (Number(c.actived_constellation_num) || 0) === 6)
+      && customSnap.some((c) => (Number(c.actived_constellation_num) || 0) === 2),
+      JSON.stringify(customSnap.filter((c) => (Number(c.actived_constellation_num) || 0) >= 2)
+        .map((c) => `${c.name}:${c.actived_constellation_num}`)));
+    check('⭐ 专属光锥挂到了它自己的角色身上（不是随手找个人挂）',
+      customSnap.some((c) => c.equip && Number(c.equip.rank) === 3
+        && (Number(c.actived_constellation_num) || 0) === 2),
+      JSON.stringify(customSnap.filter((c) => c.equip).map((c) => `${c.name}:E${c.actived_constellation_num}:S${c.equip.rank}`)));
+    // ③ 收口：星魂 5 → E2（只允许 E0/E1/E2/E6），叠影 9 → S5
+    const clamped = await post(`/api/virtual-accounts/${virtualId}/roster`, {
+      chars: { Castorice: 5 }, cones: { 'Make Farewells More Beautiful': 9 },
+    }, { 'x-hsr-csrf': csrf });
+    check('星魂吸附到 E0/E1/E2/E6、叠影夹到 1~5',
+      clamped.body?.roster?.chars?.Castorice === 2
+      && clamped.body?.roster?.cones?.['Make Farewells More Beautiful'] === 5,
+      JSON.stringify(clamped.body?.roster));
+
     await store.removeAccount(created1.body.account.id);
     await store.removeAccount(created2.body.account.id);
     await store.removeAccount(keeper.id);

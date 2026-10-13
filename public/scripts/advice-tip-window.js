@@ -27,7 +27,9 @@
 const TITLE_ID = 'adviceTipTitle';
 const CLOSE_ID = 'adviceTipClose';
 
-const DEFAULT_TITLE = '性价比得分详情';
+// ⚠️ 用户 2026-10-13 第 2 条把那个指标从「性价比得分」改名「**角色得分**」
+// （它现在是强度/性价比/泛用性三个分项按抽卡权重加权的结果），标题跟着改。
+const DEFAULT_TITLE = '角色得分详情';
 
 /** 懒建的外壳（整页生命周期内只建一次，之后复用同一个节点）。 */
 let shell = null;
@@ -181,7 +183,7 @@ const wireShell = () => {
  * @param {Element} contentEl 已经存在的那个内容节点（`.advice-value-tip`）。
  *   ⚠️ 本模块**不生成**它，只搬它。
  * @param {{ title?: string, onClose?: () => void }} [options]
- *   `title` 不传时用「性价比得分详情」；`onClose` 在关闭时**先于**回位被调用。
+ *   `title` 不传时用「角色得分详情」；`onClose` 在关闭时**先于**回位被调用。
  * @returns {boolean} 打开了返回 `true`；`contentEl` 为空 / 不是元素时返回 `false`
  *   且**什么都不做**（不建外壳、不动 DOM、不改上一次的状态）。
  */

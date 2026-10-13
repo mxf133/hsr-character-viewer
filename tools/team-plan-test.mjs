@@ -274,6 +274,13 @@ check('⭐ 抽卡权重只认**相对大小**：3:1 与 0.75:0.25 得到同一�
   for (const [i, r] of a.rows.entries()) {
     assert.equal(r.total, b.rows[i].total, `${r.key}: 总分必须逐位一致`);
   }
+  // ⚠️ 用户 2026-10-13 第 1、2 条加了第三个旋钮（泛用性），但它**只作用于角色总榜**：
+  // 抽卡方案按 `strength : cost` 在自己内部两两归一，所以调泛用性**不许**动方案。
+  const withVersatility = strengthPlan({ strength: 3, cost: 1, versatility: 9 });
+  assert.deepEqual(withVersatility.drawWeights, { strength: 0.75, cost: 0.25 },
+    '抽卡方案只吃强度/性价比两项，泛用性旋钮不许改它回显的系数');
+  assert.deepEqual(withVersatility.rows.map((r) => r.key), a.rows.map((r) => r.key),
+    '泛用性旋钮不许改抽卡方案的名次');
 });
 
 check('⭐ 强度权重高 → 整包分高的在前；性价比权重高 → 补金少的在前', () => {
@@ -290,18 +297,26 @@ check('⭐ 强度权重高 → 整包分高的在前；性价比权重高 → �
   assert.ok(byCost.rows[0].gap < byStrength.rows[0].gap, '两支的差额确实是一大一小');
 });
 
-check('抽卡权重的边界：两侧都清空 / 非法值 → 退回默认等权，不出现整列 0 分', () => {
-  assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0 }), { strength: 0.5, cost: 0.5 });
-  assert.deepEqual(normalizeDrawWeights({ strength: '', cost: '' }), { strength: 0.5, cost: 0.5 },
-    '空串 = 用户清空了输入框 → 按 0 算，两侧都是 0 时退回默认等权');
-  assert.deepEqual(normalizeDrawWeights({ strength: -1, cost: 'abc' }), { strength: 0.5, cost: 0.5 },
+check('抽卡权重的边界：全部清空 / 非法值 → 退回默认等权，不出现整列 0 分', () => {
+  // ⚠️ 2026-10-13 第 1 条加了第三个旋钮（泛用性）之后，「清空」必须**三个键一起**才算
+  // 「我没有偏好」；只清两个、第三个留着默认 1 时，第三项就是 100% —— 那是真实的偏好。
+  const even = { strength: 1 / 3, cost: 1 / 3, versatility: 1 / 3 };
+  assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0, versatility: 0 }), even);
+  assert.deepEqual(normalizeDrawWeights({ strength: '', cost: '', versatility: '' }), even,
+    '空串 = 用户清空了输入框 → 按 0 算，三个都是 0 时退回默认等分');
+  assert.deepEqual(normalizeDrawWeights({ strength: -1, cost: 'abc', versatility: NaN }), even,
     '非法值忽略、退回默认');
-  assert.deepEqual(normalizeDrawWeights({ strength: 2, cost: null }), { strength: 2 / 3, cost: 1 / 3 },
-    '只给一个键时另一个按默认值补齐');
-  assert.deepEqual(normalizeDrawWeights({ strength: 1, cost: 0 }), { strength: 1, cost: 0 },
+  assert.deepEqual(normalizeDrawWeights({ strength: 2, cost: null }),
+    { strength: 0.5, cost: 0.25, versatility: 0.25 },
+    '只给一个键时另两个按默认值补齐');
+  assert.deepEqual(normalizeDrawWeights({ strength: 1, cost: 0 }),
+    { strength: 0.5, cost: 0, versatility: 0.5 },
     '单边为 0 是**合法**的：用户可以把某一侧彻底关掉');
-  assert.deepEqual(normalizeDrawWeights(undefined), { strength: 0.5, cost: 0.5 },
-    '不给参数时用默认值（默认 1:1 → 等权）');
+  assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0 }),
+    { strength: 0, cost: 0, versatility: 1 },
+    '只清空强度/性价比 = 全押泛用性（第三个框还开着，那不是「没有偏好」）');
+  assert.deepEqual(normalizeDrawWeights(undefined), even,
+    '不给参数时用默认值（默认 1:1:1 → 等分）');
 });
 
 check('⭐ 性价比只有**差额接近度**一个刻度：差额与整包分都相同时同分（用户 2026-10-12 第 6 条）', () => {
@@ -592,11 +607,14 @@ check('⭐ 真载荷上：逐档榜的池**包含**总榜的池（两条口径�
   void SCORING;
 });
 
-check('/conclusion 回 payload: 7（availability + frontierTiers 那一版）', () => {
+check('/conclusion 回 payload: 8（三个分项 + 角色得分 + drawWeights 那一版）', () => {
   assert.equal(live.status, 200);
-  // ⚠️ v4.6.87 曾把它写成 8（每个整包多一个 `strength` = 纯强度），v4.6.91 按用户
-  //    2026-10-12 第 8 条撤销了那个字段 —— 形状**回到 7**，别再改回 8。
-  assert.equal(livePayload.payload, 7, `实际 payload=${livePayload.payload}`);
+  // ⚠️ 形状号的历史：v4.6.87 曾把它写成 8（每个整包多一个 `strength` = 纯强度），
+  //    v4.6.91 按用户 2026-10-12 第 8 条撤销了那个字段、形状回到 7。
+  //    用户 2026-10-13 第 1、2 条**重新要了强度这个分项**（换了名字：`strengthTotal` /
+  //    `envStrength`），并新增角色得分与 `drawWeights` 回显 —— 所以这里又回到 **8**，
+  //    而且这一次是真正生效的 8。改它之前先看 `conclusion.js` 里那段形状号注释。
+  assert.equal(livePayload.payload, 8, `实际 payload=${livePayload.payload}`);
 });
 
 check('/conclusion 带 availability（星级 / 常驻标记），界面靠它算差额', () => {

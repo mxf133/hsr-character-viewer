@@ -33,6 +33,9 @@ const suites = [
   // 队伍口径的抽卡方案（用户 2026-10-11 第 10 轮）：合成夹具 + 真数据真服务两面。
   // ⚠️ 它自己起一个注入假 store 的 HTTP 服务，**不需要** DPAPI 凭证，所以任何环境都能跑。
   ['队伍抽卡方案（两指标 / 补金顺序 / availability）', 'team-plan-test.mjs'],
+  // 虚拟账号的预设与自定义名单（用户 2026-10-13 第 3、4 条）：直接读真实数据集，
+  // 不碰 DPAPI 凭证、也不起 HTTP 服务（接口那一层由 `e2e-test.mjs` 钉）。
+  ['虚拟账号预设与自定义名单', 'virtual-accounts-test.mjs'],
   ['中文名称映射 (对照游戏内中文)', 'herta-i18n-check.mjs'],
   ['端到端 HTTP / 静态资源 / 会话', 'e2e-test.mjs'],
   ['启动器 start.bat 自检', 'launcher-test.mjs'],
