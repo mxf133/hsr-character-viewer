@@ -1824,6 +1824,7 @@ tools/                     测试与调试工具
   _probe-team-plan.mjs       探针：把抽卡方案（含新口径：整包分 + 差额接近度）打出来（调参用）
   _probe-team-lookup.mjs     探针：查一支指定队伍（--chars=白厄,昔涟,刻律德菈）的全池名次 / 两个分项 / 补金顺序
   _probe-gap-curve.mjs       探针：② 差额接近度的六种曲线写法并排（线性 / ^1.5 / ^2 / p50 / p60 / 折点）
+  team-plan-cases.mjs        抽卡方案可行性测试台：一批虚拟账号跑方案 + 不变量自检（--markdown 出报告）
   _probe-phainon.mjs         探针：追白厄那支队的口径变化（候选池 vs 刻度基准的分离）
   _probe-fill-steps.mjs      探针：CDP — 把「补金顺序」每张卡的名字 / 目标状态 / 已有角色打出来
   _probe-season-factor-over1.mjs    探针：扫真载荷，找「跨版本发挥 > 1」的行（含逐档榜）
