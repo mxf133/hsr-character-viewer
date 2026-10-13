@@ -861,11 +861,22 @@ const main = async () => {
       && Array.isArray(presets.body.presets) && presets.body.presets.length >= 5,
       `status=${presets.status} count=${presets.body?.presets?.length}`);
     const presetList = presets.body?.presets || [];
+    // ⚠️ **用户 2026-10-13 点名的 9 个，一个不多一个不少**：原来那 11 个（全新账号 /
+    //    单核起步 / 单推厨 / 双核主C / 辅助优先 / 白厄队 / 中氪 / 重氪 / 专锥收集党 /
+    //    老玩家偏科 / 全图鉴）用户看过实际列表之后说「太杂乱」要求删掉。
+    //    这里用**集合相等**钉住（而不是「≥5」）：以后谁想再加一个预设，得先想清楚它是不是
+    //    又一个「只演示一两个角色组合」的重复档位 —— 那正是被删掉的那批的毛病。
+    const KEPT_PRESET_IDS = ['zero-cost', 'dayinjin-max', 'flat-0-0', 'flat-0-1',
+      'flat-2-1', 'flat-6-5', 'random-low', 'random-mid', 'random-high'];
+    check('预设列表恰好是用户点名的那 9 个（多一个少一个都算回归）',
+      JSON.stringify(presetList.map((p) => p.id).sort())
+        === JSON.stringify([...KEPT_PRESET_IDS].sort()),
+      `实际 ${JSON.stringify(presetList.map((p) => p.id))}`);
     check('每个预设都带 id / 标题 / 说明',
       presetList.every((p) => p.id && p.title && p.hint
         && Number.isFinite(p.chars) && Number.isFinite(p.cones)),
       JSON.stringify(presetList[0] || null));
-    const virtualNoCsrf = await post('/api/virtual-accounts', { preset: 'newbie' });
+    const virtualNoCsrf = await post('/api/virtual-accounts', { preset: 'zero-cost' });
     check('POST /api/virtual-accounts without csrf -> 403', virtualNoCsrf.status === 403,
       `status=${virtualNoCsrf.status}`);
     const badPreset = await post('/api/virtual-accounts', { preset: 'no-such-preset' },
@@ -876,7 +887,19 @@ const main = async () => {
       accountId: '100000001', nickname: '既有的真实账号', cookie: 'keep-me',
       source: 'qr', deviceId: 'keep-device',
     });
-    const created1 = await post('/api/virtual-accounts', { preset: 'bai-e' },
+    // ⚠️ 这里用 `dayinjin-max`（51 个角色 + 7 把常驻专锥），**不能用 `zero-cost` / `flat-0-0` /
+    //   `flat-0-1`**，三个预设各踩一个坑（本轮都实测过）：
+    //   * `zero-cost` 恰好了等于**免费角色基线**（35 个）—— 下面那条「清空名单之后快照必须
+    //     **真的变短**」会变成「35 → 35」，失去可观测差异（`buildVirtualAccount` 对空名单也会
+    //     预置全部免费角色）；
+    //   * `flat-0-0` 是「每个角色只有本体、一把专锥都不配」—— 下面那条「虚拟账号的光锥带
+    //     icon / rarity」会拿到「光锥 0 把」；
+    //   * `flat-0-1` 的 72 把「最常用光锥」里有 2 把不合那条断言：希露瓦的「灵钥」是 **3★**
+    //     （`popularLightCones` 对 4★ 角色会给出 3★ 锥，而那条断言只认 4/5★），
+    //     刻律德菈的「Dance Dance Dance」在**本地图标表里没有条目**（icon 字段为空）。
+    //     —— 这两件事本身是真实存在的（不是本次改动引入），但拿它当夹具会把一条**与预设无关**
+    //     的断言判红，所以夹具用 `dayinjin-max`：7 把全是常驻 5★ 专锥（我写死的那张表）。
+    const created1 = await post('/api/virtual-accounts', { preset: 'dayinjin-max' },
       { 'x-hsr-csrf': csrf });
     check('新建虚拟账号 -> 200 且回账号',
       created1.status === 200 && created1.body?.ok === true && created1.body.account?.id,
@@ -893,7 +916,7 @@ const main = async () => {
       && (await store.getAccount(keeper.id))?.cookie === 'keep-me',
       `keeper=${JSON.stringify(keeperNow)?.slice(0, 80)}`);
     // 再建同一个预设：id 必须自动加序号（不是覆盖）。
-    const created2 = await post('/api/virtual-accounts', { preset: 'bai-e' },
+    const created2 = await post('/api/virtual-accounts', { preset: 'dayinjin-max' },
       { 'x-hsr-csrf': csrf });
     check('同一预设建两次 -> id 自动加序号（不覆盖）',
       created2.body?.account?.id && created2.body.account.id !== virtualId,
@@ -917,17 +940,13 @@ const main = async () => {
       vconed.length > 0 && vconed.every((c) => c.equip.icon && (c.equip.rarity === 4 || c.equip.rarity === 5)),
       `光锥 ${vconed.length} 把｜首个=${JSON.stringify(vconed[0]?.equip)?.slice(0, 90)}`);
 
-    // ---- 用户 2026-10-13 第 4 条：新预设（无成本 / 大隐金 / 平铺 / 随机氪金）--------
+    // ---- 用户 2026-10-13 第 4 条：预设（无成本 / 大隐金 / 平铺 / 随机氪金）--------
     //
-    // 这批预设全是**按数据集现算**的（专属光锥 / 常驻名单 / 随机分布），所以这里只钉
-    // 「它们在、且名单形状对」；「随机账号的金数精确等于 20/50/100」那条由
-    // `tools/make-virtual-accounts.mjs` 与 `herta-test` 的金数口径用例守着。
-    const NEW_PRESET_IDS = ['zero-cost', 'dayinjin-max', 'flat-0-0', 'flat-0-1', 'flat-2-1',
-      'flat-6-5', 'random-low', 'random-mid', 'random-high'];
+    // 这批预设全是**按数据集现算**的（专属光锥 / 常驻名单 / 随机分布），所以这一段钉的是
+    // 各档的**名单形状**；「都有哪些预设、一个不多一个不少」已由上面的 `KEPT_PRESET_IDS`
+    // 集合相等断言覆盖（这里原来另抄了一份一模一样的 `NEW_PRESET_IDS` —— 两份迟早会分叉）。
+    // 「随机账号的金数精确等于 20/50/100」由 `tools/virtual-accounts-test.mjs` 守着。
     const presetById = new Map(presetList.map((p) => [p.id, p]));
-    check('⭐ 用户 2026-10-13 第 4 条的 9 个新预设都在',
-      NEW_PRESET_IDS.every((id) => presetById.has(id)),
-      `缺 ${NEW_PRESET_IDS.filter((id) => !presetById.has(id)).join(',') || '（无）'}`);
     check('无成本账号 = 有常驻角色 + 他们的专属光锥，且**没有限定角色**',
       (presetById.get('zero-cost')?.chars || 0) >= 5
       && (presetById.get('zero-cost')?.cones || 0) >= 5,

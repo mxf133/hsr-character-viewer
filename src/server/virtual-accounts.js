@@ -165,108 +165,19 @@ const randomRosterOf = (ctx, budget, rng = rngOf(null)) => {
  * 写成函数是为了让「老玩家 / 专锥党 / 全图鉴」这些**按数据集现算**，数据集更新不会失效。
  */
 export const VIRTUAL_PRESETS = [
-  {
-    id: 'newbie',
-    title: '全新账号（0 限定）',
-    hint: '只有免费角色（4★ / 常驻 / 开拓者）。看「从零开始该抽什么」。',
-    spec: () => ({ chars: {}, cones: {} }),
-  },
-  {
-    id: 'single-core',
-    title: '单核起步（一个限定本体）',
-    hint: '只抽到一个限定本体（E0），没有星魂也没有专锥。',
-    spec: () => ({ chars: { Castorice: 0 }, cones: {} }),
-  },
-  {
-    id: 'one-true',
-    title: '单推厨（一个角色拉到满配）',
-    hint: '资源全砸一个角色：E6 + 专锥 S5，其他一概没有。',
-    spec: () => ({ chars: { Castorice: 6 }, cones: { 'Make Farewells More Beautiful': 5 } }),
-  },
-  {
-    id: 'dps-duo',
-    title: '双核主C（两把专锥）',
-    hint: '两个主C各带专锥，辅助全靠免费角色。',
-    spec: () => ({
-      chars: { Castorice: 0, Phainon: 0 },
-      cones: { 'Make Farewells More Beautiful': 1, 'Thus Burns the Dawn': 1 },
-    }),
-  },
-  {
-    id: 'support-first',
-    title: '辅助优先（同谐 / 虚无党）',
-    hint: '先把辅助抽齐（含星魂），主C 还没影。',
-    spec: () => ({
-      chars: { Cyrene: 2, Cerydra: 1, Sparkle: 2, Sunday: 0 },
-      cones: { 'This Love, Forever': 1 },
-    }),
-  },
-  {
-    id: 'bai-e',
-    title: '白厄队（昔涟 + 刻律德菈 + 花火）',
-    hint: '白厄 E2S1 + 昔涟 E2S1 + 花火 E2，刻律德菈停在 E0：只差那一金。',
-    spec: () => ({
-      chars: { Phainon: 2, Cyrene: 2, Cerydra: 0, Sparkle: 2 },
-      cones: { 'Thus Burns the Dawn': 1, 'This Love, Forever': 1 },
-    }),
-  },
-  {
-    id: 'dolphin',
-    title: '中氪（核心队 E2 + 两把专锥）',
-    hint: '主力队成型一半，专锥只有核心那两把。',
-    spec: () => ({
-      chars: { Castorice: 2, Hyacine: 2, Cyrene: 0, Evernight: 0 },
-      cones: { 'Make Farewells More Beautiful': 1, 'To Evernight\'s Stars': 1 },
-    }),
-  },
-  {
-    id: 'whale',
-    title: '重氪（多个满配主力）',
-    hint: '好几支队伍的核心都 E2/E6，专锥也齐。差额很小，看方案改推什么。',
-    spec: () => ({
-      chars: { Castorice: 6, Cyrene: 2, Hyacine: 2, Evernight: 2, Phainon: 2 },
-      cones: {
-        'Make Farewells More Beautiful': 1, 'This Love, Forever': 1, 'Thus Burns the Dawn': 1,
-      },
-    }),
-  },
-  {
-    id: 'cone-collector',
-    title: '专锥收集党（角色都 E0）',
-    hint: '抽了一堆专锥（S5），角色本体都没升星魂 —— 典型的「歪锥」玩家。',
-    spec: (ctx) => ({
-      chars: Object.fromEntries(ctx.limitedChars.slice(0, 6).map((c) => [c, 0])),
-      cones: Object.fromEntries(ctx.limitedCones.slice(0, 8).map((c) => [c, 5])),
-    }),
-  },
-  {
-    id: 'old-guard',
-    title: '老玩家偏科（旧角色多、新角色少）',
-    hint: '早于 4.0 登场的限定都抽了（E0），近版本的新角色一概没有。',
-    spec: (ctx) => ({
-      chars: Object.fromEntries(ctx.oldLimited.map((c) => [c, 0])),
-      cones: {},
-    }),
-  },
-  {
-    id: 'full',
-    title: '全图鉴（限定全 E6 + 专锥全 S5）',
-    hint: '理论上没有队伍需要补金 —— 方案应当是空的（用来验证「不硬推」）。',
-    spec: (ctx) => ({
-      chars: Object.fromEntries(ctx.limitedChars.map((c) => [c, 6])),
-      cones: Object.fromEntries(ctx.limitedCones.map((c) => [c, 5])),
-    }),
-  },
-
-  // ---- 用户 2026-10-13 第 4 条：几种社区口径的「成本 / 氪金」账号形态 ----------------
+  // 用户 2026-10-13 第 4 条：几种社区口径的「成本 / 氪金」账号形态。
   //
-  // 这一批的共同点：**要与社区的说法对得上**（用户原话「具体含义可以到社区查找」）。
-  // 压金圈（NGA / B 站）常见的几种账号形态：
-  //   * 「无成本账号」= 一分钱不抽，只有常驻池歪出来的 + 免费角色；
-  //   * 「大隐金 MAX」= 把「不用抽就有」的 5★ 全算 0 金（①赠送 + ③兑换那两批），
-  //     常驻则按真实的满星魂满叠影算 —— 就是「4 金 1T、一问实际 9 金」那个梗的账号形态；
-  //   * 「平铺」= 每个角色都抽到同一档（0+0 / 0+1 / 2+1 / 6+5），量的是「广度优先」；
-  //   * 「低 / 中 / 高氪」= 一共投了 20 / 50 / 100 限定金，随机分布在角色上。
+  // ⚠️ **2026-10-13 第二次修订**：用户看了一遍实际列表之后说「仅保留以下几种虚拟账号选项，
+  //    别的删了（太杂乱）」，并点名了这 9 个。原来那 11 个（全新账号 / 单核起步 / 单推厨 /
+  //    双核主C / 辅助优先 / 白厄队 / 中氪 / 重氪 / 专锥收集党 / 老玩家偏科 / 全图鉴）已删除 ——
+  //    它们的共同毛病是**只演示一两个角色的组合**，与这 9 个「按成本形态分档」的口径重复，
+  //    而且随时间会失真（点名某个角色 / 某支队伍，版本一换就不成立了）。
+  //
+  // 留下的 9 个都是**按成本/氪金量**定义的，不点名具体角色：
+  //   * 「无成本账号」= 一分钱不抽，只有常驻池那 7 个 + 各自的常驻专锥；
+  //   * 「无成本账号-大隐金MAX」= 常驻全 6+5，大隐金（①赠送 + ③兑换共 16 人）各 0+0；
+  //   * 「平铺」四档 = 每个角色都抽到同一档（0+0 / 0+1 / 2+1 / 6+5），量的是「广度优先」；
+  //   * 「随机低 / 中 / 高氪」= 一共投了 20 / 50 / 100 限定金，随机分布在角色上。
   {
     id: 'zero-cost',
     title: '无成本账号（常驻 0+1，无限定角色）',
@@ -351,12 +262,6 @@ export const presetContext = ({
 }) => {
   const chars = Object.keys(availability?.characters || {});
   const cones = Object.keys(availability?.lightCones || {});
-  const oldLimited = chars.filter((k) => {
-    if (!(charCostOf(k, availability) > 0)) return false;
-    const v = String(firstSeen?.[k] ?? '');
-    const major = Number(v.split('.')[0]);
-    return Number.isFinite(major) && major < 4;
-  });
   /**
    * **常驻 5★**（星轨通票能歪出来的那 7 个）：资料表里 `rarity === 5 && limited === false`
    * 且**不是开拓者**（开拓者由主线赠送，没有「常驻池」这一说，也没有专属光锥）。
@@ -383,20 +288,16 @@ export const presetContext = ({
    */
   const signatureConeOf = (charKey) => STANDARD_SIGNATURE_CONES[charKey]
     || popularLightCones?.[charKey] || null;
-  /** 全部与某角色**同命途**的光锥（自定义角色时那张下拉框用）。 */
-  const conesOfPath = (pathKey) => cones.filter((c) => lightConePaths?.[c] === pathKey);
-  /** 开拓者的各命途变体（自定义角色时不允许逐个添加，见下面的注释）。 */
-  const trailblazerChars = chars.filter((k) => isTrailblazerName(k));
+  // ⚠️ 2026-10-13（第二次修订）：`conesOfPath()` / `trailblazerChars` / `oldLimited` /
+  //    `limitedCones` / `freeCones` 这五个字段**已删除** —— 它们原本只服务被用户删掉的那 11 个
+  //    预设（「辅助优先」「专锥收集党」「老玩家偏科」之类），删完之后全仓再无消费者。
+  //    自定义角色的那张同命途下拉框是**客户端**用下发的 `lightConePaths` 自己筛的
+  //    （见 `public/scripts/virtual-roster.js` 的 `coneChoicesFor()`），所以 `conesOfPath` 也是多余的。
   return {
     limitedChars: chars.filter((k) => charCostOf(k, availability) > 0),
-    limitedCones: cones.filter((k) => coneCostOf(k, availability) > 0),
     freeChars: chars.filter((k) => charCostOf(k, availability) === 0),
-    freeCones: cones.filter((k) => coneCostOf(k, availability) === 0),
-    oldLimited,
     standardChars,
     signatureConeOf,
-    conesOfPath,
-    trailblazerChars,
     popularLightCones: { ...popularLightCones },
     lightConePaths: { ...lightConePaths },
     // 角色命途：自定义名单要校验「光锥与主人**同命途**」，这需要角色那一侧的表。

@@ -1709,8 +1709,16 @@ checkAsync('综合结论：每个副本都挑样本足够的版本，并在各�
       `E${tier} 档里混进了别的星魂档的整包`);
     assert.equal(new Set(rows.map((u) => u.name)).size, rows.length,
       `E${tier} 档里同一个角色只能有一条（与「全部」同一条收敛规则）`);
+    // ⚠️ **排序键是 `characterScore`，不是 `total`**（用户 2026-10-13 第 2 条：总榜改成
+    //    受三个抽卡权重影响的「角色得分」）—— 这两条断言原来比的是 `total`（旧的排序键），
+    //    v4.6.95 换键之后就**再也过不去**了。它之所以一直没被发现：它跑在汇总行**之后**，
+    //    而且失败不影响退出码（见文件末尾那段「为什么这里会晚于汇总行」的注释）。
+    //    `?? total` 的兜底是给**合成夹具**用的（夹具不造 `characterScore`）。
+    const rankOf = (u) => Number(u.characterScore ?? u.total) || 0;
     for (let i = 1; i < rows.length; i += 1) {
-      assert.ok(rows[i - 1].total >= rows[i].total, `E${tier} 档没有按分降序`);
+      assert.ok(rankOf(rows[i - 1]) >= rankOf(rows[i]),
+        `E${tier} 档没有按角色得分降序`
+        + `（${rows[i - 1].name} ${rankOf(rows[i - 1])} → ${rows[i].name} ${rankOf(rows[i])}）`);
     }
   }
   // 缺陷的判据：旧口径只会数到「最佳成绩恰好在这一档」的那些角色。
@@ -2332,8 +2340,16 @@ check('性价比总榜：切到某个星魂档，看得到「最佳成绩不在�
       `E${tier} 档里混进了别的档位的整包`);
     assert.equal(new Set(rows.map((u) => u.name)).size, rows.length,
       `E${tier} 档里同一个角色只能有一条`);
+    // ⚠️ **排序键是 `characterScore`，不是 `total`**（用户 2026-10-13 第 2 条：总榜改成
+    //    受三个抽卡权重影响的「角色得分」）—— 这两条断言原来比的是 `total`（旧的排序键），
+    //    v4.6.95 换键之后就**再也过不去**了。它之所以一直没被发现：它跑在汇总行**之后**，
+    //    而且失败不影响退出码（见文件末尾那段「为什么这里会晚于汇总行」的注释）。
+    //    `?? total` 的兜底是给**合成夹具**用的（夹具不造 `characterScore`）。
+    const rankOf = (u) => Number(u.characterScore ?? u.total) || 0;
     for (let i = 1; i < rows.length; i += 1) {
-      assert.ok(rows[i - 1].total >= rows[i].total, `E${tier} 档没有按分降序`);
+      assert.ok(rankOf(rows[i - 1]) >= rankOf(rows[i]),
+        `E${tier} 档没有按角色得分降序`
+        + `（${rows[i - 1].name} ${rankOf(rows[i - 1])} → ${rows[i].name} ${rankOf(rows[i])}）`);
     }
   }
   // 「全部」那份的每条都能在它自己的档位里按整包键找到（收敛没有分叉成两套）。

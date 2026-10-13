@@ -9,7 +9,7 @@
 // 不再在这里另写一遍 —— 图标 / 星级显示错乱就是「两处各写一份」造成的。
 //
 //   node tools/make-virtual-accounts.mjs [--out=data/accounts-virtual.json] [--list]
-//                                        [--preset=newbie,bai-e,full]
+//                                        [--preset=zero-cost,flat-6-5,random-high]
 import fs from 'node:fs';
 import path from 'node:path';
 import { charCostOf, coneCostOf } from '../public/scripts/advice.js';
