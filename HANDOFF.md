@@ -23,10 +23,30 @@
 | 评分口径是怎么定下来的 | `docs/评分模型设计.md`（**当前口径看最后一节 v25**，前面多为已被推翻的早期方案） |
 
 > ⚠️ **§4.2 的历史改动表已外迁**到 `docs/变更流水账.md`；本文只保留最近几轮
-> （§4.2K / §4.2J / §4.2I / §4.2H / §4.2G / §4.2F / §4.2E / §4.2D / §4.2C / §4.2B / §4.2A / §4.2z / §4.2y / §4.2x —— **§4.2K 是最新的那一轮**；
+> （§4.2X / §4.2AA / §4.2P~§4.2W / §4.2K / §4.2J / §4.2I / §4.2H / §4.2G / §4.2F / §4.2E / §4.2D / §4.2C / §4.2B / §4.2A / §4.2z / §4.2y / §4.2x —— **§4.2X 是最新的那一轮**；
 > 字母走到 `z` 之后回到 `A`，越新的轮次字母越靠后）。
 
-> 最后更新：**v4.6.82**（2026-10-11，在 `.worktrees/fill-text-vcenter` 的
+> 最后更新：**v4.6.95**（2026-10-13，在 `.worktrees/versatility-weight` 的
+> `feat/versatility-weight` 分支上做，基于 `ef93c39`）—— 用户一次给全四条，全做完：
+> ① 新增抽卡权重「**泛用性**」（默认 1，与强度/性价比同权）—— 量一个角色投稿的
+> **能通关**队伍里出现过的**不同队友数**；② **角色总榜受三个抽卡权重影响**，指标从
+> 「性价比得分」改名「**角色得分**」= 强度 × ws + 性价比 × wc + 泛用性 × wv
+> （三个分项各自**榜内归一到 0~100** 再加权；归一化的取样集合是**收敛前的全部整包**，
+> 用榜面会和「收敛」互为输入）。⚠️ 抽卡权重因此**第一次进服务端请求**（v4.6.94 那版
+> 刻意不进，因为那时它只服务抽卡方案），载荷 **v7 → v8**；**抽卡方案只吃强度/性价比
+> 两项**（内部两两归一），调泛用性不动方案。
+> ③ 虚拟账号支持**自定义角色名单**：角色列表末尾「＋ 添加角色」→ 编辑器里加任意角色、
+> 设星魂（E0/E1/E2/E6）与光锥（**同命途、专属优先**、一把锥只挂一个人、叠影 S1~S5）；
+> `GET|POST /api/virtual-accounts/:id/roster`（POST **整份替换**，只有虚拟账号能用）。
+> ④ 新增 **9 个预设**：无成本账号（常驻 0+1）/ 大隐金 MAX（常驻全 6+5、大隐金 16 人 0+0）/
+> 全角色平铺四档（0+0、0+1、2+1、6+5）/ 随机低中高氪（**精确** 20、50、100 限定金，
+> 星魂只停 E0/E1/E2/E6、锥只给已拥有角色的专属锥且恒 S1）。
+> 口径见 `docs/评分模型设计.md` **v45**，文件表与四个实测坑见 **§4.2X**；
+> 全套测试 18 个套件通过（新增 `virtual-accounts-test.mjs` 28 项；`e2e` 173 项）。
+> ⚠️ **CDP 布局套件本机跑不到**（9222 无调试浏览器），所以那一套的改动是
+> 「按代码审过、没能真跑」——见 §4.2X 末尾。
+>
+> 上一版 **v4.6.82**（2026-10-11，在 `.worktrees/fill-text-vcenter` 的
 > `fix/fill-text-vcenter` 分支上做）—— 两条修正 + 一条确认：
 > ① **补金顺序的写法错了**（用户原话：「遐蝶 本体+E2 2 金 这个描述有误，我已有遐蝶，
 > 应改为 E1-E2」）：上一版只看目标档，**已拥有**的角色也被写成「本体+E2」。现在
@@ -2204,6 +2224,95 @@ node tools/_probe-data-status.mjs --port=8360             # 「数据状态」�
 | 口径演化史 / 被否定的方案 | `docs/评分模型设计.md`（读 v2 → v6 的顺序） |
 | 界面、数据链路、排障 | 本文 §3 / §4.2 的历史留档 + `docs/评分模型设计.md`（⚠️ `README.md` 自 v4.6.86 起只剩两行，不再是文档） |
 | 版本号 | `src/version.js`（+ `package.json` 同步） |
+
+---
+
+### 4.2X 本轮（v4.6.95，worktree `.worktrees/versatility-weight` / 分支 `feat/versatility-weight`，基于 `ef93c39`）—— 三条评分改动 + 虚拟账号自定义角色 + 9 个新预设
+
+**背景**：用户 2026-10-13 一次给全四条（开工约束照旧：「新建 worktree」）：
+
+> 1. 新增抽卡权重-泛用性权重，默认 1（与强度/性价比同权重），此角色投稿的能通关的所有队伍，
+>    包含的不同队友越多得分越高
+> 2. 角色总榜应受到 3 种抽卡权重的影响，因此「性价比得分」改名为「角色得分」
+> 3. 虚拟账号提供更多的角色可选……改为用户可给这个虚拟账号自定义添加角色（虚拟账号可在角色列表
+>    末尾点击添加没有的角色，并设置任意角色的星魂和光锥，设置光锥时选择该角色同命途光锥，专属光锥优先）
+> 4. 虚拟账号提供初始的几种情况：无成本账号 / 大隐金MAX 的无成本账号 / 全角色平铺 0+0·0+1·2+1·6+5 /
+>    随机低中高氪（20 / 50 / 100 限定金）……具体含义可以到社区查找，不懂的问我
+
+口径（三分项、归一化、记账方式）见 `docs/评分模型设计.md` **v45**；四条需求里**问过用户**的
+四件事与他的答复记录在那一节与本节末尾。
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `public/scripts/advice.js` | ① `SCORING.drawWeight` 加 `versatility`（默认 1）；`DRAW_WEIGHT_ROWS` 加第三个旋钮，`drawWeightDefaults()` 改成**按那张表现算**（不再手抄键名）；`normalizeDrawWeights()` 泛化到 N 个键；**新增 `drawWeightValues()`**（原值，给抽卡方案做两两归一，避免 `0.6/0.8 = 0.7499999999999999`）。② 第一趟算分处新增 `strength = 100 × perf`（**不乘金数项**；不能从 `total` 反推，0 金那支是 ×1.2）；`pack.bestPerf`（版本 → 该版本最高 perf）；第二趟 `accStrength`（**与性价比共用 `wSum` 分母**）。③ 新增 `teammateVariety` / `TRAILBLAZER_KEY` / `varietyKeyOf()`：从 `packRows`（达标/满分前沿 = 「能通关」集合）逐队记「谁和谁同队」，跨副本跨版本并成一个集合。④ `frontierBoard`：逐 env 补 `envStrength` / `envStrengthValue`；整包补 `strengthTotal` / `versatilityRaw`；新增三分项**榜内 min-max 归一**（取样集合 `all` = 收敛前全部整包）与 `characterScore`；`rankFrontier` 排序键换成 `characterScore`（次级仍是老 `total`）。⑤ `teamPlan()` 的抽卡权重改成按 `strength : cost` **两两归一**（泛用性不动方案） |
+| `src/server/conclusion.js` | `slimFrontierUnit()` / `slimCharacterPack()` 新增 `characterScore` / `strengthScore` / `costScore` / `versatilityScore` / `strengthTotal` / `versatilityRaw`，逐 env 新增 `envStrength` / `envStrengthValue`（**刻意不叫 `strength`**：那是 v4.6.87 被撤销的字段名，`herta-test` 有回归盯着）；`archiveConclusion` 接 `options.drawWeights` 并**回显归一化后的那一份**；`archiveCharacterPacks` 同样接 `drawWeights`；载荷 **v7 → v8**、面板 **v3 → v4** |
+| `src/server/app.js` | `/api/archive/conclusion` 接 `body.drawWeights`；`/api/archive/packs` 从查询串接 `drawWeights`；**新增 `GET|POST /api/virtual-accounts/:id/roster`**（取名单原文 / 整份替换；只有虚拟账号能用，真实账号 400）；预设清单路由补传 `presetContextRefs` |
+| `src/server/virtual-accounts.js` | ① `presetContext()` 多收 `popularLightCones` / `lightConePaths` / `characterPaths`，导出 `presetContextRefs(index)`；新增 `standardChars`（资料表里 `rarity=5 && limited=false` 且非开拓者的 7 个）、`signatureConeOf()`（**常驻走写死的 `STANDARD_SIGNATURE_CONES`**，其余走 `popularLightCones`）、`signatureOwnerOf`（**按角色迭代建**，见下面的坑）、`conesOfPath()`；② 新增 9 个预设（无成本 / 大隐金 MAX / 平铺四档 / 随机三档）+ `randomRosterOf()`（三类动作按 3:2:1 加权随机，**只把要花金的专属锥当动作**）；③ 新增 `normalizeRoster()` / `customRosterPreset()` / `nearestEidolonTier()`；④ `buildVirtualAccount`：光锥**挂到它自己的角色**身上（主人优先、退路每一步都找空槽）、支持 spec 的 `equips`（自定义名单显式指定主人）、账号上多带 `virtualRoster` 名单原文 |
+| `src/server/store.js` | 新增 `AccountStore.setVirtualRoster()`（**只给虚拟账号**、**整份替换**：走 `setSnapshot` 的「保留最长名单」会让删除被静默回滚）；`toPublic()` 多带 `virtualPreset` / `hasVirtualRoster`（**不下发名单原文**，编辑器单独取） |
+| `src/server/archive.js` | `/api/archive` 新增下发 `refs.lightConePaths`（170 条，数据集里一直有、只是没暴露）与 `refs.pathLabels`（命途中文名） |
+| `public/scripts/virtual-roster.js`（新增） | 虚拟账号的角色编辑器：搜索 / 全部·已拥有·未拥有筛选 / 每个角色三个下拉框（星魂 E0·E1·E2·E6、同命途光锥且专属排第一、叠影 S1~S5）/ 「＋ 添加」「移除」；保存走整条 `api()`（鉴权 + CSRF）。**决策逻辑抽成可测的纯函数** `coneChoicesFor()` / `defaultConeFor()` |
+| `public/scripts/app.js` | `renderSnapshot()`：虚拟账号的角色列表末尾追加「＋ 添加角色」卡片（`addCharacterCard()`）；保存后 `loadSnapshot()` + 抽卡页可见时 `adviceOf().show()` |
+| `public/scripts/advice-view.js` | 徽标 / 配队清单 / 详情窗口 head 全部改名「角色得分」；`unitRoleScore()` 兜底老载荷；新增 `scoreBreakdownTable()`（三分项那张表）；`tipBox()` 新增 `pre` 与 `tableClass`（主表打 `is-source`，两张表必须能区分）；抽卡权重的 meta / 输入框按 `DRAW_WEIGHT_ROWS` 渲染三个；**改抽卡权重现在要重算结论**（并进 `conclusionKey` / 面板缓存键 / 请求）；`fetchPacks` 带 `drawWeights`；`mountAdviceView` 返回值新增 `ensureIndex()` |
+| `public/scripts/advice-tip-window.js` | 默认标题 →「角色得分详情」 |
+| `public/scripts/virtual-roster.js` + `public/styles/app.css` | 新增 `.vroster-*` 与 `.char-card.is-add`（虚线框的「＋ 添加角色」卡）、`html:has(#virtualRosterModal:not([hidden]))` 锁背景滚动 |
+| `public/index.html` | 「＋ 虚拟账号」的提示补一句「角色列表末尾点『＋ 添加角色』可自己加人、设星魂与同命途光锥」 |
+| `tools/virtual-accounts-test.mjs`（新增） | **28 项**：常驻名单与专武、大隐金两组、平铺四档、随机三档（★ 金数**精确**等于 20/50/100，连抽 3 次）、`normalizeRoster` 四条、专属锥归属、编辑器候选逻辑四条 |
+| `tools/e2e-test.mjs` | **173 项**：payload 7 → 8 / packs 3 → 4；新增抽卡权重一整节（回显、非法输入、★ 榜面真的变了、全押泛用性时角色得分 = 泛用性那一项、三分项存在性、逐 env 强度字段、泛用性分得开）；新增 9 个新预设的形状断言；新增自定义名单一整节（GET 预填、无 CSRF 403、真实账号 400、★ 清空后快照真的变短、★ 专锥挂到本人、星魂吸附 / 叠影夹逼） |
+| `tools/herta-test.mjs` | 载荷 7 → 8（两处）；「0 金通关 ×1.2」那条的**取样集合换成 `frontierPacksByChar`**（收敛前）并说明原因；原来那条「不许有 `strength`」的撤销检查改成**两件事都钉**（新字段必须在、裸 `strength` 必须不在） |
+| `tools/team-plan-test.mjs` | 载荷 7 → 8；抽卡权重的边界用例改成三个键；新增「泛用性旋钮不许动抽卡方案」 |
+| `tools/check-advice-layout.mjs` | 抽卡权重框 2 → **3**；总榜浮层的**探针改选 `.advice-value-tip-table.is-source`**（现在有两张表，不区分会让十几条断言静默量错对象）；标题 / 配队清单正则改「角色得分」；新增 `splitOk`（三分项表的列名 / 3 行 + 合计 / **合计 = 标题上的数**）；抽卡权重那一节改成「改它要重算总榜」 |
+| `tools/make-virtual-accounts.mjs` / `tools/run-tests.mjs` | 预设工具补传 `presetContextRefs`；测试总入口注册新套件 |
+| `docs/评分模型设计.md` / `HANDOFF.md` / `src/version.js` / `package.json` | 新增 **v45** 一节（三分项定义 / 合成方式 / 实测分布 / 连带口径变化 / 界面与回归）；版本 → **4.6.95** |
+
+**实测（真实数据集，等权 1:1:1，隐金全勾）**：
+
+```
+收敛前整包 1753 条 → 榜面 77 条；三个分项在榜面上的分布（p25 / 中位 / p75）：
+  强度得分  9.7 / 51.8 / 88.0      性价比得分  4.0 / 19.9 / 61.3
+  泛用性得分 14.1 / 32.4 / 53.5     versatilityRaw 3 ~ 74 个不同队友
+角色得分前 6（等权）：Mortenax Blade 95.7（强度 90.9 / 性价比 96.2 / 泛用性 100.0）
+  · Robin • Summeretto 90.5 · Trailblazer (Remembrance) 90.0 · Tribbie 89.6
+  · Ashveil 89.5 · Sparkle 87.5
+全押泛用性时前 6：Mortenax Blade 100 · Tribbie 99 · Trailblazer (Remembrance) 96
+  · Robin • Summeretto 96 · Trailblazer (Elation) 96 · Sparkle 89
+⚠️ 连带口径变化：榜面「隐金后 0 金」的条目 7 → **0**（0 金整包不再是任何角色的最高分代表；
+   收敛前仍有 31 条）。`herta-test` 那条用例的取样集合因此换到收敛前。
+```
+
+**这一轮踩到的四个坑（都写进代码注释了）**：
+
+1. **常驻的「专属光锥」不能拿 `popularLightCones` 顶替** —— 那张表是「**最常用**光锥」，
+   实测姬子 → 谐乐静默之后、白露 → 一场术后对话（4★）、瓦尔特 → 决心如汗珠般闪耀（4★）、
+   克拉拉 → 记一位星神的陨落（星芒商店）。用户要的是**专武**，所以那 7 对写死在
+   `STANDARD_SIGNATURE_CONES`（也不能按命途推：毁灭有**两把**常驻五星）。
+2. **「锥 → 主人」的反向表必须按角色迭代建**：按 `popularLightCones` 的条目建时，
+   常驻那 7 对**覆盖**了最常用表，于是「记一位星神的陨落」的主人被记成克拉拉、
+   而她的专属锥又是「无可取代的东西」→ 主人槽已占用 → 退回「随便找空位」→
+   最后挂到了**阿兰**身上（`flat-0+1/2+1/6+5` 三档全错，实测）。
+3. **随机账号的锥动作只认「要花金」的专属锥**：有些角色的专属锥是常驻 / 4★（成本 0），
+   当动作会扣 1 金预算却一分金都没加上 —— 实测 100 金的号只有 96~98。
+4. **挂锥的退路链每一步都要优先找空槽**：改前第三步直接 `carriers[ci]`，那一格**可能已经
+   挂着别的锥** → 被覆盖，「72 把锥只装上 70 把」。
+
+**用户答复（本轮问过的四件事）**：①「大隐金」= 隐金设置的**①赠送 + ③兑换**两组角色
+（16 人）；②「常驻全 6+5」的 S5 = **各常驻角色自己的常驻专属光锥**；③「全角色平铺」=
+**全部角色**（含限定 5★），+1/+5 都是**各自的专属光锥**；④金数记账：**1 金 = 1 个本体 /
+1 级星魂 / 1 把光锥本体**（E0 = 1 金、E1 = 2 金、E2 = 3 金、E6 = 7 金、叠影恒 S1 = 1 金、
+E2S1 = 4 金）——与仓库既有的 `memberGoldParts` 口径完全一致。
+
+**本轮未做的（留给下一轮）**：
+
+* 虚拟账号卡片上那个「刷新角色」按钮仍是无条件渲染的（它会给虚拟账号发一次注定失败的
+  米游社请求）—— 属于 2026-10-12 就有的老毛病，本轮没动，免得把三条新需求的改动面摊大。
+* ⚠️ **CDP 布局套件（`tools/check-advice-layout.mjs`）本机没法真跑**（9222 端口没有调试
+  浏览器，`run-tests.mjs` 会跳过它），所以那一套的改动是**按代码逐处审过、没能真跑**：
+  三处 `drawWeightInputs` 2 → 3、浮层探针改选 `.advice-value-tip-table.is-source`
+  （两张表不区分会让十几条断言静默量错对象 —— 这是本轮最需要真跑复核的一处）、
+  标题 / 配队清单正则改「角色得分」、新增 `splitOk`。**下一轮动评分或浮层排版前，
+  请先在一个有调试浏览器的环境跑一遍这一套。**
+  新界面的 DOM（`#virtualAddCharacter` / `#virtualRosterModal`）同样**没有真浏览器验证过**，
+  所以编辑器里那段**有分支的决策逻辑**（`coneChoicesFor()` / `defaultConeFor()`）已经抽成
+  纯函数、在 `virtual-accounts-test.mjs` 里有 4 条回归兜着（DOM 接线本身仍未验证）。
 
 ---
 
