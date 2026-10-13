@@ -23,10 +23,28 @@
 | 评分口径是怎么定下来的 | `docs/评分模型设计.md`（**当前口径看最后一节 v25**，前面多为已被推翻的早期方案） |
 
 > ⚠️ **§4.2 的历史改动表已外迁**到 `docs/变更流水账.md`；本文只保留最近几轮
-> （§4.2Y / §4.2X / §4.2AA / §4.2P~§4.2W / §4.2K / §4.2J / §4.2I / §4.2H / §4.2G / §4.2F / §4.2E / §4.2D / §4.2C / §4.2B / §4.2A / §4.2z / §4.2y / §4.2x —— **§4.2Y 是最新的那一轮**；
+> （§4.2Z / §4.2Y / §4.2X / §4.2AA / §4.2P~§4.2W / §4.2K / §4.2J / §4.2I / §4.2H / §4.2G / §4.2F / §4.2E / §4.2D / §4.2C / §4.2B / §4.2A / §4.2z / §4.2y / §4.2x —— **§4.2Z 是最新的那一轮**；
 > 字母走到 `z` 之后回到 `A`，越新的轮次字母越靠后）。
 
-> 最后更新：**v4.6.96**（2026-10-13，同一支 worktree `.worktrees/versatility-weight`）——
+> 最后更新：**v4.6.97**（2026-10-13，同一支 worktree）—— 用户两条：
+> 「**角色得分页面需要给出强度、性价比、泛用性的完整得分来源，如同性价比得分来源**」+
+> 「**泛用性权重也适用于补金推荐**」。
+> ① 详情窗口现在**三项都有来源**：新增**强度来源表**（关卡 / 权重 / 表现 / 跨版本发挥 /
+> 贡献 —— 与性价比表同形、只少「金数」一列）、新增**泛用性来源块**（把「不同队友」那个
+> 集合**列出来**，实测一个角色最多 74 个，并写出归一换算），三分项表里的「原始量」也带上
+> **榜内区间**（否则那 100 分验算不了）。
+> ② **泛用性进补金推荐**：队级泛用性 = **队内成员各自泛用性的平均**（口径由用户选定），
+> 三项**一起归一** —— 于是「强度 3 / 性价比 1 / 泛用性 1」在方案里从 `0.75 / 0.25` 变成
+> **`0.6 / 0.2 / 0.2`**，卡片等式与「补金推荐分」窗口补上第三项（两行 → 三行）。
+> ⚠️ v4.6.95 那条「调泛用性不动方案」**反过来**了，回归已同步反向。
+> ⚠️ 载荷两次顶穿 600 KB 硬上限（745 KB → 612 KB → **569 KB** 才收住）：归一上下限改成
+> **整榜一份**（顶层 `frontierExtents`），泛用性名单改成**只在按需接口**上带
+> —— `/conclusion` **v8 → v9**、`/packs` **v4 → v5**，两条**反向**断言钉着「名单不许进结论」。
+> 详见 **§4.2Z**；口径见 `docs/评分模型设计.md` **v46**。
+> 实测：`run-tests.mjs` **19 个套件全部通过**（含真跑的 CDP 那套；`e2e` 177 项、
+> `herta` 106 项、`team-plan` 31 项）。
+>
+> 上一版 **v4.6.96**（2026-10-13，同一支 worktree `.worktrees/versatility-weight`）——
 > 用户原话：「**修复 CDP 布局套件的问题，并写入 md 文件，方便别的 agent 使用**」。
 > 上一轮唯一没能真验证的就是这一套，这轮把它**真跑起来**了，并修掉它自己的一个硬 bug：
 > ① `check-advice-layout.mjs` 的 `URL_TO_OPEN` 现在**一律规范化成带 `?view=advice`** ——
@@ -48,8 +66,9 @@
 > 「性价比得分」改名「**角色得分**」= 强度 × ws + 性价比 × wc + 泛用性 × wv
 > （三个分项各自**榜内归一到 0~100** 再加权；归一化的取样集合是**收敛前的全部整包**，
 > 用榜面会和「收敛」互为输入）。⚠️ 抽卡权重因此**第一次进服务端请求**（v4.6.94 那版
-> 刻意不进，因为那时它只服务抽卡方案），载荷 **v7 → v8**；**抽卡方案只吃强度/性价比
-> 两项**（内部两两归一），调泛用性不动方案。
+> 刻意不进，因为那时它只服务抽卡方案），载荷 **v7 → v8**。
+> ⚠️ 这一版当时把方案写成「只吃强度/性价比两项（内部两两归一），调泛用性不动方案」——
+> **已在 v4.6.97 按用户要求推翻**（见上一条与 §4.2Z）。
 > ③ 虚拟账号支持**自定义角色名单**：角色列表末尾「＋ 添加角色」→ 编辑器里加任意角色、
 > 设星魂（E0/E1/E2/E6）与光锥（**同命途、专属优先**、一把锥只挂一个人、叠影 S1~S5）；
 > `GET|POST /api/virtual-accounts/:id/roster`（POST **整份替换**，只有虚拟账号能用）。
@@ -2370,6 +2389,42 @@ E2S1 = 4 金）——与仓库既有的 `memberGoldParts` 口径完全一致。
 
 **仍未验证的**：`#virtualAddCharacter` / `#virtualRosterModal` 的 DOM 接线（CDP 套件不看虚拟账号
 编辑器；要真验证得再写一节）。编辑器里那两段有分支的纯函数已有 4 条 Node 回归兜着。
+
+### 4.2Z 本轮（v4.6.97，同一支 worktree）—— 泛用性进补金推荐 + 三项的「完整得分来源」
+
+**背景**：用户 2026-10-13 两条（原话见 `docs/评分模型设计.md` **v46**）：
+① 「角色得分页面需要给出强度、性价比、泛用性的**完整得分来源**，如同性价比得分来源」；
+② 「**泛用性权重也适用于补金推荐**」。②直接**推翻**了 §4.2X 里那条「抽卡方案只吃两项」。
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `public/scripts/advice.js` | ① 第二趟累计器新增 `accStrengthBest`（该副本**表现分最高那一版**的 `100 × perf`，只累计参与平均的版本）→ 整包 `strengthBest`、逐 env `envStrengthBest`（强度来源表「跨版本发挥」列的分母）。② 整包新增 `versatilityMembers`（队友名单，**排序后**存，服务端内部用、**不投影进 `/conclusion`**）。③ `frontierBoard` 的 `extents` 改成**返回值**（`{ board, byChar, byTier, extents }` → 载荷顶层 `frontierExtents`），不再逐条挂到整包上。④ `teamPlan()`：**三项一起归一**（改用 `normalizeDrawWeights`，删掉自己那套「两项相除」）、新增「角色 → 泛用性」表（键是 **`unit.name`**，不是 `unit.char`）、候选新增 `versatilityRaw`（= **队内成员泛用性的平均**）、新增 ③ 的池内刻度与 `versatilityPct`、`total_score` 加第三项、排序次级键补 ③ 与 `versatilityPct`；返回体新增 `versatilityLo/Hi` 与逐行 `versatilityPct` / `versatilityRaw` |
+| `src/server/conclusion.js` | `slimFrontierUnit`：**刻意不投影** `versatilityMembers` / `extents`（逐条重复 = 33 KB + 117 KB，会顶穿 600 KB 上限），逐 env 新增 `envStrengthBest`；`slimCharacterPack` 同样新增 `envStrengthBest`（面板那条路必须与总榜那份在「界面要现算的字段」上等价）；`/conclusion` 顶层新增 `frontierExtents`（**v8 → v9**）；`/packs` 顶层新增 `versatilityMembers` + `frontierExtents`（**v4 → v5**） |
+| `public/scripts/advice-view.js` | ① 新增 `frontierExtentsNow()`（两条路兜底：`conclusion.frontierExtents` → `packsFrontierExtents`）、`strengthSourceBlock()`、`versatilitySourceBlock()`；`scoreBreakdownTable()` 的「原始量」带榜内区间；`frontierTip()` 的 `pre`/`extra` 接入两块。② `enrichTierDetail()` → **`enrichTipDetail()`**：同一个 `/api/archive/packs?char=` 载荷现在同时补「逐档榜的关卡明细」「泛用性名单」「归一上下限」，`learned` 为假时不重画。③ `fetchPacks()` 的返回值带 `versatilityMembers` / `frontierExtents`；`state` 新增 `packsFrontierExtents`。④ `teamPlanTip()` / `renderTeamPlan()` 的等式与分数来源表补第三项，并新增「泛用性 = 队内平均」那条脚注 |
+| `public/styles/app.css` | 新增 `.advice-vtip-members`（队友名单：换行、底色、`overflow-wrap: anywhere`）与 `.advice-source-note`（每个来源块底部那句换算） |
+| `tools/team-plan-test.mjs` | 夹具补 `versatilityRaw`（**不带它这一档根本测不出来**：两队都算 0、③ 退化）；「默认 1:1」→ 三项各 1/3；「3:1 与 0.75:0.25 同榜」→「3:1:1 与 0.6:0.2:0.2 同榜」并把那条「调泛用性不许动方案」**反向**成「泛用性拉满 → 系数 0/0/1、总分 = ③」；「强度高/性价比高」那一档**每项都显式把另两项置 0**（否则漏掉的那项按默认值 1 补进来，等于没在测这一项）；新增 `byVersatility` 检验；载荷 8 → 9 |
+| `tools/herta-test.mjs` | 载荷 8 → 9（两处）；新增 v9 字段断言（顶层三个上下限合法、逐 env `envStrengthBest`、`envStrength ≤ envStrengthBest`）+ **反向**断言「泛用性名单不许进 `/conclusion`」 |
+| `tools/e2e-test.mjs` | 载荷 9 / 5；新增「顶层带 frontierExtents」「结论不带队友名单」「packs 顶层带队友名单（去重非空）」「packs 带上下限」四条 |
+| `tools/check-advice-layout.mjs` | 新增 `strengthSourceOk`（强度表列名 / 行数 / 合计形状）与 `versatilitySourceOk`（名单**按元素**数数 = 标题上的数、归一换算那句）并并入 `tipOk`；探针新增 `divisionContext`（除号判红时把上下文印出来 —— 本轮为此多跑了一整轮 CDP）；方案等式的系数从 2 个 → **3 个**（容差放宽到 1.51，注释说明这是**两位小数显示**带来的舍入，不是分数算错）；「分数来源表两行」→ **三行**；`0.75/0.25` → `0.6/0.2`（恢复默认那条 → `0.33`） |
+| `docs/评分模型设计.md` / `HANDOFF.md` / `src/version.js` / `package.json` | 新增 **v46** 一节；§4.2X 里「方案只吃两项」那段**标注为已推翻**并保留原文说明当时的理由；版本 → **4.6.97** |
+
+**三个实测踩到的坑（都写进注释了）**：
+
+1. **载荷两次顶穿 600 KB 硬上限**：先按「逐条带上」写 → `/conclusion` **745 KB**（队友名单
+   117 KB + 上下限 33 KB，319 条各一份）；只把上下限挪到顶层 → **612 KB** 仍贴着上限；
+   再把名单改成只在按需接口上带 → **569 KB** 收住。教训：**角色级的东西不能逐条下发**
+   （一个角色在榜单里最多出现 5 次）。
+2. **`÷` 会把「金数列不许出现除号」那条判据判红** —— 它是**全窗口**断言，不只看金数那一列。
+   本轮两次因此判红（分项表标题、强度来源表脚注）。一律写 `/`（也正是用户 2026-10-11 要的）。
+3. **`teamPlan` 里的角色键是 `unit.name` 而不是 `unit.char`**：这条链吃的是
+   `projectConclusion` 投影过的整包。用错**不会报错** —— 表里只剩一个 `undefined` 键，
+   于是每支队的泛用性都算成 0、③ 整列退化（夹具那条「③ 的刻度不该退化」抓住了它）。
+
+**实测**：`run-tests.mjs` **19 个套件全部通过**（含真跑的 CDP 那套）：
+`e2e` 177 项、`herta` 106 项、`team-plan` 31 项、`virtual-accounts` 28 项；
+CDP 那套 `通过 ✓`（0 项 ✗、1 项显式跳过 —— 战斗记录 chip，虚拟账号库没有战绩，属环境事实）。
+界面实测（等权，隐金全勾）：强度来源表 5 行、合计 `+1275`；泛用性名单 **74** 个队友，
+换算印成 `得分 = 100 ×（74 − 3）/（74 − 3） = 100.0`。
 
 ---
 

@@ -187,6 +187,12 @@ const state = {
   conclusion: null,
   conclusionKey: null,
   conclusionError: '',
+  /**
+   * 三个分项的归一上下限，**当结论还没加载过时**由 `/api/archive/packs` 随包带回
+   * （角色面板那条路：用户可能直接在「角色信息」页点开一张卡）。
+   * 有结论时优先用 `conclusion.frontierExtents` —— 见 `frontierExtentsNow()`。
+   */
+  packsFrontierExtents: null,
   /** 第一节：米游社战斗记录（原始抓取 + 敌方信息）。 */
   records: null,
   recordsFreshness: null,
@@ -2052,16 +2058,38 @@ const wireValueTips = (container) => {
    * 按它精确命中。
    * 取不到 / 没命中就**保持现状**（宁可少列几个关卡，也不要空窗或报错）。
    */
-  const enrichTierDetail = async (tip) => {
+  const enrichTipDetail = async (tip) => {
     const unit = tip?.__unit;
     if (!unit) return;
-    if (!(Number(unit.envCount) > (unit.envs || []).length)) return;
+    // 两件事都靠**同一个** `/api/archive/packs?char=` 的载荷（有缓存，一个窗口最多多发一次）：
+    //   ① 逐档榜那四页只带**最好那一关**的明细 → 补齐全部关卡；
+    //   ② 泛用性的**来源名单**与三个分项的**归一上下限**只在这个接口上（不在 `/conclusion`，
+    //      理由见 `src/server/conclusion.js` 里 `slimFrontierUnit` 那段「为什么不上榜」）。
+    const needEnvs = Number(unit.envCount) > (unit.envs || []).length;
+    const needVersatility = !Array.isArray(unit.versatilityMembers);
+    if (!needEnvs && !needVersatility) return;
     const hit = await fetchPacks(unit.name);
-    const match = (hit?.packs || []).find((p) => p.key === unit.key);
-    if (!match?.envs?.length || match.envs.length <= (unit.envs || []).length) return;
-    unit.envs = match.envs;
-    const fresh = frontierTip(unit);
-    tip.replaceWith(fresh);
+    if (!hit) return;
+    let learned = false;
+    if (hit.frontierExtents) {
+      // 面板这条路可能没加载过结论 —— 记下来，`scoreBreakdownTable()` 会读它。
+      state.packsFrontierExtents = hit.frontierExtents;
+      learned = true;
+    }
+    if (needVersatility && Array.isArray(hit.versatilityMembers)) {
+      // 挂回整包对象上：`frontierTip()` 是从 `unit` 渲染的（与上面补 `envs` 同一条路）。
+      unit.versatilityMembers = hit.versatilityMembers;
+      learned = true;
+    }
+    if (needEnvs) {
+      const match = (hit.packs || []).find((p) => p.key === unit.key);
+      if (match?.envs?.length && match.envs.length > (unit.envs || []).length) {
+        unit.envs = match.envs;
+        learned = true;
+      }
+    }
+    // 只有真学到东西才重画（`learned === false` 时重画是白费，而且会让窗口闪一下）。
+    if (learned) tip.replaceWith(frontierTip(unit));
   };
   const openTip = async (wrap) => {
     // 同一时刻只开一个：点第二行时第一行必须收掉（窗口也只有一个）。
@@ -2073,7 +2101,7 @@ const wireValueTips = (container) => {
     // ⚠️ 补明细必须在**开窗之前**：窗口正文是固定尺寸、内容在里面滚，
     // 先开窗再换内容会让用户看到「一个关卡 → 五个关卡」跳一下。
     if (tip.__unit) {
-      try { await enrichTierDetail(tip); } catch { /* 取不到就用现有的那几行 */ }
+      try { await enrichTipDetail(tip); } catch { /* 取不到就用现有的那几行 */ }
       tip = wrap.querySelector('.advice-value-tip');
       if (!tip) return;
     }
@@ -2186,7 +2214,19 @@ const fetchPacks = async (charKey) => {
       { headers: { Accept: 'application/json' } });
     const data = await res.json().catch(() => null);
     if (!data || data.ok !== true) return null;
-    const value = { found: data.found !== false, packs: data.packs || [], envs: data.envs || [] };
+    const value = {
+      found: data.found !== false,
+      packs: data.packs || [],
+      envs: data.envs || [],
+      // 泛用性的来源名单（用户 2026-10-13）：**只有这条按需接口下发它**（见
+      // `src/server/conclusion.js` 里「为什么不上 /conclusion」那段注释）——
+      // 所以详情窗口要渲染「泛用性来源」就必须走这个请求，
+      // 与「全部配队」「逐档榜补明细」共用同一份缓存，不会多发请求。
+      versatilityMembers: Array.isArray(data.versatilityMembers) ? data.versatilityMembers : null,
+      // 三个分项的归一上下限：面板这条路上界面可能**根本没加载过结论**
+      // （用户直接在「角色信息」页点开），所以它随包一起来。
+      frontierExtents: data.frontierExtents || null,
+    };
     packsCache.set(cacheKey, value);
     return value;
   } catch {
@@ -2445,6 +2485,24 @@ const fillTeamCards = (slot) => {
  * ⚠️ 三个原始量都取不到时（合成夹具 / 老服务端）整张表返回 null —— 宁可不画，
  * 也不画一张全是 `NaN` 的表。
  */
+/**
+ * 三个分项的**归一上下限**（用户 2026-10-13：「给出强度、性价比、泛用性的完整得分来源」）。
+ *
+ * 它决定那张「分项 / 原始量 / 得分 / 权重 / 贡献」表里能不能写出
+ * `得分 = 100 ×（原始量 − 最小）/（最大 − 最小）` —— 没有它就验算不了那 100 分。
+ * ⚠️ 除法一律写**斜杠**：`check-advice-layout.mjs` 有一条**全窗口**判据禁止出现 `÷`
+ *（用户 2026-10-11 原话「金数的符号改为斜杠，表示除以」）—— 它对整个浮层生效，
+ * 不只看金数那一列，写 `÷` 会把那条判据判红（本轮实测踩过）。
+ *
+ * ⚠️ **两条路各有来源**（这是它唯一的复杂点）：
+ *   * 总榜 / 逐档榜那条：`/conclusion` 载荷的顶层 `frontierExtents`；
+ *   * 角色面板那条：界面**可能根本没加载过结论**（用户直接在「角色信息」页点开一张卡），
+ *     所以 `fetchPacks` 随包带一份，由 `enrichTipDetail()` 记进 `state.packsFrontierExtents`。
+ * ⚠️ 两份是同一个对象（服务端同一处算的），不会分叉。
+ */
+const frontierExtentsNow = () => state.conclusion?.frontierExtents
+  || state.packsFrontierExtents || null;
+
 const scoreBreakdownTable = (unit) => {
   const w = normalizeDrawWeights(state.conclusion?.drawWeights ?? state.drawWeights ?? {});
   if (!Number.isFinite(Number(unit.strengthScore))
@@ -2453,21 +2511,47 @@ const scoreBreakdownTable = (unit) => {
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   const pct = (v) => `${(num(v) * 100).toFixed(0)}%`;
   const one = (v) => num(v).toFixed(1);
+  /**
+   * 三个分项的**榜内归一上下限**（用户 2026-10-13：「需要给出强度、性价比、泛用性的
+   * **完整得分来源**」）。
+   *
+   * ⚠️ 没有它，这张表就是**验算不了**的：`强度 96.2`（0~100 的分数）对 `得分 100`
+   * 看起来还像回事，可 `性价比 1098.2` 对 `得分 96.2` 就完全对不上了 —— 因为中间还有
+   * 一次**榜内 min-max 归一**没写出来。把区间补在「原始量」那一格的下一行之后，
+   * 三个分项都能自己按 `100 × (原始量 − 最小) ÷ (最大 − 最小)` 验算。
+   * 载荷没带 `extents` 时（老服务端 / 合成夹具）这一行只是不显示，其余照旧。
+   */
+  const extents = frontierExtentsNow();
+  const extentOf = (key) => {
+    const e = extents?.[key];
+    if (!e || !Number.isFinite(Number(e.lo)) || !Number.isFinite(Number(e.hi))) return null;
+    return e;
+  };
+  /** 泛用性的原始量是「人数」（整数），另两个是 0~100 的分数（一位小数）。 */
+  const rawText = (v, integer) => (integer ? num(v).toFixed(0) : num(v).toFixed(1));
   const parts = [
-    ['强度', '打出来的成绩（不含金数项）', unit.strengthTotal, unit.strengthScore, w.strength],
-    ['性价比', '同成绩下金数越少越高', unit.total, unit.costScore, w.cost],
-    ['泛用性', '能通关队伍里的不同队友数', unit.versatilityRaw, unit.versatilityScore, w.versatility],
+    ['强度', '打出来的成绩（不含金数项）', unit.strengthTotal, unit.strengthScore,
+      w.strength, 'strength', false],
+    ['性价比', '同成绩下金数越少越高', unit.total, unit.costScore, w.cost, 'cost', false],
+    ['泛用性', '能通关队伍里的不同队友数', unit.versatilityRaw, unit.versatilityScore,
+      w.versatility, 'versatility', true],
   ];
-  const rows = parts.map(([name, why, raw, score, weight]) => [
-    tipFactor(name, why),
-    num(raw).toFixed(raw === unit.versatilityRaw ? 0 : 1),
-    one(score),
-    pct(weight),
-    one(num(weight) * num(score)),
-  ]);
+  const rows = parts.map(([name, why, raw, score, weight, key, integer]) => {
+    const e = extentOf(key);
+    return [
+      tipFactor(name, why),
+      // 原始量那一格带出榜内区间（见上面 `extents` 的注释）。
+      tipFactor(rawText(raw, integer),
+        e ? `（榜内 ${rawText(e.lo, integer)} ~ ${rawText(e.hi, integer)}）` : ''),
+      one(score),
+      pct(weight),
+      one(num(weight) * num(score)),
+    ];
+  });
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
-    '角色得分 = 强度 × 权重 + 性价比 × 权重 + 泛用性 × 权重（三个分项各自在榜内归一到 0~100）'));
+    '角色得分 = 强度 × 权重 + 性价比 × 权重 + 泛用性 × 权重'
+    + '（每个分项：得分 = 100 ×（原始量 − 榜内最小）/（榜内最大 − 榜内最小））'));
   box.appendChild(tipTable(
     ['分项', '原始量', '得分', '权重', '贡献'],
     rows,
@@ -2477,6 +2561,119 @@ const scoreBreakdownTable = (unit) => {
     // （实测踩过：表里是 `96`、头行是 `+96`，判等直接红）。分项那一列仍留一位小数。
     ['角色得分', '', '', '', `+${packScoreText(unitRoleScore(unit))}`],
   ));
+  return box;
+};
+
+/**
+ * 「**强度**」这一项的完整来源（用户 2026-10-13：「角色得分页面需要给出强度、性价比、
+ * 泛用性的**完整得分来源**，如同性价比得分来源」）。
+ *
+ * 与性价比那张表**同一套形状**，只少一列「金数」——那正是两个分项唯一的差别：
+ *
+ * ```
+ *   性价比：副本权重 × 100 × 表现 ×（该副本最便宜金数 ÷ 这支队金数）× 跨版本发挥
+ *   强度  ：副本权重 × 100 × 表现 × 跨版本发挥
+ * ```
+ *
+ * ⚠️ **两处的「表现」不是同一个数**，必须在脚注里说清（不说的话读者会以为其中一个错了）：
+ *   * 性价比那张表写的是**最佳证据那一版**的表现（就是榜上那支队伍）；
+ *   * 这张表写的是**该副本内按版本加权后**的表现（`envStrength ÷ 100`）——
+ *     强度分项的分子用的正是它（见 `advice.js` 里 `accStrength` 那段）。
+ * 所以「跨版本发挥」两处也就跟着不同分母：这里 = 加权平均 ÷ **表现分最高的那一版**。
+ *
+ * ⚠️ 第一列**不画队伍图标**（性价比那张表有）：强度那一档的「最好的一版」可能来自
+ * 与最佳证据**不同**的行，把最佳证据的队伍画在这一列会指错人。
+ */
+const strengthSourceBlock = (unit) => {
+  const envs = unit.envs || [];
+  if (!envs.length) return null;
+  const rows = envs.map((env) => {
+    const meta = frontierEnvMeta(env.id);
+    const weight = Number(env.weight) || 0;
+    const strength = Number(env.envStrength);
+    const best = Number(env.envStrengthBest);
+    // 表现分（0~100）换回 0~1 的系数：链子上那枚 ×100 就是 `frontierPackScale`。
+    const perf = Number.isFinite(strength) ? strength / 100 : null;
+    // 跨版本发挥 = 版本加权平均 ÷ 表现最高的那一版，恒 ≤ 1。
+    // ⚠️ 老载荷没有 `envStrengthBest`（或它是 0）时给 null，那一格写 `—` ——
+    //    与性价比表里 `seasonFactor === null` 同一种写法，绝不拿 1 冒充（那会像「版版都稳」）。
+    const season = Number.isFinite(strength) && Number.isFinite(best) && best > 0
+      ? strength / best : null;
+    const f = frontierFactorsOf(env, meta);
+    // 贡献的乘法链与性价比那张表同一种写法：把隐形的 ×100 也写出来，
+    // 否则读者拿左边可见的因子相乘只能得到 1/100 的数。
+    const chain = [`×${formatWeight(weight)}`];
+    if (Number.isFinite(f.packScale)) chain.push(formatWeight(f.packScale));
+    if (perf !== null) chain.push(factorText(perf));
+    return [
+      tipEnvLabel(meta?.label || env.envLabel || env.id, env.evidenceSeason),
+      `×${formatWeight(weight)}`,
+      perf === null ? '—' : tipFactor(factorText(perf), '版本加权'),
+      season === null ? '—' : `×${factorText(season)}`,
+      tipChain(chain, `+${packScoreText(env.envStrengthValue)}`),
+    ];
+  });
+  const box = text('span', 'advice-score-split');
+  box.appendChild(text('span', 'advice-score-split-title',
+    '强度来源：逐关卡「权重 × 100 × 表现 × 跨版本发挥」——它只数**打出来的成绩**，不乘金数项'));
+  box.appendChild(tipTable(
+    ['关卡', '权重', '表现', '跨版本发挥', '贡献'],
+    rows,
+    // 合计 = `strengthTotal`（三个分项表里「强度」那一行的**原始量**），不是角色得分。
+    // 单副本时它就是那一列本身，不必再写一行（与性价比表同一条约定）。
+    envs.length > 1
+      ? ['强度合计', '', '', '', `+${packScoreText(unit.strengthTotal)}`] : null,
+    // ⚠️ 打上自己的 class：浮层里现在有**三张**表（三个分项 / 强度来源 / 性价比来源），
+    //    `check-advice-layout.mjs` 的探针按 class 选表 —— 不给这张加标记，
+    //    它就只能按下标猜，而「按下标取」在这类探针里是假红的常客。
+    'is-strength-source',
+  ));
+  box.appendChild(text('div', 'muted small advice-source-note',
+    '这一格的「表现」是**该副本内按版本加权后**的成绩（性价比那张表写的是最佳证据那一版）——'
+    // ⚠️ 除法写斜杠：浮层有一条**全窗口**判据禁止出现 `÷`（见 `scoreBreakdownTable` 那段注释）。
+    + '所以「跨版本发挥」在这里 = 加权平均 / 表现最高的那一版。'));
+  return box;
+};
+
+/**
+ * 「**泛用性**」这一项的完整来源（用户 2026-10-13 第 3 条）。
+ *
+ * 这一项的原始量不是分数而是一个**集合的大小**，所以它的「来源」就是把那个集合**列出来**：
+ * 这个角色的**能通关**队伍里出现过的**不同队友**。再补一句归一换算，
+ * 读者就能从名单一路验算到榜上那个 0~100 的分。
+ *
+ * ⚠️ 名单只对**前 `FRONTIER_DETAIL_ROWS` 条**下发（`slimFrontierUnit` 里那一段）：
+ * 排后面的条目这里拿不到名单，**如实返回 null**（那一格不画），不要伪造一行「—」。
+ * ⚠️ 开拓者各命途在数据集里是**不同的英文键**，原样列出来会看到 5 个开拓者 ——
+ * 脚注必须说明「算同一个人」，否则读者会以为榜单数错了。
+ */
+const versatilitySourceBlock = (unit) => {
+  const members = unit.versatilityMembers;
+  if (!Array.isArray(members) || !members.length) return null;
+  const raw = Number(unit.versatilityRaw) || 0;
+  const e = frontierExtentsNow()?.versatility;
+  const box = text('span', 'advice-score-split');
+  box.appendChild(text('span', 'advice-score-split-title',
+    `泛用性来源：这个角色**能通关**的队伍里出现过的不同队友（共 ${raw} 个）`));
+  // 名单做成**一个个 span**（不是一整串文本）：① 分隔符不会与名字里的「•」混在一起；
+  // ② CDP 探针可以按元素数数，不必去猜分隔符（实测角色名里确实有「•」这种点）。
+  const list = text('div', 'advice-vtip-members');
+  members.forEach((key, i) => {
+    if (i) list.appendChild(text('span', 'advice-vtip-sep', '·'));
+    list.appendChild(text('span', 'advice-vtip-member', cn(key)));
+  });
+  box.appendChild(list);
+  box.appendChild(text('div', 'muted small advice-source-note',
+    Number.isFinite(Number(e?.lo)) && Number.isFinite(Number(e?.hi))
+      // ⚠️ 除法符号写**斜杠**、不写 `÷`：用户 2026-10-11 的原话是「金数的符号改为斜杠，
+      //    表示除以」，而 `check-advice-layout.mjs` 有一条**全窗口**断言禁止出现 `÷`
+      //    （改前写 `÷` 实测把那条判据判红了 —— 它对全窗口生效，不分哪一格）。
+      ? `得分 = 100 ×（${raw} − ${Number(e.lo)}）/（${Number(e.hi)} − ${Number(e.lo)}）`
+        + ` = ${(Number(unit.versatilityScore) || 0).toFixed(1)}`
+        + '（榜内最小 ~ 最大就是这一项的全部刻度）'
+      : '（本次载荷没带榜内区间，所以只能看上面的原始量。）'));
+  box.appendChild(text('div', 'muted small advice-source-note',
+    '开拓者的各命途算**同一个人**（否则一个开拓者会被数成 5 个不同队友）。'));
   return box;
 };
 
@@ -2652,7 +2849,9 @@ const frontierTip = (unit) => {
   // `packsSlot()` 是**同一批要求的另一半**（2026-10-10，用户澄清是「性价比面板」）：
   // 总榜每角色只留一条，所以默认看不到这个角色的其他整包；这一节按需补上**全部**配队，
   // 每条带自己的性价比得分与最佳证据队伍。
-  const extra = [packsSlot(unit.name)];
+  // ⚠️ 顺序：**泛用性来源**紧跟在性价比那张表后面（三个分项的来源要连着读），
+  // 再才是「这个角色的全部配队」——后者是另一个话题（还有哪些配装），不是分数的来源。
+  const extra = [versatilitySourceBlock(unit), packsSlot(unit.name)];
   // 名次靠后的条目为了载荷**不逐关卡展开队友**（`slimFrontierUnit()` 只给头条证据那一支）。
   // ⚠️ 触发条件是「**所有**关卡都没有 members」，不是「第一个关卡没有」：
   //    改前那样写时，只要有一个关卡带着队伍、另一个没带，脚注就会说「未展开队友名单」
@@ -2675,16 +2874,22 @@ const frontierTip = (unit) => {
     foot,
     // 主表打 `is-source`：浮层里现在有两张表，探针（`check-advice-layout.mjs`）靠这个
     // class 认准「逐关卡来源」这张，不会量到上面那张三个分项的表。
+    // 主表打 `is-source`：浮层里有**三张**表了（三个分项 / 强度来源 / 性价比来源），
+    // 探针（`check-advice-layout.mjs`）按这个 class 认准「性价比逐关卡来源」那一张
+    // —— 它的合计 = `unit.total`，探针就是这么断言的。强度那张**不带** `is-source`
+    // （它的合计是 `strengthTotal`，两者不是一个数）。
     tableClass: 'is-source',
-    // 三个分项那张表（用户 2026-10-13 第 1、2 条）插在等式与下面那张明细表之间。
-    pre: [scoreBreakdownTable(unit), text('span', 'advice-score-split-title',
-      '下面是「性价比」这一项的逐关卡来源：')],
+    // 三个分项那张表（用户 2026-10-13 第 1、2 条）+ **强度来源表**插在等式与下面那张
+    // 性价比明细表之间 —— 与三个分项表的顺序（强度 → 性价比 → 泛用性）一致。
+    pre: [scoreBreakdownTable(unit), strengthSourceBlock(unit),
+      text('span', 'advice-score-split-title',
+        '下面是「性价比」这一项的逐关卡来源：')],
     extra,
     notes,
   });
   // ⚠️ 逐档榜（E0/E1/E2/E6 那四页）的载荷只带**最好的那一个关卡**的明细（压 600 KB 硬上限，
   // 见 `src/server/conclusion.js` 的 `slimFrontierUnit(unit, i, 1)`）—— 用户 2026-10-11 报的
-  // 「E1/E2/E6 的详情页只显示一种关卡」就是它。点开时按需把整份明细取回来（`enrichTierDetail`），
+  // 「E1/E2/E6 的详情页只显示一种关卡」就是它。点开时按需把整份明细取回来（`enrichTipDetail`），
   // 所以这里把整包对象挂在节点上，界面不必再猜它属于谁。
   tip.__unit = unit;
   return tip;
@@ -2763,6 +2968,10 @@ const teamPlanTip = (row, plan) => {
   const draw = plan.drawWeights || normalizeDrawWeights({});
   const ws = formatShare(draw.strength);
   const wc = formatShare(draw.cost);
+  // ③ 泛用性的系数（用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」）。
+  const wv = formatShare(draw.versatility);
+  /** 队内平均泛用性 / 它的池内刻度：都是**平均值**，所以要一位小数（不是整数人数）。 */
+  const vers = (v) => Number(v || 0).toFixed(1);
   const extra = [];
   if (row.mid) {
     const box = text('div', 'advice-plan-tip-block');
@@ -2790,7 +2999,8 @@ const teamPlanTip = (row, plan) => {
     head: `补金推荐分 +${num(row.total)}`,
     // ⚠️ 第二项写成**差额接近度**（不是「性价比得分」）：v4.6.89 起它俩就是同一个数，
     // 印两个名字会让读者以为还有别的成分（用户第 6 条要的就是去掉这一层）。
-    eq: `= 强度得分 ${num(row.strengthPct)} × ${ws} + 差额接近度 ${num(row.gapPct)} × ${wc}`,
+    eq: `= 强度得分 ${num(row.strengthPct)} × ${ws} + 差额接近度 ${num(row.gapPct)} × ${wc}`
+      + ` + 泛用性 ${num(row.versatilityPct)} × ${wv}`,
     headers: ['分项', '本队取值', '刻度（按候选池现算）', '折算'],
     rows: [
       // ⚠️ 「本队取值」是**角色总榜上的整包分**（用户 2026-10-12 第 8 条：① 就是它）——
@@ -2807,6 +3017,11 @@ const teamPlanTip = (row, plan) => {
       ['差额接近度', `补金 ${row.gap} 金｜账面 ${row.gold} 金`,
         `(1 − 补金 ÷ ${plan.gapMax} 金)^${gapPower}（池内 p75）`,
         `${num(row.gapPct)} × ${wc}`],
+      // ③ 泛用性（用户 2026-10-13 第 3 条）：队内成员**各自**泛用性的**平均**，再按候选池
+      // 归一。刻度是「个队友」，所以写清楚单位 —— 否则读者会把它当成一个百分比。
+      ['泛用性', `队内平均 ${vers(row.versatilityRaw)} 个队友`,
+        `${vers(plan.versatilityLo)} ~ ${vers(plan.versatilityHi)} 个`,
+        `${num(row.versatilityPct)} × ${wv}`],
     ],
     extra,
     notes: [
@@ -2817,8 +3032,13 @@ const teamPlanTip = (row, plan) => {
       // ① 必须是含金数项的整包分，否则同为 0T 的贵队与便宜队看不出差别。
       '强度得分 = 角色总榜上的**整包分**（表现 × 金数项，金数项 = 该版本最便宜金数 ÷ 本队金数、'
       + '封顶 1，0 金通关另 ×1.2）—— 所以**同为绝境 0T 时，金数越少这一项越高**；'
-      + `两个系数来自「抽卡权重」（强度 ${(draw.strength * 100).toFixed(0)}% / `
-      + `性价比 ${(draw.cost * 100).toFixed(0)}%），改它不用重算数据集。`,
+      + `三个系数来自「抽卡权重」（强度 ${(draw.strength * 100).toFixed(0)}% / `
+      + `性价比 ${(draw.cost * 100).toFixed(0)}% / 泛用性 ${(draw.versatility * 100).toFixed(0)}%），`
+      + '改它不用重算数据集。',
+      // ⚠️ 用户 2026-10-13 第 3 条：泛用性**也**进补金推荐分。口径是**队内平均**（用户选定），
+      //    与角色总榜那一列的原始量同源（那一个数 = 该角色能通关的队伍里出现过的不同队友数）。
+      '泛用性 = 队内成员**各自**泛用性的平均（每人那个数 = 他在能通关的队伍里见过的不同队友数，'
+      + '开拓者各命途算一个人），再按候选池归一 —— 所以「成员越百搭，这支队越好抄、越好换人」。',
       // ⚠️ 用户 2026-10-12 第 6 条：性价比这一侧**只有**差额接近度。
       `性价比 = 差额接近度（1 − 补金 ÷ ${plan.gapMax} 金）：它量的是**你还要补几金**`
       + '（与上面那一档不同：那一档看的是**数据集**里这支队压不压金，与你拥有什么无关）；'
@@ -2955,10 +3175,12 @@ const renderTeamPlan = (conclusion) => {
     // `advice.js` 的 `normalizeDrawWeights()` 里做一次（两边各算一遍就会分叉）。
     drawWeights: state.drawWeights,
   });
-  // 生效的权重由 `plan` 回显（已归一化）——界面照它印那两个系数，不自己再算一遍。
+  // 生效的权重由 `plan` 回显（已归一化）——界面照它印那**三个**系数，不自己再算一遍。
   const draw = plan.drawWeights || normalizeDrawWeights(state.drawWeights || {});
   const ws = formatShare(draw.strength);
   const wc = formatShare(draw.cost);
+  // ③ 泛用性（用户 2026-10-13 第 3 条）：它现在也进补金推荐分，卡片的等式要印出来。
+  const wv = formatShare(draw.versatility);
 
   setMeta(plan.rows.length
     ? `候选 ${plan.pool} 支队伍（总榜 ${plan.poolAll} 支里去掉「补金 0」的）`
@@ -2985,7 +3207,8 @@ const renderTeamPlan = (conclusion) => {
       (v) => Number(v || 0).toFixed(1), '补金推荐分'));
     head.appendChild(text('span', 'advice-plan-team-eq',
       `= 强度得分 ${Number(row.strengthPct).toFixed(1)} × ${ws}`
-      + ` + 差额接近度 ${Number(row.gapPct).toFixed(1)} × ${wc}`));
+      + ` + 差额接近度 ${Number(row.gapPct).toFixed(1)} × ${wc}`
+      + ` + 泛用性 ${Number(row.versatilityPct).toFixed(1)} × ${wv}`));
     card.appendChild(head);
 
     // ---- 队伍四个位置 --------------------------------------------------------

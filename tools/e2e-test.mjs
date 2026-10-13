@@ -248,8 +248,21 @@ const main = async () => {
         && junkHidden.body?.hiddenCosts?.gift === true
         && junkHidden.body?.hiddenCosts?.bogus === undefined,
         `status=${junkHidden.status} hiddenCosts=${JSON.stringify(junkHidden.body?.hiddenCosts)}`);
-      check('conclusion payload 形状是 v8（三个分项 + 角色得分 + drawWeights）',
-        hiddenOn.body?.payload === 8, `payload=${hiddenOn.body?.payload}`);
+      check('conclusion payload 形状是 v9（顶层 frontierExtents + 逐 env envStrengthBest）',
+        hiddenOn.body?.payload === 9, `payload=${hiddenOn.body?.payload}`);
+      // v9 的两处新字段（用户 2026-10-13：「给出三项的完整得分来源」）——形状号变了就得真检查，
+      // 只看一个数字不算验证。
+      check('conclusion 顶层带三个分项的归一上下限 frontierExtents',
+        ['strength', 'cost', 'versatility'].every((k) => {
+          const e = hiddenOn.body?.frontierExtents?.[k];
+          return e && Number.isFinite(Number(e.lo)) && Number.isFinite(Number(e.hi)) && e.hi >= e.lo;
+        }),
+        JSON.stringify(hiddenOn.body?.frontierExtents));
+      // ⚠️ 反向钉住：泛用性队友名单**不许**进这个载荷（逐条重复 5 次 = 117 KB，
+      //    会把 600 KB 硬上限打穿）—— 它只在按需接口上，见 conclusion.js 的注释。
+      check('conclusion 的整包不带泛用性队友名单（它在按需接口上）',
+        (hiddenOn.body?.frontierUnits || []).length > 0
+        && (hiddenOn.body?.frontierUnits || []).every((u) => u.versatilityMembers === undefined));
       // ⚠️ v4.6.87 曾在每个整包上多发一个 `strength`（纯强度，不含金数项）供抽卡方案的
       // 「强度得分」用；用户 2026-10-12 第 8 条改回「含金数项的整包分」（同为 0T，9 金队
       // 要比 16 金队强得多），那个字段已删除 —— 所以这里**反向**断言它不该再出现，
@@ -458,8 +471,22 @@ const main = async () => {
         packsHidden.body?.hiddenCosts
         && Object.values(packsHidden.body.hiddenCosts).every((v) => v === true),
         `hiddenCosts=${JSON.stringify(packsHidden.body?.hiddenCosts)}`);
-      check('packs payload 形状升到 v4（hiddenCosts 回显 + env.seasonMinCost + 三个分项）',
-        packsHidden.body?.payload === 4, `payload=${packsHidden.body?.payload}`);
+      check('packs payload 形状升到 v5（+ 泛用性队友名单 / frontierExtents / envStrengthBest）',
+        packsHidden.body?.payload === 5, `payload=${packsHidden.body?.payload}`);
+      // v5：**泛用性的来源名单**只在按需接口上（用户 2026-10-13 要的「完整得分来源」）。
+      // ⚠️ 它是**角色级**的，所以放在载荷顶层（一个角色几十条配装共用一份），
+      //    放进每个整包会让同一份名单重复最多 59 次。
+      check('packs 顶层带该角色的泛用性队友名单（去重、非空）',
+        Array.isArray(packsHidden.body?.versatilityMembers)
+        && packsHidden.body.versatilityMembers.length > 0
+        && new Set(packsHidden.body.versatilityMembers).size
+          === packsHidden.body.versatilityMembers.length,
+        `${packsHidden.body?.versatilityMembers?.length} 个`);
+      // 面板这条路界面**可能没加载过结论**，所以归一上下限随包一起给（见 advice-view 的
+      // `frontierExtentsNow()`）。
+      check('packs 带 frontierExtents（面板可能没加载过结论）',
+        ['strength', 'cost', 'versatility']
+          .every((k) => Number.isFinite(Number(packsHidden.body?.frontierExtents?.[k]?.hi))));
       // ⚠️ v4.6.88 修的真 bug：面板的 env 少发 `seasonMinCost` 时，逐档榜的浮层
       // （`enrichTierDetail()` 拿这份数据整份替换 `unit.envs` 再重画因子表）会把金数项
       // 的分母退回 `meta.minCost`（全窗口最小值）→「跨版本发挥」算出 > 1（实测 39% 的行）。

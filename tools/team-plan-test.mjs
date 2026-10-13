@@ -142,14 +142,21 @@ check('⭐ 候选池取自**逐档榜**（每角色 × 每星魂档），不是�
     `池规模口径自洽：去重前 ${plan.poolAll} 应 ≥ 剔除补金 0 后的 ${plan.pool}`);
 });
 
-check('两个指标按**抽卡权重**合成，默认 1:1 = 旧的等权', () => {
+check('三个分量按**抽卡权重**合成，默认 1:1:1 = 三等分', () => {
   const plan = fixturePlan();
   const draw = plan.drawWeights;
-  assert.deepEqual(draw, { strength: 0.5, cost: 0.5 }, '默认抽卡权重应是 1:1 归一化后的等权');
+  // ⚠️ 用户 2026-10-13 第 3 条（「泛用性权重也适用于补金推荐」）之前这里是 `0.5 / 0.5`
+  //    （方案只吃强度与性价比、两项自己再归一）。现在三项一起归一 → 各 1/3。
+  assert.deepEqual(draw, {
+    strength: 1 / 3, cost: 1 / 3, versatility: 1 / 3,
+  }, '默认抽卡权重应是 1:1:1 归一化后的三等分');
   for (const r of plan.rows) {
-    // ⚠️ 第二项是 `gapPct`（用户 2026-10-12 第 6 条：性价比这一侧只有差额接近度）。
-    assert.ok(Math.abs(r.total - (draw.strength * r.strengthPct + draw.cost * r.gapPct)) < 1e-4,
-      `${r.key}: ${r.total} ≠ ${draw.strength}×${r.strengthPct} + ${draw.cost}×${r.gapPct}`);
+    // ⚠️ 第二项是 `gapPct`（用户 2026-10-12 第 6 条：性价比这一侧只有差额接近度）；
+    //    第三项是 `versatilityPct`（用户 2026-10-13 第 3 条）。
+    assert.ok(Math.abs(r.total - (draw.strength * r.strengthPct + draw.cost * r.gapPct
+      + draw.versatility * r.versatilityPct)) < 1e-4,
+    `${r.key}: ${r.total} ≠ ${draw.strength}×${r.strengthPct} + ${draw.cost}×${r.gapPct}`
+      + ` + ${draw.versatility}×${r.versatilityPct}`);
   }
 });
 
@@ -228,12 +235,17 @@ section('A1. 抽卡权重（强度 / 性价比，用户 2026-10-12 第 3、4、8
  */
 const strengthFixture = {
   ...conclusionFixture,
+  // ⚠️ `versatilityRaw` 必须给（用户 2026-10-13 第 3 条）：队级 ③ = **队内成员各自泛用性的
+  //    平均**，而 `teamPlan()` 是从 `frontierUnits` 建「角色 → 泛用性」那张表的 ——
+  //    夹具里不带这个字段的话，两队都算成 0，③ 退化成「全池同分」（`span` 给 1），
+  //    于是「泛用性权重起作用」这件事**在夹具上根本测不出来**。
+  //    两个数刻意不同（40 / 10），让 ③ 真的分得开。
   frontierUnits: [
     { key: 'k-strong', name: 'charX', eidolon: 0, lc: 'coneB', superimp: 1,
-      total: 900, envCount: 1,
+      total: 900, envCount: 1, versatilityRaw: 40,
       envs: [{ id: 'env1', value: 900, bestTeamGold: 9, members: TEAMS.carrier }] },
     { key: 'k-cheap', name: 'charY', eidolon: 0, lc: null, superimp: 1,
-      total: 400, envCount: 1,
+      total: 400, envCount: 1, versatilityRaw: 10,
       envs: [{ id: 'env2', value: 400, bestTeamGold: 16, members: TEAMS.bodyGap }] },
   ],
 };
@@ -266,35 +278,51 @@ check('⭐ ① = **角色总榜整包分**（含金数项）：同为 0T，金�
     '行上不许再出现 strength（纯强度那套已撤销）');
 });
 
-check('⭐ 抽卡权重只认**相对大小**：3:1 与 0.75:0.25 得到同一个榜', () => {
-  const a = strengthPlan({ strength: 3, cost: 1 });
-  const b = strengthPlan({ strength: 0.75, cost: 0.25 });
-  assert.deepEqual(a.drawWeights, { strength: 0.75, cost: 0.25 }, '回显生效权重（已归一化）');
+check('⭐ 抽卡权重只认**相对大小**：3:1:1 与 0.6:0.2:0.2 得到同一个榜', () => {
+  const a = strengthPlan({ strength: 3, cost: 1, versatility: 1 });
+  const b = strengthPlan({ strength: 0.6, cost: 0.2, versatility: 0.2 });
+  assert.deepEqual(a.drawWeights, { strength: 0.6, cost: 0.2, versatility: 0.2 },
+    '回显生效权重（已归一化）');
   assert.deepEqual(a.rows.map((r) => r.key), b.rows.map((r) => r.key), '名次必须逐位一致');
   for (const [i, r] of a.rows.entries()) {
     assert.equal(r.total, b.rows[i].total, `${r.key}: 总分必须逐位一致`);
   }
-  // ⚠️ 用户 2026-10-13 第 1、2 条加了第三个旋钮（泛用性），但它**只作用于角色总榜**：
-  // 抽卡方案按 `strength : cost` 在自己内部两两归一，所以调泛用性**不许**动方案。
-  const withVersatility = strengthPlan({ strength: 3, cost: 1, versatility: 9 });
-  assert.deepEqual(withVersatility.drawWeights, { strength: 0.75, cost: 0.25 },
-    '抽卡方案只吃强度/性价比两项，泛用性旋钮不许改它回显的系数');
-  assert.deepEqual(withVersatility.rows.map((r) => r.key), a.rows.map((r) => r.key),
-    '泛用性旋钮不许改抽卡方案的名次');
+  // ⚠️ **这条断言在 v4.6.97 反过来了**（用户 2026-10-13 第 3 条原话：
+  //    「泛用性权重也适用于补金推荐」）。v4.6.95/96 时方案只吃强度/性价比、
+  //    两项自己再归一，所以当时钉的是「调泛用性**不许**动方案」；
+  //    现在三项一起归一，泛用性拉满 = 系数 `0 / 0 / 1`，名次只由 ③ 决定。
+  const onlyVersatility = strengthPlan({ strength: 0, cost: 0, versatility: 1 });
+  assert.deepEqual(onlyVersatility.drawWeights, { strength: 0, cost: 0, versatility: 1 },
+    '泛用性拉满时三项系数应是 0 / 0 / 1');
+  for (const r of onlyVersatility.rows) {
+    assert.ok(Math.abs(r.total - r.versatilityPct) < 1e-4,
+      `${r.key}: 总分应当只等于 ③（${r.total} vs ${r.versatilityPct}）`);
+  }
+  // ③ 真的分得开才说明它**在算**（夹具 charX 40 / charY 10 人）：
+  // 队级 ③ 的原始量是「队内平均」，刻度是候选池的 min ~ max。
+  assert.ok(onlyVersatility.versatilityHi > onlyVersatility.versatilityLo,
+    `③ 的刻度不该退化：${onlyVersatility.versatilityLo} ~ ${onlyVersatility.versatilityHi}`);
+  assert.equal(Math.round(onlyVersatility.rows[0].versatilityPct), 100,
+    '泛用性拉满时该由「队内平均泛用性最高」的那支排第一');
 });
 
-check('⭐ 强度权重高 → 整包分高的在前；性价比权重高 → 补金少的在前', () => {
-  // 判定按**成员**（`key` 是 roster 键）：charX 那支 = 整包分 900、补 3 金；charY 那支 =
-  // 整包分 400、补 1 金。
+check('⭐ 强度权重高 → 整包分高的在前；性价比权重高 → 补金少的在前；泛用性高 → 队内平均高的在前', () => {
+  // 判定按**成员**（`key` 是 roster 键）：charX 那支 = 整包分 900、补 3 金、泛用性 40；
+  // charY 那支 = 整包分 400、补 1 金、泛用性 10。
   const first = (plan) => (plan.rows[0].members.some((m) => m.char === 'charX') ? 'strong' : 'cheap');
-  // 强度档：只有 ① 算数 → 整包分 900 的那支（补 3 金）第一。
-  const byStrength = strengthPlan({ strength: 1, cost: 0 });
+  // ⚠️ **每一档都要把另外两项显式置 0**（用户 2026-10-13 第 3 条之后方案吃三项）：
+  //    v4.6.95/96 时只写 `{ strength: 1, cost: 0 }` 就够了（方案只有两项），
+  //    现在漏掉的第三项会按**默认值 1** 补齐，于是「只测 ①」这件事根本不成立。
+  const byStrength = strengthPlan({ strength: 1, cost: 0, versatility: 0 });
   assert.equal(first(byStrength), 'strong',
     '强度权重拉满时该推整包分最高的那支（补 3 金）');
-  // 性价比档：只有差额接近度算数 → 补 1 金的那支第一。
-  const byCost = strengthPlan({ strength: 0, cost: 1 });
+  const byCost = strengthPlan({ strength: 0, cost: 1, versatility: 0 });
   assert.equal(first(byCost), 'cheap', '性价比权重拉满时该推补金最少的那支');
   assert.ok(byCost.rows[0].gap < byStrength.rows[0].gap, '两支的差额确实是一大一小');
+  // ③ 的独立检验（同一条规矩：另两项置 0）。
+  const byVersatility = strengthPlan({ strength: 0, cost: 0, versatility: 1 });
+  assert.equal(first(byVersatility), 'strong',
+    '泛用性权重拉满时该推「队内平均泛用性」最高的那支（charX 40 vs charY 10）');
 });
 
 check('抽卡权重的边界：全部清空 / 非法值 → 退回默认等权，不出现整列 0 分', () => {
@@ -607,14 +635,18 @@ check('⭐ 真载荷上：逐档榜的池**包含**总榜的池（两条口径�
   void SCORING;
 });
 
-check('/conclusion 回 payload: 8（三个分项 + 角色得分 + drawWeights 那一版）', () => {
+check('/conclusion 回 payload: 9（三项来源 + 归一上下限那一版）', () => {
   assert.equal(live.status, 200);
   // ⚠️ 形状号的历史：v4.6.87 曾把它写成 8（每个整包多一个 `strength` = 纯强度），
   //    v4.6.91 按用户 2026-10-12 第 8 条撤销了那个字段、形状回到 7。
   //    用户 2026-10-13 第 1、2 条**重新要了强度这个分项**（换了名字：`strengthTotal` /
-  //    `envStrength`），并新增角色得分与 `drawWeights` 回显 —— 所以这里又回到 **8**，
-  //    而且这一次是真正生效的 8。改它之前先看 `conclusion.js` 里那段形状号注释。
-  assert.equal(livePayload.payload, 8, `实际 payload=${livePayload.payload}`);
+  //    `envStrength`），并新增角色得分与 `drawWeights` 回显 —— 所以又回到 **8**，
+  //    而且那一次是真正生效的 8。
+  //    **v9**（同一天，用户要「三项的完整得分来源」）= 顶层新增 `frontierExtents`
+  //    （三个分项的榜内归一上下限）、逐 env 新增 `envStrengthBest`（强度来源表的
+  //    「跨版本发挥」列的分母）。⚠️ 泛用性的队友名单**不在**这个载荷里（按需接口带），
+  //    原因见 `src/server/conclusion.js` 的 `slimFrontierUnit` 那段注释。
+  assert.equal(livePayload.payload, 9, `实际 payload=${livePayload.payload}`);
 });
 
 check('/conclusion 带 availability（星级 / 常驻标记），界面靠它算差额', () => {
