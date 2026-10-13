@@ -2428,6 +2428,36 @@ CDP 那套 `通过 ✓`（0 项 ✗、1 项显式跳过 —— 战斗记录 chip
 
 ---
 
+### 4.2AB 本轮（v4.6.98）—— 虚拟账号预设只留用户点名的 9 个 + 修掉一条静默失败的旧断言
+
+**背景**：用户 2026-10-13（在看过实际列表之后）：「**仅保留以下几种虚拟账号选项，别的删了
+（太杂乱）**」，并点名 9 个；「此更新整合进 main」（所以这一轮**直接在 `main` 上改**，不再开
+worktree —— 上一轮刚把桌面上的 worktree 全清掉）。
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `src/server/virtual-accounts.js` | `VIRTUAL_PRESETS` 从 20 个删到 **9 个**（删掉 `newbie` / `single-core` / `one-true` / `dps-duo` / `support-first` / `bai-e` / `dolphin` / `whale` / `cone-collector` / `old-guard` / `full`）；注释改成「这 9 个都是**按成本 / 氪金量**定义的、不点名具体角色」；顺带删掉只为它们存在的 `presetContext` 字段（`oldLimited` / `limitedCones` / `freeCones` / `conesOfPath` / `trailblazerChars` —— 删完全仓再无消费者） |
+| `tools/e2e-test.mjs` | 新增「预设列表**恰好**是这 9 个」的集合相等断言（原来只写 `presets.length >= 5`，等于没钉；同时删掉另抄一份的 `NEW_PRESET_IDS`）；夹具账号从被删的 `bai-e` 换成 `dayinjin-max`（51 角色 / 7 把常驻专锥）—— 换夹具时踩了三个坑：`zero-cost` 恰好等于**免费角色基线**（35 个，清空名单后「35 → 35」没有可观测差异）、`flat-0-0` **一把专锥都不配**（光锥 icon 那条拿到 0 把）、`flat-0-1` 的 72 把里有 2 把不合那条 icon/rarity 断言（见下） |
+| `tools/check-advice-layout.mjs` | 「切账号重算」原来切的是被删掉的「全图鉴」，改成「**全角色平铺 0+0**」，判据从「必须变成空态」放宽成「**方案文本必须变**」（那才是原 bug 的症状）；空态那条顺带保留 |
+| `tools/herta-test.mjs` | ⚠️ 修一条**一直静默失败**的旧断言：逐星魂档「按分降序」比的还是旧排序键 `total`，而 v4.6.95 起排序键已改成 `characterScore` —— 它跑在汇总行**之后**、且失败不影响退出码，所以从来没红过 |
+| `tools/make-virtual-accounts.mjs` | 用法注释里的示例预设 id 跟着换 |
+| `src/version.js` / `package.json` | → **4.6.98** |
+
+**两条顺手发现（都留着没改，因为与本次改动无关）**：
+
+1. ⚠️ **`herta-test.mjs` 里 32 个 `checkAsync` 有 18 个没有 `await`** —— 它们与后面的检查并发跑，
+   输出（含 `✗`）落在**汇总行之后**，于是 `failed` 计数与退出码都看不到它们：
+   **这一半用例实际上从来不在 CI 里拦人**。上面那条静默失败就是这么来的。修法 = 给那 18 处补
+   `await`（会串行化、变慢），或收成 `await Promise.all(pending)`（保持并发）。**建议单独一轮修。**
+2. `flat-0-1` 那 72 把「最常用光锥」里有 2 把不合「4★/5★ 且带 icon」：希露瓦的「灵钥」是 **3★**
+   （`popularLightCones` 对 4★ 角色会给出 3★ 锥），刻律德菈的「Dance Dance Dance」在**本地图标表里
+   没有条目**（`icon` 为空 → 那把锥在界面上退化成占位图，浏览器侧靠 `/icons` 的 CDN 302 兜底）。
+
+**实测**：`run-tests.mjs` 全套通过（`e2e` 177 项、`herta` 106 项、`team-plan` 31 项、
+`virtual-accounts` 28 项）；CDP 那套 `通过 ✓`（切账号那条从 ✗ 变 ✓）。
+
+---
+
 ## 9. Git 约定
 
 - 仓库已初始化，分支 `main`：

@@ -2803,10 +2803,14 @@ if (!tierChipOk) {
 // 抽卡页（抽卡页是 `selectTab('advice')` 调的 `show()` 画的），于是切账号后方案会静静停在
 // 旧账号的数字上。
 //
-// 怎么验才**决定性**：切到「虚拟·全图鉴」那个账号 —— 它限定全 E6 / 专锥全 S5，所有队伍
+// 怎么验才**决定性**：切到一个「什么都拉满」的账号 —— 它个个 E6、专锥 S5，所有队伍
 // 差额都是 0，候选池按设计为 0 ⇒ 方案区必须**从卡片变成空态**。若方案没重算，卡片会留在
 // 原地（那正是 bug 的症状）。找不到那个账号时退回「换账号后方案文本必须变」，仍取不到
 // 差异就跳过并打印说明（不做无根据的失败）。
+//
+// ⚠️ 用户 2026-10-13 删掉了「全图鉴」那个预设（原来这里找的就是它），现在改用
+// **「全角色平铺 6+5」**：它把**全部 93 个角色**（含 4★ / 常驻 / 开拓者）都拉到 E6、
+// 各自的专属光锥 S5 —— 覆盖只多不少，同样是「什么都不缺」的形态。
 {
   const chips = await evaluate("[ ...document.querySelectorAll('.role-chip') ].map((b) => b.textContent.trim())");
   if (!chips || chips.length < 2) {
@@ -2819,7 +2823,12 @@ if (!tierChipOk) {
       "document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team').length");
     const before = await planText();
     const beforeCards = await cardCount();
-    const targetIdx = chips.findIndex((t) => t.includes('全图鉴'));
+    // ⚠️ 目标账号：用户 2026-10-13 删掉「全图鉴」之后，剩下这 9 个预设里**没有**
+    //    「什么都不缺」的账号了 —— 实测「全角色平铺 6+5」切过去仍有 15 张卡
+    //    （它的 72 把专锥覆盖不到每条证据行要的那一把）。所以见下面的判据放宽。
+    //    用「全角色平铺 0+0」（93 个角色、**一把专锥都不配**）当目标：它与任何别的账号
+    //    都必然产出不同的方案文本（要补的金完全不一样）。
+    const targetIdx = chips.findIndex((t) => t.includes('全角色平铺 0+0'));
     const idx = targetIdx >= 0 ? targetIdx : 1;
     await evaluate(`[ ...document.querySelectorAll('.role-chip') ][${idx}]?.click(); true`);
     await sleep(7000);
@@ -2829,10 +2838,17 @@ if (!tierChipOk) {
       .findIndex((b) => b.className.includes('active'))`);
     let ok;
     if (targetIdx >= 0) {
-      ok = activeIdx === idx && afterCards === 0;
+      // ⚠️ 判据放宽过（用户 2026-10-13 删了「全图鉴」那个预设之后）：
+      //    原来是「切过去必须变成**空态**」（`afterCards === 0`）—— 那需要一个「什么都不缺」
+      //    的账号，而现在这 9 个预设里没有（实测「全角色平铺 6+5」仍有 15 张卡）。
+      //    现在主判据是「**方案文本必须变**」：那正是原 bug 的症状（`selectAccount()` 只调
+      //    `renderView()`、不画抽卡页，于是切完账号方案静静停在旧数字上）。空态那条**顺带保留**
+      //    —— 哪天有真·全图鉴账号（或用户自己的满配账号），它照样成立。
+      ok = activeIdx === idx && (afterCards === 0 || after !== before);
       if (!ok) failures += 1;
-      console.log(`  ${ok ? '✓' : '✗'} 切到「${chips[idx]}」后方案重算成空态：`
-        + `切前 ${beforeCards} 张卡 → 切后 ${afterCards} 张（激活 chip #${activeIdx + 1}）`);
+      console.log(`  ${ok ? '✓' : '✗'} 切到「${chips[idx]}」后方案**重算**了：`
+        + `切前 ${beforeCards} 张卡 → 切后 ${afterCards} 张`
+        + `${afterCards === 0 ? '（空态）' : '（文本已变）'}（激活 chip #${activeIdx + 1}）`);
     } else {
       ok = activeIdx === idx && after !== before;
       if (ok) console.log(`  ✓ 切账号后抽卡方案会重算（切到「${chips[idx]}」方案文本已变）`);
