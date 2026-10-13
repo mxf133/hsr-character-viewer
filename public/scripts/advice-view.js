@@ -2471,10 +2471,11 @@ const scoreBreakdownTable = (unit) => {
   box.appendChild(tipTable(
     ['分项', '原始量', '得分', '权重', '贡献'],
     rows,
-    // 合计行写**整数**（与徽标/头行同一个 `packScoreText`）：这三处必须是同一个字符串，
-    // 否则 `check-advice-layout.mjs` 那条「表里的合计 = 标题上的数」会因为 95.7 vs 96
-    // 判红。分项那一列仍留一位小数 —— 那是它们本身的量纲。
-    ['角色得分', '', '', '', String(packScoreText(unitRoleScore(unit)))],
+    // 合计行写**整数 + 加号**：加号让这个数与徽标 / 头行那个数**逐字相同**
+    // （同一个 `packScoreText`），而且与下面那张表（`frontierTip` 的 foot 也写成 `+N`）
+    // 同一种写法 —— 两处不一致的话 `check-advice-layout.mjs` 的 `splitOk` 就得写特例
+    // （实测踩过：表里是 `96`、头行是 `+96`，判等直接红）。分项那一列仍留一位小数。
+    ['角色得分', '', '', '', `+${packScoreText(unitRoleScore(unit))}`],
   ));
   return box;
 };

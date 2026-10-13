@@ -1717,13 +1717,40 @@
 //              （实测 100 金的号只有 96~98）。`refs.lightConePaths` 与 `refs.pathLabels`
 //              随之首次下发（前者一直没暴露过，界面筛同命途要用）。
 //
+//   v4.6.96 用户 2026-10-13：「**修复 CDP 布局套件的问题，并写入 md 文件，方便别的 agent 使用**」
+//           （同一支 worktree `.worktrees/versatility-weight`）：
+//           ① `tools/check-advice-layout.mjs` 的**硬 bug**：`URL_TO_OPEN` 不再保持调用方原样，
+//              解析参数时就规范化成一定带 `?view=advice`。改前只有 `ADVICE_URL`（补过
+//              `?view` 的那个）被用在两处导航上，而第 100 / 552 行用的是裸 `URL_TO_OPEN` ——
+//              于是 `--url=http://127.0.0.1:8360/`（不带 `?view` 的地址，**正是本轮那个调用**）
+//              会让页面落在默认的「角色信息」页：抽卡推荐页的视图根本没挂载，
+//              关卡权重 / 清空输入 / 抽卡权重那 9 条断言全读到 `null`，看起来像九项布局回归。
+//              实测诊断：`{activeTab:"records", adviceHidden:true, unitRows:0, drawInputs:0}`。
+//              `run-tests.mjs` 的注释早就写过这个坑，但只挡住了「调用方记得带」那一半。
+//           ② 新增**榜面诊断**：总榜第一条读不到时把 `activeTab / adviceHidden / unitRows /
+//              drawInputs / 榜面文字` 一起印出来（正是 HANDOFF §6.3 第 7 条一直要求
+//              「红了先看一眼」的那件事，以前只能手工开 devtools）。
+//           ③ 旧判据 `sourceOk` 修正：逐关卡来源表的合计**不再等于徽标上的数**
+//              （用户第 2 条之后是「性价比原始分 +1098」vs「角色得分 +96」），改成与探针
+//              从 `tip.__unit.total` 现取的期望值比 —— 恒等式照样钉住（探针新增 `sourceTotal`）。
+//           ④ `public/scripts/advice-view.js` 分项表的合计行改成 `+N`：与徽标 / 头行 /
+//              下面那张表同一种写法。改前界面里一处 `96`、一处 `+96`，本身就是瑕疵，
+//              所以**改界面而不是给断言写特例**。
+//           ⑤ `tools/make-virtual-accounts.mjs` 自己 `mkdirSync(data/)`：`data/` 在新建
+//              worktree / 全新 clone 里不存在，而这条命令正是「新环境里把界面跑起来」的
+//              第一步（CDP 套件也靠它准备账号），原脚本直接 ENOENT 崩。
+//           ⑥ 新增 `docs/CDP布局套件.md`（给别的 agent 的上手与排障文档；`AGENTS.md` 与
+//              `HANDOFF.md` §5 各加了指针，§5 里「15 个套件」的旧计数改成 19）。
+//           实测：本机搭好环境后用**裸地址**跑那一套 **通过 ✓**（exit 0）；
+//           `run-tests.mjs` **19 个套件全部通过**（含 CDP 那套 —— 本轮第一次真跑它）。
+//
 // 游戏换版本（4.7）时主版本跟着换；工具在同一游戏版本内继续改动就只加末位。
 //
 // 注意与 src/mihoyo/constants.js 的 APP_VERSION 区分：那个是**米游社客户端**的
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.95';
+export const PROGRAM_VERSION = '4.6.96';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';

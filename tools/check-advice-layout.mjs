@@ -28,11 +28,30 @@ const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
   return hit ? hit.slice(name.length + 3) : dflt;
 };
-const URL_TO_OPEN = arg('url', 'http://127.0.0.1:8360/?view=advice');
+const RAW_URL = arg('url', 'http://127.0.0.1:8360/?view=advice');
+/**
+ * 套件要打开的那个地址 —— **一律深链到抽卡推荐页**（`?view=advice`）。
+ *
+ * ⚠️ 2026-10-13 修：这里以前只给「带 `?` 的 URL 追加 `&view=advice`」，而
+ * `URL_TO_OPEN` 保持调用方给的原样、第 100 / 552 行两次导航用的又是它 ——
+ * 于是 `--url=http://127.0.0.1:8360/`（**不带 `?view` 的裸地址**）会让那两次导航落在
+ * 默认的「角色信息」页上：抽卡推荐页的视图**根本没挂载**（`#adviceConclusionUnits`
+ * 一行都没有、权重输入框 0 个），后面「关卡权重 / 清空输入 / 抽卡权重」那 9 条断言
+ * 全读到 `null`，看起来像九项布局回归，其实只是页面没切过去。
+ *
+ * `run-tests.mjs` 的注释里早就写过这个坑（「URL 必须带 `?view=advice`」），但那只挡住了
+ * 「调用方记得带」这一半 —— 靠人记的东西迟早会忘（本轮就是自己踩的）。
+ * 现在两边都规范化：**传什么地址都会落到抽卡推荐页**，`URL_TO_OPEN` 与 `ADVICE_URL`
+ * 是同一个值（后者保留旧名字，下面还有很多地方在用）。
+ */
+const URL_TO_OPEN = (() => {
+  const url = new URL(RAW_URL);
+  url.searchParams.set('view', 'advice');
+  return url.toString();
+})();
 // 深链 ?view=advice 会直接落到抽卡推荐页；每次导航后还要等下拉框真的建出来，
 // 否则设 value 会碰到 null。
-const ADVICE_URL = URL_TO_OPEN.includes('?')
-  ? `${URL_TO_OPEN}&view=advice` : `${URL_TO_OPEN}?view=advice`;
+const ADVICE_URL = URL_TO_OPEN;
 const PORT = Number(arg('port', '9222'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -752,6 +771,27 @@ for (let i = 0; i < 20; i += 1) {
 }
 const base = await badges();
 console.log(`  初始：总榜第一条 ${base.frontier} / 队伍方案第一条 ${base.plan}`);
+// ⚠️ **读不到就当场把榜面的状态印出来**（上面那段注释里 HANDOFF §6.3 第 7 条要的那一眼）。
+// 这一段是 2026-10-13 加的：以前红了只能看到一排 `null`，既分不清「视图没挂载」
+// 「榜面在『正在计算…』」还是「接口报错」，也分不清是页面问题还是探针写错。
+if (base.frontier === null) {
+  const diag = await evaluate(`(() => {
+    const box = document.getElementById('adviceConclusionUnits');
+    const layout = document.getElementById('layoutAdvice');
+    const tab = document.querySelector('.tab.is-active');
+    return {
+      activeTab: tab ? tab.dataset.view : null,
+      adviceHidden: Boolean(layout && layout.hidden),
+      boxExists: Boolean(box),
+      unitRows: box ? box.querySelectorAll('.advice-unit').length : -1,
+      valueNodes: box ? box.querySelectorAll('.advice-unit-value').length : -1,
+      text: String(box && box.textContent || '').replace(/[\\s\\u3000]+/g, ' ').trim().slice(0, 140),
+      drawInputs: document.querySelectorAll('#adviceDrawWeightRow input').length,
+      frontierInputs: document.querySelectorAll('#adviceFrontierWeightRow input').length,
+    };
+  })()`);
+  console.log(`  ⚠️ 总榜第一条读不到，榜面诊断：${JSON.stringify(diag)}`);
+}
 // ⚠️ 2026-10-11 第 10 轮起副本权重只有一套（用户：「去掉方案权重那一行」）：
 // 抽卡方案的**强度得分**走同一条 `frontier` 口径的链，所以这一行会同时改两个榜的分数 ——
 // 那是口径使然（两处本来就该同源），不再是「耦合没拆干净」。
@@ -1390,6 +1430,15 @@ if (!tipTarget) {
       splitTotal: String(splitTable
         ?.querySelector('tr.is-total td:last-child')?.textContent || ''),
       splitRowCount: splitTable ? splitTable.querySelectorAll('tbody tr').length : 0,
+      // 逐关卡来源那张表的合计该等于什么：**性价比分项的原始分**（整包对象的 total），
+      // 不再是徽标上的角色得分（用户 2026-10-13 第 2 条之后两者不是同一个数：
+      // 实测合计 +1098 而徽标 +96）。整包对象由 frontierTip() 挂在节点上（tip.__unit）。
+      // ⚠️ 写法用字符串拼接而不是嵌套模板串 —— 这一段本身就在模板字符串里。
+      sourceTotal: (() => {
+        const unit = tip.__unit;
+        const total = Number(unit && unit.total);
+        return Number.isFinite(total) ? '+' + Math.round(total) : null;
+      })(),
       caption: tip.querySelector('.advice-packs-caption')?.textContent || '',
       packCount: tip.querySelector('.advice-packs-count')?.textContent || '',
       packMore: tip.querySelector('.advice-packs-more')?.textContent || '',
@@ -1535,13 +1584,24 @@ if (!tipTarget) {
   const factorCellsOk = (cells) => cells.length === SOURCE_HEADERS.length
     && cells.slice(1).every((c) => c.length > 0 && !/NaN|undefined|Infinity/.test(c));
   const headValue = tipReport ? ((tipReport.headText.match(/(\+\d+)$/) || [])[1] || null) : null;
+  /**
+   * 逐关卡来源表的合计。
+   *
+   * ⚠️ **用户 2026-10-13 第 2 条之后它不再等于徽标上的数**：徽标是「角色得分」
+   * （三个分项按抽卡权重加权的**榜内归一分**），而这张表是**性价比分项**的原始来源，
+   * 合计也就是 `unit.total` 的原始量纲 —— 实测同一行「合计 +1098 / 徽标 +96」。
+   * 所以判据从「= 标题上的数」改成「= 探针从 `tip.__unit.total` 现取的期望值」，
+   * 这样它仍然钉住「表里的分加起来等于这一项的原始分」这条恒等式。
+   */
+  const sourceTotalExpected = tipReport?.sourceTotal ?? null;
   const sourceOk = Boolean(tipReport)
     && JSON.stringify(tipReport.headers) === JSON.stringify(SOURCE_HEADERS)
     && tipReport.rows.length > 0 && tipReport.rows.every(factorCellsOk)
     && (tipReport.rows.length === 1
       ? tipReport.totalRow === null
       : Array.isArray(tipReport.totalRow)
-        && tipReport.totalRow[tipReport.totalRow.length - 1] === headValue);
+        && sourceTotalExpected !== null
+        && tipReport.totalRow[tipReport.totalRow.length - 1] === sourceTotalExpected);
   // ---- 2026-10-11 第 2 条（本轮）：改名 + 版本号 + 队伍块覆盖所有关卡 ----------
   // 用户原话：「"副本/关卡"改为"关卡"，并备注关卡的版本号，最佳证据的队伍要显示所有
   // 关卡的情况和贡献」。三条判据分别钉这三件事。
@@ -1867,7 +1927,8 @@ if (!tipTarget) {
       + `，逐副本 ${tipReport.rows.length} 行`
       + `${tipReport.rows[0] ? `（首行 ${JSON.stringify(tipReport.rows[0])}）` : ''}`
       + `${tipReport.totalRow
-        ? `，合计 ${JSON.stringify(tipReport.totalRow)}（标题上的数是 ${headValue}）`
+        ? `，合计 ${JSON.stringify(tipReport.totalRow)}`
+          + `（期望 ${sourceTotalExpected} = 性价比分项的原始分；徽标那个数是 ${headValue}）`
         : '，单副本无合计行'}`);
     // 2026-10-11 第 2 条：三条判据各自单独打印一行，红的是哪一条一眼看得出。
     console.log(`  ${headerRenameOk ? '✓' : '✗'} 表头第一列已改名为「关卡」`
