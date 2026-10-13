@@ -1665,13 +1665,35 @@
 //           `node tools/check-advice-layout.mjs --url='http://127.0.0.1:8372/?view=advice'`
 //           （虚拟账号库见 `tools/make-virtual-accounts.mjs`）。
 //
+//   v4.6.94 用户 2026-10-12：「在角色信息-账号与角色界面新建一个选择，用于方便用户新建虚拟账号，
+//           提供一些选项，这些账号有非常不同的角色池，类似真正的玩家们各种各样的偏好」+「虚拟账号的
+//           角色图标/星级显示有误，请修复」+「我原先的自己的账号（光明火柴）别删了」。
+//
+//           ① **界面入口**：账号与角色面板标题行加「＋ 虚拟账号」→ 展开预设清单（11 种偏好）→
+//              点一下就建好并**自动切过去**。预设走服务端（唯一一份定义，见
+//              `src/server/virtual-accounts.js`）：全新账号 / 单核起步 / 单推厨（一个角色 E6+S5）/
+//              双核主C / 辅助优先 / 白厄队 / 中氪 / 重氪 / **专锥收集党**（角色都 E0、专锥 S5）/
+//              **老玩家偏科**（早于 4.0 的限定都 E0、新角色全无）/ 全图鉴。
+//              接口：`GET /api/virtual-accounts/presets`、`POST /api/virtual-accounts`（要 CSRF）。
+//           ② **只增不删**（用户明确要求）：新增 `AccountStore.addAccount()`，id 撞了就报错；
+//              真实账号（光明火柴）一个字段都不动 —— e2e 里专门放了一个「既有账号」钉这条。
+//           ③ **修图标 / 星级显示**（用户报的 bug）：虚拟快照原来只有 name/rank/equip，
+//              缺 `id` / `rarity` / `icon`，于是卡片画的是首字占位 + 一律 4★ 配色。现在按
+//              数据集补全：id 反查 `charactersById`（兜底从图标路径抠数字）、rarity 取
+//              `availability`、icon 用图标表里那串同源 `/icons/...?fallback=<cdn>`（本地没有
+//              该文件时 `/icons` 路由会 302 到 CDN）、path 取 `characterPaths`；光锥同样补齐
+//              `id/rarity/icon`。⚠️ 前端 `characterCard()` 原来只认 `^https?://` 的 icon，
+//              同源 `/icons/...` 会被当成「没有图标」→ 那条判断已放宽（这是本次的关键一处）。
+//           ④ 顺手去重：`tools/make-virtual-accounts.mjs` 改成**复用**服务端那份预设与快照构造
+//              （原来两处各写一份，图标/星级就是在那里长歪的）。
+//
 // 游戏换版本（4.7）时主版本跟着换；工具在同一游戏版本内继续改动就只加末位。
 //
 // 注意与 src/mihoyo/constants.js 的 APP_VERSION 区分：那个是**米游社客户端**的
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.93';
+export const PROGRAM_VERSION = '4.6.94';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';

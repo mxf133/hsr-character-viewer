@@ -756,6 +756,76 @@ const main = async () => {
     await store.removeAccount(seeded2.id);
     await store.removeAccount(seeded3.id);
 
+    // ---- 虚拟账号（用户 2026-10-12 的「＋ 虚拟账号」入口）-------------------
+    //
+    // 三条要钉的：① 预设列表拿得到；② 没 CSRF 建不了；③ 建出来的快照**图标 / 星级字段齐全**
+    // （缺 id/rarity/icon 就是用户报的「角色图标 / 星级显示有误」）。
+    console.log('\n[virtual accounts]');
+    const presets = await get('/api/virtual-accounts/presets');
+    check('GET /api/virtual-accounts/presets returns presets',
+      presets.status === 200 && presets.body?.ok === true
+      && Array.isArray(presets.body.presets) && presets.body.presets.length >= 5,
+      `status=${presets.status} count=${presets.body?.presets?.length}`);
+    const presetList = presets.body?.presets || [];
+    check('每个预设都带 id / 标题 / 说明',
+      presetList.every((p) => p.id && p.title && p.hint
+        && Number.isFinite(p.chars) && Number.isFinite(p.cones)),
+      JSON.stringify(presetList[0] || null));
+    const virtualNoCsrf = await post('/api/virtual-accounts', { preset: 'newbie' });
+    check('POST /api/virtual-accounts without csrf -> 403', virtualNoCsrf.status === 403,
+      `status=${virtualNoCsrf.status}`);
+    const badPreset = await post('/api/virtual-accounts', { preset: 'no-such-preset' },
+      { 'x-hsr-csrf': csrf });
+    check('未知预设 -> 400', badPreset.status === 400, `status=${badPreset.status}`);
+    // 先在库里放一个「既有的真实账号」，用来证明**只增不删**（用户明确要求别删他的账号）。
+    const keeper = await store.upsertAccount({
+      accountId: '100000001', nickname: '既有的真实账号', cookie: 'keep-me',
+      source: 'qr', deviceId: 'keep-device',
+    });
+    const created1 = await post('/api/virtual-accounts', { preset: 'bai-e' },
+      { 'x-hsr-csrf': csrf });
+    check('新建虚拟账号 -> 200 且回账号',
+      created1.status === 200 && created1.body?.ok === true && created1.body.account?.id,
+      `status=${created1.status} body=${JSON.stringify(created1.body).slice(0, 120)}`);
+    const virtualId = created1.body?.account?.id || '';
+    const virtualUid = created1.body?.account?.roles?.[0]?.uid || '';
+    check('虚拟账号 uid 是纯数字（快照路由是 /roles/(\\d+)/snapshot）',
+      /^\d+$/.test(virtualUid), `uid=${virtualUid}`);
+    // ② 只增不删：既有账号必须原样还在（cookie / deviceId 都没被动过）。
+    const afterCreate = await get('/api/config');
+    const keeperNow = (afterCreate.body?.accounts || []).find((a) => a.id === keeper.id);
+    check('新建虚拟账号**不会动**既有账号（只增不删）',
+      Boolean(keeperNow) && keeperNow.source === 'qr'
+      && (await store.getAccount(keeper.id))?.cookie === 'keep-me',
+      `keeper=${JSON.stringify(keeperNow)?.slice(0, 80)}`);
+    // 再建同一个预设：id 必须自动加序号（不是覆盖）。
+    const created2 = await post('/api/virtual-accounts', { preset: 'bai-e' },
+      { 'x-hsr-csrf': csrf });
+    check('同一预设建两次 -> id 自动加序号（不覆盖）',
+      created2.body?.account?.id && created2.body.account.id !== virtualId,
+      `${virtualId} → ${created2.body?.account?.id}`);
+    const snap = await get(`/api/accounts/${virtualId}/roles/${virtualUid}/snapshot`);
+    const vchars = snap.body?.snapshot?.characters || [];
+    check('虚拟账号快照带得动角色列表', vchars.length > 10, `count=${vchars.length}`);
+    check('⭐ 虚拟账号的星级齐全（缺 rarity 会让卡片按 4★ 上色 —— 用户报过的 bug）',
+      vchars.length > 0 && vchars.every((c) => c.rarity === 4 || c.rarity === 5)
+      && new Set(vchars.map((c) => c.rarity)).size === 2,
+      JSON.stringify(vchars.reduce((m, c) => (m[c.rarity] = (m[c.rarity] || 0) + 1, m), {})));
+    check('⭐ 虚拟账号的图标是 /icons 同源地址（缺 icon 就是首字占位 —— 用户报过的 bug）',
+      vchars.filter((c) => c.icon).length > vchars.length * 0.7
+      && vchars.filter((c) => c.icon).every((c) => String(c.icon).startsWith('/icons/')),
+      `有图标 ${vchars.filter((c) => c.icon).length}/${vchars.length}`);
+    check('虚拟账号的角色带 id（卡片身份 / 抽卡页跳转要用）',
+      vchars.filter((c) => c.id).length > vchars.length * 0.7,
+      `有 id ${vchars.filter((c) => c.id).length}/${vchars.length}`);
+    const vconed = vchars.filter((c) => c.equip);
+    check('虚拟账号的光锥带 icon / rarity',
+      vconed.length > 0 && vconed.every((c) => c.equip.icon && (c.equip.rarity === 4 || c.equip.rarity === 5)),
+      `光锥 ${vconed.length} 把｜首个=${JSON.stringify(vconed[0]?.equip)?.slice(0, 90)}`);
+    await store.removeAccount(created1.body.account.id);
+    await store.removeAccount(created2.body.account.id);
+    await store.removeAccount(keeper.id);
+
     // ---- method handling --------------------------------------------------
     console.log('\n[method handling]');
     const badMethod = await fetch(`${base}/api/config`, { method: 'POST' });

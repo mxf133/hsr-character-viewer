@@ -221,12 +221,57 @@ body {
   margin-bottom: 14px;
 }
 .panel-heading .panel-title { min-width: 0; }
+/* 「账号与角色」标题行现在有三个东西（标题 + 「＋ 虚拟账号」+「添加账号」），窄侧栏里
+ * 会把标题挤成两行（实测断成「账号与角」/「色」）。所以标题独占一行、按钮换到下一行。 */
+#accountPanel .panel-heading { flex-wrap: wrap; row-gap: 8px; }
+#accountPanel .panel-heading .panel-title { flex: 1 1 100%; }
 .login-heading { justify-content: flex-start; flex-wrap: wrap; }
 .login-heading h2 { margin: 0; font-size: 22px; font-weight: 600; }
 #loginCancel { margin-left: auto; white-space: nowrap; }
 
 /* -------------------------------------------------------------- 账号列表 */
 .account-list { display: flex; flex-direction: column; gap: 10px; }
+
+/* 虚拟账号（用户 2026-10-12）：面板上的「＋ 虚拟账号」与它的预设列表。
+ * 预设按钮做成两行（标题 + 说明），行高紧凑但可点区域够大；正在创建时压暗并禁点。 */
+.virtual-flag {
+  display: inline-block;
+  margin-bottom: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: #0d1117;
+  background: var(--gold);
+}
+
+.virtual-panel {
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 11px;
+  margin-bottom: 10px;
+  background: var(--bg-elevated);
+}
+.virtual-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 320px; overflow-y: auto; }
+.virtual-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.virtual-item:hover { border-color: var(--gold); background: rgba(240, 198, 116, 0.06); }
+.virtual-item.is-busy, .virtual-item:disabled { opacity: 0.5; cursor: progress; }
+.virtual-item-title { font-size: 13px; }
+.virtual-item-hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.45; }
+.virtual-panel-foot { display: flex; justify-content: flex-end; margin-top: 8px; }
 
 .account-card {
   border: 1px solid var(--border);

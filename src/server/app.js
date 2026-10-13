@@ -23,6 +23,10 @@ import { fetchSnapshot, gameDescriptors, getPrivacySwitches, setPrivacySwitch } 
 import { MihoyoError } from '../mihoyo/errors.js';
 import { cachedFingerprint, fetchDeviceFingerprint } from '../mihoyo/devicefp.js';
 import { archiveExists, archiveIndex, archiveStats, enemiesForRecords, loadI18n } from './archive.js';
+import {
+  VIRTUAL_PRESETS, buildVirtualAccount, nextVirtualUid, presetById, presetContext,
+} from './virtual-accounts.js';
+import { charCostOf, coneCostOf } from '../../public/scripts/advice.js';
 import { archiveConclusion, archiveCharacterPacks } from './conclusion.js';
 import { compareRosters } from './compare.js';
 import { fetchBattleRecordsRaw, normalizeBattleRecords } from './records.js';
@@ -596,6 +600,68 @@ export const createApp = (options = {}) => {
         return;
       }
 
+      // ---- 虚拟账号（用户 2026-10-12：账号与角色界面上的「新建虚拟账号」）---------
+      //
+      // ⚠️ 路径刻意**不放在 `/api/accounts/...` 下**：那条正则会把 `virtual` 当成账号 id，
+      //    先一步 404 掉（`/api/accounts/([A-Za-z0-9-]+)`）。
+      // ⚠️ 只增不删：真实账号（光明火柴）不受任何影响 —— 用户明确要求别删他的账号。
+      if (path === '/api/virtual-accounts/presets' && req.method === 'GET') {
+        try {
+          if (!(await archiveExists())) { json(res, 200, { ok: true, presets: [] }); return; }
+          const vindex = await archiveIndex();
+          const availability = vindex.refs?.availability || {};
+          const ctx = presetContext({ availability, firstSeen: vindex.refs?.firstSeen?.characters,
+            charCostOf, coneCostOf });
+          json(res, 200, {
+            ok: true,
+            presets: VIRTUAL_PRESETS.map((p) => {
+              const s = p.spec(ctx) || {};
+              return {
+                id: p.id, title: p.title, hint: p.hint,
+                chars: Object.keys(s.chars || {}).length,
+                cones: Object.keys(s.cones || {}).length,
+              };
+            }),
+          });
+        } catch (err) {
+          json(res, 500, { ok: false, error: `读取预设失败：${err.message}` });
+        }
+        return;
+      }
+      if (path === '/api/virtual-accounts' && req.method === 'POST') {
+        if (!requireCsrf(req)) { json(res, 403, { ok: false, error: '无效的 CSRF 令牌' }); return; }
+        try {
+          const body = await readBody(req);
+          const preset = presetById(String(body?.preset || ''));
+          if (!preset) { json(res, 400, { ok: false, error: '未知的虚拟账号预设' }); return; }
+          if (!(await archiveExists())) {
+            json(res, 200, { ok: false, error: '数据集还没采集：先在项目目录跑 node tools/herta-fetch.mjs && node tools/herta-build.mjs' });
+            return;
+          }
+          const vindex = await archiveIndex();
+          const vi18n = await loadI18n();
+          const availability = vindex.refs?.availability || {};
+          const existing = await store.listAccounts();
+          // uid 必须是**纯数字**（快照路由 `/roles/(\d+)/snapshot`）；id 撞了就加序号。
+          const uid = nextVirtualUid(existing.flatMap((a) => (a.roles || []).map((r) => r.uid)));
+          let accountId = `virtual-${preset.id}`;
+          for (let n = 2; existing.some((a) => a.id === accountId); n += 1) {
+            accountId = `virtual-${preset.id}-${n}`;
+          }
+          const nickname = typeof body?.nickname === 'string' && body.nickname.trim()
+            ? body.nickname.trim().slice(0, 40) : null;
+          const account = buildVirtualAccount({
+            preset, index: vindex, i18n: vi18n, availability,
+            charCostOf, coneCostOf, uid, accountId, nickname,
+          });
+          await store.addAccount(account);
+          json(res, 200, { ok: true, account: AccountStore.toPublic(account) });
+        } catch (err) {
+          json(res, 500, { ok: false, error: `新建虚拟账号失败：${err.message}` });
+        }
+        return;
+      }
+
       // ---- accounts ------------------------------------------------------
       const accountMatch = path.match(/^\/api\/accounts\/([A-Za-z0-9-]+)(\/.*)?$/);
       if (accountMatch) {
@@ -634,6 +700,17 @@ export const createApp = (options = {}) => {
           }
           const force = url.searchParams.get('refresh') === '1' || req.method === 'POST';
           const cached = await store.getSnapshot(accountId, uid);
+          // 虚拟账号（用户 2026-10-12）：数据是**本地构造**的，没有 cookie、也永远不该去请求
+          // 米游社 —— 直接回快照，别让界面挂一片「请重新扫码 / 拉取失败」的假故障。
+          if (account.source === 'virtual' || cached?.source === 'virtual') {
+            json(res, 200, {
+              ok: true, cached: true, virtual: true,
+              cache: cacheMeta(cached, CACHE_TTL_MS.snapshot, Date.now(),
+                { kind: 'snapshot', stale: false, virtual: true }),
+              snapshot: cached || null,
+            });
+            return;
+          }
           // 「要不要联网」由闸门说了算，不再看 TTL：
           // 有缓存且不是显式刷新 → 直接返回本地那份（本轮改动的核心）。
           const gate = refetchGate.decide(`${accountId}/${uid}/snapshot`, { cached, force });
@@ -763,6 +840,17 @@ export const createApp = (options = {}) => {
             }),
           });
           const cached = await store.getBattleRecords(accountId, uid);
+          // 虚拟账号：本地构造、没有 cookie —— 战绩永远是空的，也不该去请求米游社
+          // （否则界面会挂一串「请重新扫码」的假故障，用户会以为坏了）。
+          if (account.source === 'virtual') {
+            json(res, 200, {
+              ok: true, virtual: true, cached: true,
+              cache: cacheMeta(null, CACHE_TTL_MS.records, Date.now(),
+                { kind: 'records', cached: true, virtual: true, sectionFreshness: {} }),
+              records: normalizeBattleRecords({ uid, i18n, errors: [], enemies: {} }),
+            });
+            return;
+          }
           const gate = refetchGate.decide(`${accountId}/${uid}/records`, { cached, force });
           if (!gate.refetch) {
             // 同 snapshot：限流命中且本地无数据可退回时，如实回 429，

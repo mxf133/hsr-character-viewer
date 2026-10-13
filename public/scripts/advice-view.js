@@ -839,9 +839,18 @@ const loadRecords = async ({ refresh = false } = {}) => {
       state.records = data.records || state.records;
       state.recordsFreshness = normalizeFreshness(state.records, data, '战斗记录');
       state.recordsError = '米游社要求先过一次验证码（1034）。到「角色信息」页点一次刷新数据、完成验证，再回来刷新。';
+    } else if (data.virtual) {
+      // 虚拟账号（用户 2026-10-12）：没有 cookie、也不该去请求米游社，战绩这一节天然为空。
+      // 明说一句，别让读者以为「读取失败了」。
+      state.records = data.records || null;
+      state.recordsUid = role.uid;
+      state.recordsFreshness = normalizeFreshness(state.records, data, '战斗记录');
+      state.recordsError = '';
+      state.recordsVirtual = true;
     } else {
       state.records = data.records || null;
       state.recordsUid = role.uid;
+      state.recordsVirtual = false;
       state.recordsFreshness = normalizeFreshness(state.records, data, '战斗记录');
       state.recordsError = data.degraded
         ? `这次读取被米游社拒绝（${data.error || data.retcode}），显示的是上一次的记录。`
@@ -907,6 +916,7 @@ const renderRecord = () => {
   // `#recordMeta` 现在只承载**瞬态 / 异常**信息：正在读取、部分端点失败。
   const meta = [];
   if (state.recordsLoading) meta.push('正在读取…');
+  if (state.recordsVirtual) meta.push('虚拟账号：角色数据由本机构造，没有米游社战绩');
   if (state.recordsFreshness?.partial) {
     meta.push(`部分端点失败：${(state.recordsFreshness.errors || []).map((e) => e.endpoint || e.section).filter(Boolean).join('、') || '详见上方数据状态'}`);
   }

@@ -40,7 +40,22 @@
     <aside class="panel panel-side" id="accountPanel">
       <div class="panel-heading">
         <h2 class="panel-title">账号与角色</h2>
+        <button id="virtualAccountBtn" class="btn btn-ghost btn-sm" type="button">＋ 虚拟账号</button>
         <button id="addAccountBtn" class="btn btn-ghost btn-sm" type="button" hidden>添加账号</button>
+      </div>
+      <!-- 新建虚拟账号（用户 2026-10-12）：给没有米游社账号 / 想试各种角色池的人用。
+           只增不删：绝不会动你已登录的真实账号。 -->
+      <div id="virtualAccountPanel" class="virtual-panel" hidden>
+        <p class="muted small" id="virtualAccountHint">
+          虚拟账号用**真实数据集**的强度数据算分，只把「你拥有什么」换掉 ——
+          用来试各种角色池下抽卡方案会怎么推。它只写进本机账号库，不会动你已登录的账号。
+        </p>
+        <div id="virtualAccountList" class="virtual-list">
+          <p class="muted small">正在读取预设…</p>
+        </div>
+        <div class="virtual-panel-foot">
+          <button id="virtualAccountClose" class="btn btn-ghost btn-sm" type="button">收起</button>
+        </div>
       </div>
       <div id="accountList" class="account-list">
         <p class="muted">尚未登录。使用右侧二维码登录米游社后，账号会出现在这里。</p>

@@ -186,6 +186,24 @@ export class AccountStore {
     return this.accounts.get(id) || null;
   }
 
+  /**
+   * 直接塞一个**已经组装好的账号**（虚拟账号走这条）。
+   *
+   * 为什么不用 `upsertAccount()`：那个是登录流程用的，它会按 `accountId` 复用既有账号、
+   * 写 `cookie` / `lastLoginAt`，而虚拟账号① 没有 cookie、② 必须自带 `snapshots`。
+   *
+   * ⚠️ **只增不改也不删**：用户 2026-10-12 明确要求「我原先的自己的账号（光明火柴）别删了」——
+   * 这个方法绝不能碰已有账号；id 撞了就报错，让调用方换个 id。
+   */
+  async addAccount(account) {
+    await this.load();
+    if (!account?.id) throw new Error('账号缺少 id');
+    if (this.accounts.has(account.id)) throw new Error(`账号 id 已存在：${account.id}`);
+    this.accounts.set(account.id, account);
+    await this.save();
+    return account;
+  }
+
   async listAccounts() {
     await this.load();
     return [...this.accounts.values()];

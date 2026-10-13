@@ -1762,6 +1762,40 @@ $env:DSH_HSR_DATA_FILE='accounts-virtual.json'; node bin/serve.mjs --port 8372 -
 判据：切过去后方案必须 15 张卡 → 0 张）。发现途径就是这次造虚拟账号 —— CLI 测试台算出
 66.1，界面显示 69.1，**界面错了**。
 
+### 4.2W 界面上的「＋ 虚拟账号」入口（v4.6.94）
+
+用户要求：「在角色信息-账号与角色界面新建一个选择，方便用户新建虚拟账号，提供一些选项，
+这些账号有非常不同的角色池，类似真正的玩家们各种各样的偏好」+「我原先的自己的账号
+（光明火柴）别删了」+「虚拟账号的角色图标/星级显示有误，请修复」。
+
+* **入口**：`public/index.html` 的 `#accountPanel` 标题行加 `#virtualAccountBtn` 与
+  `#virtualAccountPanel`（预设清单）；接线在 `public/scripts/app.js` 的 `wireEvents()`
+  （`renderVirtualPresets()` 拉 `GET /api/virtual-accounts/presets`，点一条 `POST
+  /api/virtual-accounts`，建成后**自动切过去**）。样式在 `app.css`（`.virtual-panel` /
+  `.virtual-item` / `.virtual-flag`）。
+* **预设与快照构造只有一份**：`src/server/virtual-accounts.js`
+  （`VIRTUAL_PRESETS` / `buildVirtualAccount()` / `presetContext()`）。11 种偏好：
+  全新账号 / 单核起步 / 单推厨（一个角色 E6+S5）/ 双核主C / 辅助优先 / 白厄队 / 中氪 /
+  重氪 / **专锥收集党**（角色都 E0、专锥 S5）/ **老玩家偏科**（早于 4.0 的限定都 E0）/
+  全图鉴。「老玩家 / 专锥党 / 全图鉴」这几条按数据集**现算**，数据集更新不会失效。
+* **只增不删**：新增 `AccountStore.addAccount()`（id 撞了报错，绝不覆盖）；e2e 里放了一个
+  「既有账号」专门钉「新建虚拟账号不会动它」。
+* **修图标 / 星级**（用户报的 bug，根因是两处各写一份快照构造）：
+  虚拟快照原来只有 `name/rank/equip`，缺 `id` / `rarity` / `icon` → 卡片画的是首字占位、
+  且一律按 4★ 上色。现在补全：`id` 反查 `i18n.charactersById`（兜底从图标路径抠数字）、
+  `rarity` 取 `refs.availability`、`icon` 用图标表里那串**同源** `/icons/...?fallback=<cdn>`
+  （本地没有该文件时 `/icons` 路由 302 到 CDN）、`path` 取 `refs.characterPaths`；光锥同样补齐。
+  ⚠️ **关键一处**：`app.js` 的 `characterCard()` 原来只认 `^https?://` 的 icon，同源
+  `/icons/...` 被当成「没有图标」→ 判断已放宽。实测：39 张卡、32 张有图标、**32/32 全部加载成功**，
+  `--rarity-color` 正确分出 `--r5`/`--r4`。
+* **虚拟账号不去请求米游社**（否则页面一片红色假故障）：服务端在快照 / 战绩两条路由上对
+  `account.source === 'virtual'` **短路**（回 `virtual: true` + 本地数据）；前端据此写
+  「虚拟账号：角色数据由本机构造，没有米游社战绩」，账号卡上挂一枚 `虚拟账号` 标记。
+* 回归：`e2e-test.mjs` 新增 `[virtual accounts]` 段 13 条（预设列表 / CSRF / 未知预设 400 /
+  只增不删 / 同预设两次不覆盖 / uid 纯数字 / **星级齐全** / **图标是同源 `/icons`** / 角色 id /
+  光锥 icon+rarity）。
+* 截图：`docs/screenshots/虚拟账号-入口.png`、`docs/screenshots/虚拟账号-抽卡方案.png`。
+
 ---
 
 ## 5. 测试命令 / 如何验证
