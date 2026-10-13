@@ -209,6 +209,46 @@ export class AccountStore {
     return [...this.accounts.values()];
   }
 
+  /**
+   * **替换**一个虚拟账号的角色名单（用户 2026-10-13 第 3 条：「用户可给这个虚拟账号
+   * 自定义添加角色」）。
+   *
+   * 为什么必须是「替换」而不是走 `setSnapshot()`：那个方法有一条**保留最长名单**的
+   * 合并规则（`prevChars.length > nextChars.length` 时用旧的那份），那是为真实账号的
+   * 「刷新失败别把已知角色擦掉」设计的。用户在这里**就是要增删**，走那条路会把
+   * 「删掉两个角色」的编辑静默回滚成原样（形状完全一致，只是少了两行 —— 不报错）。
+   *
+   * ⚠️ **只允许虚拟账号**：真实账号的快照来自米游社，本地改写会让界面显示一份服务器上
+   * 并不存在的角色表。这里显式挡掉，不靠调用方自觉。
+   * ⚠️ 仍然**不新增也不删除账号**（`addAccount` 那条硬约束不变）。
+   *
+   * @param {string} accountId 账号 id（必须是虚拟账号）
+   * @param {string} uid 角色 uid
+   * @param {{snapshot:object, roster:{chars:object, cones:object}}} payload
+   */
+  async setVirtualRoster(accountId, uid, payload = {}) {
+    await this.load();
+    const account = this.accounts.get(accountId);
+    if (!account) return null;
+    if (account.source !== 'virtual') {
+      throw new Error('只有虚拟账号可以自定义角色名单');
+    }
+    const key = String(uid);
+    account.snapshots = account.snapshots || {};
+    // 整份替换（不是合并）：用户删掉的角色必须真的消失。
+    account.snapshots[key] = { ...(payload.snapshot || {}), uid: key, source: 'virtual' };
+    // 记下这份名单原文：界面下次打开编辑器要按它预填（快照只有最终状态，反推不回来）。
+    account.virtualRoster = {
+      chars: { ...(payload.roster?.chars || {}) },
+      cones: { ...(payload.roster?.cones || {}) },
+      // 光锥 → 挂在谁身上：用户在编辑器里是**逐个角色**配锥的，非专属锥的主人推不出来。
+      coneOwners: { ...(payload.roster?.coneOwners || {}) },
+      updatedAt: new Date().toISOString(),
+    };
+    await this.save();
+    return account;
+  }
+
   async removeAccount(id) {
     await this.load();
     const existed = this.accounts.delete(id);
@@ -406,6 +446,13 @@ export class AccountStore {
       snapshotUids: Object.keys(account.snapshots || {}),
       // The fingerprint VALUE must never reach the browser; only its presence.
       hasFingerprint: Boolean(account.fingerprint),
+      // 虚拟账号的两个只读标记（用户 2026-10-13 第 3 条）：界面靠 `source === 'virtual'`
+      // 决定「角色列表末尾要不要出现『＋ 添加角色』」，靠 `virtualPreset` 说明它是按
+      // 哪套预设造的。⚠️ **不下发 `virtualRoster`**：名单原文可能上百个键，而编辑器
+      // 打开时走 `GET /api/virtual-accounts/:id/roster` 单独取（那份也顺手把
+      // 「同命途光锥有哪些」一起给全）；混进账号列表会让每次 `/api/config` 都白白变大。
+      virtualPreset: account.source === 'virtual' ? (account.virtualPreset || null) : undefined,
+      hasVirtualRoster: account.source === 'virtual' ? Boolean(account.virtualRoster) : undefined,
     };
   }
 }

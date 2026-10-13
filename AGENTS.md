@@ -31,6 +31,8 @@ node tools/run-tests.mjs --suite herta-test.mjs --suite e2e-test.mjs
 
 Run `node tools/run-tests.mjs` for the full suite before handing off code changes, as required by `HANDOFF.md` §9.1. The CDP layout suite is included only when port 9222 is available; it uses the existing browser and can take several minutes. Run it deliberately when a UI geometry change needs that coverage. Documentation-only changes do not need the test suite.
 
+**Before running the CDP layout suite, read [`docs/CDP布局套件.md`](docs/CDP布局套件.md)** — it is the step-by-step setup and troubleshooting guide (service + debug browser + the virtual-account store, why a wrong `CHECK_ADVICE_URL` silently tests `main` instead of your code, and what each `✗` / `–` means). Read it rather than rediscovering it: getting the environment wrong there produces a wall of `null` failures that look like real layout regressions.
+
 ## Repository Invariants
 
 - The app is dependency-free Node.js ESM; no build or install step is needed.

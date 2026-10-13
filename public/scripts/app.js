@@ -12,6 +12,7 @@ import { mountAdviceView } from './advice-view.js';
 // 角色面板与 kv 现在和抽卡推荐页共用一份实现（战斗记录里点角色也用它）。
 import { kv } from './character-panel.js';
 import { openCharacterPanel } from './character-modal.js';
+import { openVirtualRoster } from './virtual-roster.js';
 import { accessHeaders, readAccessToken } from './access.js';
 
 const $ = (id) => document.getElementById(id);
@@ -837,7 +838,13 @@ const renderSnapshot = (snapshot) => {
 
   // ---- characters --------------------------------------------------------
   const characters = charactersOf(snapshot);
-  if (characters.length === 0) {
+  /**
+   * 这个账号是不是虚拟账号（用户 2026-10-13 第 3 条）：只有它才允许**自定义角色名单**。
+   * 真实账号的角色来自米游社，界面上加一个只会在下一次刷新时消失（纯自欺欺人）。
+   */
+  const isVirtualAccount = state.accounts
+    .find((a) => a.id === state.activeAccountId)?.source === 'virtual';
+  if (characters.length === 0 && !isVirtualAccount) {
     container.appendChild(sectionTitle('角色列表'));
     const note = document.createElement('p');
     note.className = 'empty-note';
@@ -850,6 +857,8 @@ const renderSnapshot = (snapshot) => {
     for (const character of characters) {
       grid.appendChild(characterCard(character));
     }
+    // 用户 2026-10-13 第 3 条原话：「虚拟账号可在**角色列表末尾**点击添加没有的角色」。
+    if (isVirtualAccount) grid.appendChild(addCharacterCard());
     container.appendChild(grid);
   }
 
@@ -883,6 +892,52 @@ const renderSnapshot = (snapshot) => {
   }
 
   container.hidden = false;
+};
+
+/**
+ * 角色列表**末尾**那张「＋ 添加角色」卡片（用户 2026-10-13 第 3 条）。
+ *
+ * 它只出现在虚拟账号的角色列表里（`renderSnapshot` 判 `source === 'virtual'`）：
+ * 真实账号的角色是米游社发下来的，本地加一个只会在下次刷新时消失。
+ *
+ * ⚠️ 做成 `<button>` 而不是 `<div>`：键盘 Tab 能到、回车/空格能开 —— 这一页其它卡片
+ * 都是可点的 `div`（靠 `onclick`），新加的这张没有历史包袱，直接用原生语义。
+ * ⚠️ 保存之后要**两件事都做**：① `loadSnapshot()` 重取快照（角色列表立刻变）；
+ * ② 抽卡页可见时 `adviceOf().show()` —— 持有情况变了，结论与方案都得重算
+ * （`show()` 里那句 `conclusionKey() !== state.conclusionKey` 就是干这个的）。
+ */
+const addCharacterCard = () => {
+  const card = document.createElement('button');
+  card.type = 'button';
+  card.className = 'char-card is-add';
+  card.id = 'virtualAddCharacter';
+  const plus = document.createElement('div');
+  plus.className = 'char-add-plus';
+  plus.textContent = '＋';
+  const label = document.createElement('div');
+  label.className = 'char-add-label';
+  label.textContent = '添加角色';
+  const hint = document.createElement('div');
+  hint.className = 'char-add-hint';
+  hint.textContent = '任意角色 / 星魂 / 同命途光锥';
+  card.append(plus, label, hint);
+  card.addEventListener('click', () => {
+    const account = state.accounts.find((a) => a.id === state.activeAccountId);
+    void openVirtualRoster({
+      accountId: state.activeAccountId,
+      nickname: account?.nickname || account?.roles?.[0]?.nickname || '',
+      // 走同一条 `api()`：鉴权、CSRF、错误提示都不必在这里再实现一遍。
+      api,
+      // 数据集索引在抽卡页那一侧（编辑器要列全部角色 / 命途 / 专属光锥）。
+      ensureIndex: () => adviceOf().ensureIndex(),
+      onSaved: async () => {
+        await loadSnapshot();
+        toast('角色已更新', 'ok');
+        if (activeTab() === 'advice') await adviceOf().show();
+      },
+    }).catch((err) => toast(err.message, 'err'));
+  });
+  return card;
 };
 
 const characterCard = (character) => {
