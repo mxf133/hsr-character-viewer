@@ -24,7 +24,8 @@ import { MihoyoError } from '../mihoyo/errors.js';
 import { cachedFingerprint, fetchDeviceFingerprint } from '../mihoyo/devicefp.js';
 import { archiveExists, archiveIndex, archiveStats, enemiesForRecords, loadI18n } from './archive.js';
 import {
-  VIRTUAL_PRESETS, buildVirtualAccount, nextVirtualUid, presetById, presetContext,
+  VIRTUAL_PRESETS, buildVirtualAccount, customRosterPreset, nextVirtualUid, normalizeRoster,
+  presetById, presetContext, presetContextRefs,
 } from './virtual-accounts.js';
 import { charCostOf, coneCostOf } from '../../public/scripts/advice.js';
 import { archiveConclusion, archiveCharacterPacks } from './conclusion.js';
@@ -321,6 +322,18 @@ export const createApp = (options = {}) => {
             // 这里不做校验：`normalizeHiddenCosts` 只认这五个键、缺的按 false，
             // 所以非法输入（字符串 / 数组 / 多给的键）都退化成安全的形状，不会 500。
             hiddenCosts: body.hiddenCosts,
+            // **抽卡权重**（用户 2026-10-13 第 1、2 条）：三个键
+            // `strength / cost / versatility`，只认**相对大小**。
+            //
+            // ⚠️ 它从 v4.6.95 起**必须进服务端**（v4.6.94 那版刻意只留在浏览器，
+            // 因为它当时只服务抽卡方案）。现在它决定**角色总榜**的合成分，而总榜的
+            // 「每角色只留一条」收敛就发生在服务端的 `buildConclusion` 里 ——
+            // 只在浏览器里加权会让收敛选错代表整包。
+            //
+            // 与 `hiddenCosts` 同一套路：**不传 = 默认三等分**（工具与回归测试的历史
+            // 口径不变）；这里不做校验，`normalizeDrawWeights` 只认有限非负数、缺键补默认，
+            // 所以非法输入（字符串 / 数组 / 多给的键）都退化成安全的形状，不会 500。
+            drawWeights: body.drawWeights,
           });
           json(res, 200, result);
         } catch (err) {
@@ -408,10 +421,27 @@ export const createApp = (options = {}) => {
               // 非法 JSON → 当作没传（= 不隐金），面板仍然可用。
             }
           }
+          // 抽卡权重同样走查询串（GET 无 body）。⚠️ **必须与总榜那份一致**：
+          // 面板给的是「角色得分」（三个分项按抽卡权重加权的**榜内归一分**），
+          // 归一用的极值取自整张表 —— 权重不同，同一个整包的面板分就会与徽标分不一致
+          // （v4.6.69 的「总榜权重没带过去」、v4.6.88 的「seasonMinCost 漏发」是同一类）。
+          let drawWeights;
+          const rawDraw = url.searchParams.get('drawWeights');
+          if (rawDraw) {
+            try {
+              const parsed = JSON.parse(rawDraw);
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                drawWeights = parsed;
+              }
+            } catch {
+              // 非法 JSON → 当作没传，退回默认三等分（面板仍然可用）。
+            }
+          }
           json(res, 200, await archiveCharacterPacks(char, {
             window: url.searchParams.get('window'),
             ...(frontierWeights ? { frontierWeights } : {}),
             ...(hiddenCosts !== undefined ? { hiddenCosts } : {}),
+            ...(drawWeights !== undefined ? { drawWeights } : {}),
           }));
         } catch (err) {
           console.warn('[archive] 读取角色配装失败：', err.message);
@@ -610,8 +640,12 @@ export const createApp = (options = {}) => {
           if (!(await archiveExists())) { json(res, 200, { ok: true, presets: [] }); return; }
           const vindex = await archiveIndex();
           const availability = vindex.refs?.availability || {};
+          // ⚠️ 必须带上 `popularLightCones` / `lightConePaths`（`presetContextRefs`）：
+          // 2026-10-13 第 4 条新增的「平铺 / 大隐金」预设要用它们配专属光锥。
+          // 漏传不会报错，只会静默退化成「没有光锥」的名单 —— 而预设清单上的
+          // 「N 限定角色 / M 专锥」计数正好是用户判断这件事的第一眼。
           const ctx = presetContext({ availability, firstSeen: vindex.refs?.firstSeen?.characters,
-            charCostOf, coneCostOf });
+            charCostOf, coneCostOf, ...presetContextRefs(vindex) });
           json(res, 200, {
             ok: true,
             presets: VIRTUAL_PRESETS.map((p) => {
@@ -658,6 +692,74 @@ export const createApp = (options = {}) => {
           json(res, 200, { ok: true, account: AccountStore.toPublic(account) });
         } catch (err) {
           json(res, 500, { ok: false, error: `新建虚拟账号失败：${err.message}` });
+        }
+        return;
+      }
+
+      // 虚拟账号的**自定义角色名单**（用户 2026-10-13 第 3 条：「用户可给这个虚拟账号
+      // 自定义添加角色，并设置任意角色的星魂和光锥」）。
+      //
+      //   GET  → 取这份名单**原文**（`{chars, cones}`，数据集英文键）：编辑器打开时按它预填。
+      //          快照反推不回用户的编辑（删掉的角色在快照里没有痕迹），所以必须存原文。
+      //   POST → 存回，**整份替换**（见 `AccountStore.setVirtualRoster` 的注释：
+      //          走 `setSnapshot` 的「保留最长名单」合并规则会让删除被静默回滚）。
+      //
+      // ⚠️ 与「新建虚拟账号」分成两条路径：那是「按预设造一个新号」，这是「改已有虚拟号的名单」。
+      // ⚠️ 依旧刻意不放在 `/api/accounts/...` 下 —— 那条正则会把 `virtual-xxx` 当账号 id。
+      const vRosterMatch = path.match(/^\/api\/virtual-accounts\/([A-Za-z0-9-]+)\/roster$/);
+      if (vRosterMatch && (req.method === 'GET' || req.method === 'POST')) {
+        try {
+          const target = await store.getAccount(vRosterMatch[1]);
+          if (!target) { json(res, 404, { ok: false, error: '账号不存在' }); return; }
+          if (target.source !== 'virtual') {
+            // 真实账号的快照来自米游社，本地改写会让界面显示一份服务器上不存在的角色表。
+            json(res, 400, { ok: false, error: '只有虚拟账号可以自定义角色' });
+            return;
+          }
+          if (req.method === 'GET') {
+            json(res, 200, {
+              ok: true,
+              accountId: target.id,
+              nickname: target.nickname || null,
+              roster: {
+                chars: { ...(target.virtualRoster?.chars || {}) },
+                cones: { ...(target.virtualRoster?.cones || {}) },
+                coneOwners: { ...(target.virtualRoster?.coneOwners || {}) },
+              },
+            });
+            return;
+          }
+          if (!requireCsrf(req)) { json(res, 403, { ok: false, error: '无效的 CSRF 令牌' }); return; }
+          if (!(await archiveExists())) {
+            json(res, 200, {
+              ok: false,
+              error: '数据集还没采集：先在项目目录跑 node tools/herta-fetch.mjs && node tools/herta-build.mjs',
+            });
+            return;
+          }
+          const body = await readBody(req);
+          const vindex = await archiveIndex();
+          const vi18n = await loadI18n();
+          const availability = vindex.refs?.availability || {};
+          // 收口（只认数据集里真有的键 / 星魂吸附到 E0·E1·E2·E6 / 叠影夹到 1~5 /
+          // 光锥主人必须与它同命途）。⚠️ 传的是整个 `refs`：校验命途需要
+          // `characterPaths` + `lightConePaths` 两张表。
+          const roster = normalizeRoster(body, vindex.refs || {});
+          const uid = String((target.roles || [])[0]?.uid || nextVirtualUid([]));
+          // ⚠️ 复用 `buildVirtualAccount`（不另写一份构造）：图标 / 星级 / id / 光锥归属
+          // 那一堆坑都在那里踩平了，两处各写一份必然长歪。
+          const built = buildVirtualAccount({
+            preset: customRosterPreset(roster, target.nickname),
+            index: vindex, i18n: vi18n, availability, charCostOf, coneCostOf,
+            uid, accountId: target.id, nickname: target.nickname,
+          });
+          const saved = await store.setVirtualRoster(target.id, uid, {
+            snapshot: built.snapshots[uid],
+            roster,
+          });
+          json(res, 200, { ok: true, account: AccountStore.toPublic(saved), roster });
+        } catch (err) {
+          json(res, 500, { ok: false, error: `保存角色名单失败：${err.message}` });
         }
         return;
       }

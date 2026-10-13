@@ -1826,6 +1826,33 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   border-bottom: 1px dashed rgba(255, 255, 255, 0.1);
   line-height: 1.5;
 }
+/* 「角色得分 = 强度 × 权重 + 性价比 × 权重 + 泛用性 × 权重」那一块（用户 2026-10-13 第 1、2 条）。
+   它是总分的**第一层拆解**，排在等式之后、逐关卡明细表之前（见 `advice-view.js` 的 `tipBox` 的
+   `pre` 参数）。两张表之间必须有这行标题隔着：否则读者会把上面那张的「角色得分」合计
+   与下面那张的「性价比合计」看成一回事 —— 它们一个是最上面的那个数、一个只是其中一项。 */
+.advice-score-split { display: block; }
+.advice-score-split-title {
+  display: block;
+  margin: 2px 0 5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+/* 泛用性来源里那串队友名字（用户 2026-10-13：「给出泛用性的完整得分来源」）。
+   实测一个角色能有 74 个不同队友，所以它必然是多行的一块 —— 给紧一点的行高与
+   一点底色，让它读起来像一份名单而不是一堵字墙。`overflow-wrap: anywhere` 是给长
+   英文键名（开拓者的 `Trailblazer` 之类）留的退路，避免单个键把窗口撑宽。 */
+.advice-vtip-members {
+  display: block;
+  margin: 0 0 4px;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12.5px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+/* 每个来源块底部那句「这个数是怎么换算出来的」（归一换算 / 口径说明）。 */
+.advice-source-note { display: block; margin-top: 3px; }
 /* 「贡献值来源」7 列。改前每列都写成 `满分 （1.00）` 单行（2026-10 用户要求「优化排版」）：
    六个因子列各自被那半截括号撑到 ~90px，七列加起来比「贡献」列还宽，整张表顶到浮层上限，
    第一列的副本名被压成落单的一个「关」字。现在：
@@ -3070,4 +3097,146 @@ html:has(.advice-gold-modal:not([hidden])) { overflow: hidden; }
   .advice-gold-body { padding: 10px 12px 14px; }
   /* 窄屏不再缩进：一行只有 30 来个字符，缩进会让名字提前换行。 */
   .advice-gold-units, .advice-gold-effect, .advice-gold-note { margin-left: 0; }
+}
+
+/* ============================================================================
+   虚拟账号 · 角色编辑器（用户 2026-10-13 第 3 条）
+   ----------------------------------------------------------------------------
+   外壳复用 `.modal.advice-gold-modal` / `.modal-card.advice-gold-card` /
+   `.char-panel-head` / `.char-panel-body`（与隐金设置、性价比详情同一套房子），
+   这里只加三个东西：
+     ① 卡片加宽（一页要容纳 93 行 × 最多 3 个下拉框）；
+     ② 锁住背后页面滚动（与另外两个大窗口同一条理由）；
+     ③ 角色列表末尾那张「＋ 添加角色」卡片。
+   ============================================================================ */
+html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
+
+.modal-card.advice-gold-card.is-vroster {
+  width: min(1080px, 96vw);
+  max-height: min(88vh, 940px);
+}
+
+/* ---- 角色列表末尾的「＋ 添加角色」卡片（用户第 3 条：「角色列表末尾」）------------ */
+/* ⚠️ 它是个 `<button>`：`.char-card` 是给 `div` 写的，所以要显式把按钮的默认样式
+   （字体 / 居中 / 边框）拉回来，否则会用系统按钮的字体与灰底。 */
+.char-card.is-add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 108px;
+  font: inherit;
+  text-align: center;
+  color: var(--text-dim);
+  background: rgba(111, 211, 232, 0.04);
+  border-style: dashed;
+  border-color: rgba(111, 211, 232, 0.42);
+}
+.char-card.is-add::before { content: none; }
+.char-card.is-add:hover {
+  color: var(--cyan);
+  border-color: var(--cyan);
+  background: rgba(111, 211, 232, 0.01);
+}
+.char-add-plus { font-size: 26px; line-height: 1; }
+.char-add-label { font-size: 13.5px; font-weight: 600; }
+.char-add-hint { font-size: 11.5px; opacity: 0.75; }
+
+/* ---- 编辑器本体 ------------------------------------------------------------ */
+.vroster-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(120, 150, 220, 0.16);
+}
+.vroster-search {
+  flex: 1 1 220px;
+  min-width: 180px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: inherit;
+  font: inherit;
+}
+.vroster-filters { display: flex; gap: 6px; }
+.vroster-filter {
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.vroster-filter.is-active {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: rgba(240, 198, 116, 0.08);
+}
+.vroster-count { font-size: 12px; color: var(--text-dim); }
+
+.vroster-list {
+  min-height: 0;
+  max-height: min(58vh, 620px);
+  overflow-y: auto;
+  margin: 10px 0;
+  padding-right: 4px;
+}
+.vroster-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.vroster-row.is-owned { background: rgba(240, 198, 116, 0.04); }
+.vroster-icon {
+  width: 34px; height: 34px;
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--bg-elevated);
+}
+.vroster-icon.is-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.vroster-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vroster-name { font-size: 13.5px; font-weight: 600; }
+.vroster-sub { font-size: 11.5px; color: var(--text-dim); }
+.vroster-tools { display: flex; align-items: center; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+.vroster-select {
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  max-width: 190px;
+}
+.vroster-select.is-sup { max-width: 74px; }
+
+.vroster-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(120, 150, 220, 0.16);
+}
+.vroster-hint { flex: 1 1 auto; font-size: 12px; color: var(--text-dim); }
+.vroster-hint.is-warn { color: var(--gold); }
+
+@media (max-width: 680px) {
+  .vroster-tools { width: 100%; justify-content: flex-start; }
+  .vroster-row { flex-wrap: wrap; }
+  .vroster-select { max-width: 150px; }
 }

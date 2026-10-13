@@ -28,11 +28,30 @@ const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
   return hit ? hit.slice(name.length + 3) : dflt;
 };
-const URL_TO_OPEN = arg('url', 'http://127.0.0.1:8360/?view=advice');
+const RAW_URL = arg('url', 'http://127.0.0.1:8360/?view=advice');
+/**
+ * 套件要打开的那个地址 —— **一律深链到抽卡推荐页**（`?view=advice`）。
+ *
+ * ⚠️ 2026-10-13 修：这里以前只给「带 `?` 的 URL 追加 `&view=advice`」，而
+ * `URL_TO_OPEN` 保持调用方给的原样、第 100 / 552 行两次导航用的又是它 ——
+ * 于是 `--url=http://127.0.0.1:8360/`（**不带 `?view` 的裸地址**）会让那两次导航落在
+ * 默认的「角色信息」页上：抽卡推荐页的视图**根本没挂载**（`#adviceConclusionUnits`
+ * 一行都没有、权重输入框 0 个），后面「关卡权重 / 清空输入 / 抽卡权重」那 9 条断言
+ * 全读到 `null`，看起来像九项布局回归，其实只是页面没切过去。
+ *
+ * `run-tests.mjs` 的注释里早就写过这个坑（「URL 必须带 `?view=advice`」），但那只挡住了
+ * 「调用方记得带」这一半 —— 靠人记的东西迟早会忘（本轮就是自己踩的）。
+ * 现在两边都规范化：**传什么地址都会落到抽卡推荐页**，`URL_TO_OPEN` 与 `ADVICE_URL`
+ * 是同一个值（后者保留旧名字，下面还有很多地方在用）。
+ */
+const URL_TO_OPEN = (() => {
+  const url = new URL(RAW_URL);
+  url.searchParams.set('view', 'advice');
+  return url.toString();
+})();
 // 深链 ?view=advice 会直接落到抽卡推荐页；每次导航后还要等下拉框真的建出来，
 // 否则设 value 会碰到 null。
-const ADVICE_URL = URL_TO_OPEN.includes('?')
-  ? `${URL_TO_OPEN}&view=advice` : `${URL_TO_OPEN}?view=advice`;
+const ADVICE_URL = URL_TO_OPEN;
 const PORT = Number(arg('port', '9222'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -155,7 +174,7 @@ const measure = () => evaluate(`(() => {
     // 这份必须为 0，判据在 node 里用（那边碰不到 document）。
     legacyBudgetBoxes: document.querySelectorAll('#adviceBudgetControl, #adviceBudget').length,
     // 权重**两大类**（用户 2026-10-12 第 2 条）：关卡权重 5 个输入框（#adviceFrontierWeightRow）
-    // + 抽卡权重 2 个（#adviceDrawWeightRow，强度 / 性价比）。
+    // + 抽卡权重 3 个（#adviceDrawWeightRow，强度 / 性价比 / 泛用性）。
     // ⚠️ 这段整体是模板字符串：注释里**不能出现反引号**（HANDOFF §6.1 第 16 条）。
     weightInputs: document.querySelectorAll('#adviceFrontierWeightRow input.advice-weight').length,
     drawWeightInputs: document.querySelectorAll('#adviceDrawWeightRow input.advice-draw-weight').length,
@@ -307,10 +326,12 @@ for (const width of [1920, 1440, 1280]) {
   //   * 「你的补强路径」与「推荐阵容 · 按金数分档」两节必须撤掉；
   //   * 角色总榜（纯数据集口径）、抽卡方案（按角色池）都要有内容；
   //   * 权重是**两大类**（用户 2026-10-12 第 2 条）：关卡权重 5 个输入框 + 抽卡权重
-  //     2 个（强度 / 性价比），两类各带自己的摘要、共用一个「恢复默认」。
+  //     3 个（强度 / 性价比 / 泛用性），两类各带自己的摘要、共用一个「恢复默认」。
   const sectionsGone = seen.every((s) => !s.removedSections?.plan && !s.removedSections?.bands);
   const blocksPresent = seen.every((s) => s.frontierRows > 0 && s.teamRows > 0
-    && s.weightInputs === 5 && s.drawWeightInputs === 2 && s.legacyPlanWeightBoxes === 0
+    // ⚠️ 抽卡权重是 **3** 个输入框（用户 2026-10-13 第 1 条加了「泛用性」），
+    // 从 v4.6.95 起写死 2 就会整条判红。
+    && s.weightInputs === 5 && s.drawWeightInputs === 3 && s.legacyPlanWeightBoxes === 0
     && s.weightMeta?.frontier && s.weightMeta?.draw && s.weightMeta?.reset);
   // 性价比徽标必须**紧贴左边的花费文字**（用户要求从行尾移到左边），并且这一行
   // 带着详情内容节点（点它开大窗口）。
@@ -750,6 +771,27 @@ for (let i = 0; i < 20; i += 1) {
 }
 const base = await badges();
 console.log(`  初始：总榜第一条 ${base.frontier} / 队伍方案第一条 ${base.plan}`);
+// ⚠️ **读不到就当场把榜面的状态印出来**（上面那段注释里 HANDOFF §6.3 第 7 条要的那一眼）。
+// 这一段是 2026-10-13 加的：以前红了只能看到一排 `null`，既分不清「视图没挂载」
+// 「榜面在『正在计算…』」还是「接口报错」，也分不清是页面问题还是探针写错。
+if (base.frontier === null) {
+  const diag = await evaluate(`(() => {
+    const box = document.getElementById('adviceConclusionUnits');
+    const layout = document.getElementById('layoutAdvice');
+    const tab = document.querySelector('.tab.is-active');
+    return {
+      activeTab: tab ? tab.dataset.view : null,
+      adviceHidden: Boolean(layout && layout.hidden),
+      boxExists: Boolean(box),
+      unitRows: box ? box.querySelectorAll('.advice-unit').length : -1,
+      valueNodes: box ? box.querySelectorAll('.advice-unit-value').length : -1,
+      text: String(box && box.textContent || '').replace(/[\\s\\u3000]+/g, ' ').trim().slice(0, 140),
+      drawInputs: document.querySelectorAll('#adviceDrawWeightRow input').length,
+      frontierInputs: document.querySelectorAll('#adviceFrontierWeightRow input').length,
+    };
+  })()`);
+  console.log(`  ⚠️ 总榜第一条读不到，榜面诊断：${JSON.stringify(diag)}`);
+}
 // ⚠️ 2026-10-11 第 10 轮起副本权重只有一套（用户：「去掉方案权重那一行」）：
 // 抽卡方案的**强度得分**走同一条 `frontier` 口径的链，所以这一行会同时改两个榜的分数 ——
 // 那是口径使然（两处本来就该同源），不再是「耦合没拆干净」。
@@ -794,13 +836,16 @@ console.log(`  ${blankWeightOk ? '✓' : '✗'} 清空「异相仲裁 · 绝境�
 await evaluate(`document.getElementById('adviceFrontierWeightsReset')?.click()`);
 await sleep(1500);
 
-// ---- 抽卡权重：强度 / 性价比（用户 2026-10-12 第 2、3、4 条）--------------------
+// ---- 抽卡权重：强度 / 性价比 / 泛用性（用户 2026-10-12 第 2、3、4 条 + 2026-10-13 第 1、2 条）
 //
-// 这一类的判据与关卡权重**不同**：它**不进服务端请求**（那两个数只决定浏览器里
-// `teamPlan()` 怎么加权），所以改它不该重算数据集、也不该动角色总榜。
-// 这里钉三件事：① 两个输入框在、② 存档写进 `hsr.advice.drawWeights`、
-// ③ 改它之后「补金推荐分」那个等式里的两个系数真的换了、而总榜一个字不动。
-console.log('\n▶ 抽卡权重：强度 / 性价比（只重画抽卡方案，不重算数据集）');
+// ⚠️ 这一类权重的作用面在 v4.6.95 **翻了**：v4.6.94 时它不进服务端请求（只决定浏览器里
+// `teamPlan()` 那两个分项怎么加权），所以当时这里断言「改它不该动角色总榜」。用户
+// 2026-10-13 第 2 条要求**角色总榜受三个抽卡权重影响**，而总榜「每角色只留一条」的收敛
+// 发生在服务端的 `buildConclusion` 里 —— 所以现在改它**必须**重算结论、**必须**动总榜。
+// 这里钉五件事：① 三个输入框在、② 存档写进 `hsr.advice.drawWeights`、
+// ③ 改它之后总榜那条分真的变了、④ 总榜摘要印归一化比例、
+// ⑤ 抽卡方案那两个系数仍然只按「强度 : 性价比」两两归一（泛用性旋钮不许动方案）。
+console.log('\n▶ 抽卡权重：强度 / 性价比 / 泛用性（改它要重算角色总榜）');
 const drawProbe = () => evaluate(`(() => {
   const eq = document.querySelector('#adviceTeamPlanBody .advice-plan-team .advice-plan-team-eq');
   const board = document.querySelector('#adviceConclusionUnits .advice-unit .advice-unit-value');
@@ -812,42 +857,67 @@ const drawProbe = () => evaluate(`(() => {
     stored: localStorage.getItem('hsr.advice.drawWeights'),
   };
 })()`);
-const drawInputsOk = (await drawProbe()).inputs.length === 2;
-if (!drawInputsOk) failures += 1;
-console.log(`  ${drawInputsOk ? '✓' : '✗'} 抽卡权重有 2 个输入框（强度 / 性价比）`);
+/** 往抽卡权重输入框里填一组值，等角色总榜重算完（防抖 + 服务端聚合，最多 20 秒）。 */
+const setDrawWeights = async (values) => {
+  await evaluate(`(() => {
+    const inputs = [ ...document.querySelectorAll('#adviceDrawWeightRow input.advice-draw-weight') ];
+    const values = ${JSON.stringify(values)};
+    inputs.forEach((input, i) => {
+      input.value = String(values[i]);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    return inputs.length;
+  })()`);
+  const before = await drawProbe();
+  for (let i = 0; i < 40; i += 1) {
+    await sleep(500);
+    const now = await drawProbe();
+    if (now.board !== before.board) {
+      // 再等一拍，确保榜面与方案都渲染完
+      await sleep(600);
+      return drawProbe();
+    }
+  }
+  return drawProbe();
+};
 const drawBase = await drawProbe();
+const drawInputsOk = drawBase.inputs.length === 3;
+if (!drawInputsOk) failures += 1;
+console.log(`  ${drawInputsOk ? '✓' : '✗'} 抽卡权重有 3 个输入框（强度 / 性价比 / 泛用性）`);
 console.log(`  初始：${drawBase.eq}`);
 console.log(`        摘要 ${drawBase.meta}`);
-// 3 : 1 → 归一化成 0.75 / 0.25，等式里那两个系数必须跟着换。
-await evaluate(`(() => {
-  const inputs = [ ...document.querySelectorAll('#adviceDrawWeightRow input.advice-draw-weight') ];
-  inputs.forEach((input, i) => {
-    input.value = String([3, 1][i]);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-  return inputs.length;
-})()`);
-await sleep(1200);
-const drawAfter = await drawProbe();
-const drawEqOk = Boolean(drawAfter.eq && drawAfter.eq.includes('× 0.75') && drawAfter.eq.includes('× 0.25'));
+// 3 : 1 : 1 → **总榜与抽卡方案都是** 0.6 / 0.2 / 0.2（用户 2026-10-13 第 3 条原话：
+// 「泛用性权重也适用于补金推荐」）。v4.6.95/96 时方案只吃强度/性价比、两项自己再归一，
+// 所以那时这里钉的是「方案印 × 0.75 / × 0.25」——**已经反过来**了。
+const drawAfter = await setDrawWeights([3, 1, 1]);
+const drawEqOk = Boolean(drawAfter.eq && drawAfter.eq.includes('× 0.6')
+  && drawAfter.eq.includes('× 0.2') && drawAfter.eq.includes('泛用性'));
 if (!drawEqOk) failures += 1;
-console.log(`  ${drawEqOk ? '✓' : '✗'} 3 : 1 应印成 × 0.75 / × 0.25 —— ${drawAfter.eq}`);
+console.log(`  ${drawEqOk ? '✓' : '✗'} 抽卡方案三项一起归一 → 0.6 / 0.2 / 0.2，`
+  + `且等式里带「泛用性」—— ${drawAfter.eq}`);
+const drawMetaOk = Boolean(drawAfter.meta && drawAfter.meta.includes('强度 60%')
+  && drawAfter.meta.includes('性价比 20%') && drawAfter.meta.includes('泛用性 20%'));
+if (!drawMetaOk) failures += 1;
+console.log(`  ${drawMetaOk ? '✓' : '✗'} 总榜摘要印归一化比例（60 / 20 / 20）—— ${drawAfter.meta}`);
 const drawStoredOk = Boolean(drawAfter.stored && /"strength":3/.test(drawAfter.stored));
 if (!drawStoredOk) failures += 1;
 console.log(`  ${drawStoredOk ? '✓' : '✗'} 抽卡权重存档在 hsr.advice.drawWeights：${drawAfter.stored}`);
-// 总榜不吃抽卡权重（它只看关卡权重）—— 这一条是「不重算数据集」的可观测形式。
-const drawBoardOk = drawAfter.board === drawBase.board;
+// ⚠️ 这条断言在 v4.6.94 是**反向**的（「角色总榜不受抽卡权重影响」）；用户 2026-10-13
+// 第 2 条把口径翻了过来 —— 现在总榜**必须**跟着变，不变就说明权重没送到服务端。
+const drawBoardOk = drawAfter.board !== drawBase.board;
 if (!drawBoardOk) failures += 1;
-console.log(`  ${drawBoardOk ? '✓' : '✗'} 角色总榜不受抽卡权重影响：`
+console.log(`  ${drawBoardOk ? '✓' : '✗'} 角色总榜受抽卡权重影响：`
   + `${drawBase.board} → ${drawAfter.board}`);
 // 收尾：恢复默认（同一个按钮管两大类）。
 await evaluate(`document.getElementById('adviceFrontierWeightsReset')?.click()`);
-await sleep(1200);
+await sleep(2500);
 const drawReset = await drawProbe();
-const drawResetOk = (drawReset.inputs || []).join(',') === '1,1'
-  && Boolean(drawReset.eq && drawReset.eq.includes('× 0.5'));
+// ⚠️ 恢复默认 = 三个框都回到 1 → 三等分 → `formatShare(1/3)` 印成 `0.33`
+//（`toFixed(2)` 去掉尾零）。v4.6.95/96 时是两项 `0.5 / 0.5`，别再按那个写。
+const drawResetOk = (drawReset.inputs || []).join(',') === '1,1,1'
+  && Boolean(drawReset.eq && drawReset.eq.includes('× 0.33'));
 if (!drawResetOk) failures += 1;
-console.log(`  ${drawResetOk ? '✓' : '✗'} 「恢复默认」把抽卡权重也还原成 1 : 1 —— ${drawReset.eq}`);
+console.log(`  ${drawResetOk ? '✓' : '✗'} 「恢复默认」把抽卡权重也还原成 1 : 1 : 1 —— ${drawReset.eq}`);
 
 // ---- 总榜行图标 / 详情大窗口 / 文案（用户 2026-10 点名的四条）--------------------
 //
@@ -1312,7 +1382,25 @@ if (!tipTarget) {
     const kids = sub ? [ ...sub.children ] : [];
     const idxOf = (sel) => kids.findIndex((k) => k.matches(sel));
     // 贡献值来源表的取数方式与改前一致（表结构没变，只换了容器）。
-    const table = tip.querySelector('.advice-value-tip-table');
+    // ⚠️ 用户 2026-10-13 第 1、2 条之后这个浮层里有**两张**表（class 都是
+    //    advice-value-tip-table）：上面那张是「角色得分 = 强度 + 性价比 + 泛用性」
+    //    （在 advice-score-split 里），下面那张才是**逐关卡来源**主表。
+    //    主表额外带 is-source，所以这里必须按它选 —— 只写类名会拿到上面那张，
+    //    于是列数 / 因子 / 合计 / 第一格卡片等**十几条断言会静默量错对象**。
+    //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+    const table = tip.querySelector('.advice-value-tip-table.is-source');
+    const splitTable = tip.querySelector('.advice-score-split .advice-value-tip-table');
+    // 强度来源那张表（用户 2026-10-13：三项都要有「完整得分来源」）——它有自己的 class。
+    const strengthTable = tip.querySelector('.advice-value-tip-table.is-strength-source');
+    const strengthTrs = [ ...(strengthTable?.querySelectorAll('tbody tr') || []) ];
+    // 泛用性的来源块：一份队友名单 + 一句归一换算（它**不是**表格，是名单）。
+    const versBlock = [ ...tip.querySelectorAll('.advice-score-split') ]
+      .find((b) => /^泛用性来源/.test(b.querySelector('.advice-score-split-title')?.textContent || ''));
+    const versMembers = versBlock?.querySelector('.advice-vtip-members')?.textContent || '';
+    // ⚠️ 按**元素**数数，不要 split 文本：角色名里本来就有「•」（砂金•戏浪），
+    //    用分隔符切会把一个名字切成两个（假红）。
+    const versMemberCount = versBlock
+      ? versBlock.querySelectorAll('.advice-vtip-member').length : 0;
     const trs = [ ...(table?.querySelectorAll('tbody tr') || []) ];
     const cellsOf = (tr) => [ ...tr.children ].map((td) => td.textContent);
     const totalRow = trs.find((tr) => tr.classList.contains('is-total'));
@@ -1345,12 +1433,44 @@ if (!tipTarget) {
       // sub 里各块的**次序**（用户 2026-10-10 第 4 条：等式 → 表 → 全部配队 → 脚注）。
       // ⚠️ 2026-10-11 第 5 条起**不再有「队伍在表上方」这一项**：队伍图标搬进了表格
       //    第一格，占位槽不再是 sub 的直接子节点（idxOf 会返回 -1）。
-      order: { table: idxOf('.advice-value-tip-table'),
+      order: { table: idxOf('.advice-value-tip-table.is-source'),
         packs: idxOf('.advice-packs-slot'), notes: idxOf('.advice-value-tip-notes') },
       slotFilled: slot?.dataset.filled ?? null,
       packRows: items.length,
       packScores: items.map((it) => (it.querySelector('.advice-packs-score')?.textContent || '')
-        .replace('性价比得分 +', '')),
+        .replace('角色得分 +', '')),
+      // ---- 三个分项那张表（用户 2026-10-13 第 1、2 条）------------------------------
+      // 它是这个窗口的**第一层拆解**：强度 / 性价比 / 泛用性三个分项 + 归一后的得分 +
+      // 抽卡权重 + 贡献，合计行的数必须与标题上那个数**逐字相同**（同一个 packScoreText）。
+      // ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+      splitHeaders: [ ...(splitTable?.querySelectorAll('th') || []) ].map((n) => n.textContent),
+      // 强度来源表（用户 2026-10-13）：列名、逐关卡行数、合计那一行。
+      strengthHeaders: [ ...(strengthTable?.querySelectorAll('th') || []) ].map((n) => n.textContent),
+      strengthRowCount: strengthTrs.filter((tr) => !tr.classList.contains('is-total')).length,
+      strengthTotalRow: (() => {
+        const tr = strengthTrs.find((r) => r.classList.contains('is-total'));
+        return tr ? [ ...tr.children ].map((td) => td.textContent) : null;
+      })(),
+      // 泛用性来源块：名单文本 + 它下面的归一换算那句。
+      versMembers,
+      versListCount: versMemberCount,
+      versNote: versBlock?.querySelector('.advice-source-note')?.textContent || '',
+      versRaw: (() => {
+        const t = versBlock?.querySelector('.advice-score-split-title')?.textContent || '';
+        return Number((t.match(/共\\s*(\\d+)\\s*个/) || [])[1]);
+      })(),
+      splitTotal: String(splitTable
+        ?.querySelector('tr.is-total td:last-child')?.textContent || ''),
+      splitRowCount: splitTable ? splitTable.querySelectorAll('tbody tr').length : 0,
+      // 逐关卡来源那张表的合计该等于什么：**性价比分项的原始分**（整包对象的 total），
+      // 不再是徽标上的角色得分（用户 2026-10-13 第 2 条之后两者不是同一个数：
+      // 实测合计 +1098 而徽标 +96）。整包对象由 frontierTip() 挂在节点上（tip.__unit）。
+      // ⚠️ 写法用字符串拼接而不是嵌套模板串 —— 这一段本身就在模板字符串里。
+      sourceTotal: (() => {
+        const unit = tip.__unit;
+        const total = Number(unit && unit.total);
+        return Number.isFinite(total) ? '+' + Math.round(total) : null;
+      })(),
       caption: tip.querySelector('.advice-packs-caption')?.textContent || '',
       packCount: tip.querySelector('.advice-packs-count')?.textContent || '',
       packMore: tip.querySelector('.advice-packs-more')?.textContent || '',
@@ -1435,6 +1555,13 @@ if (!tipTarget) {
       })(),
       // ⑤ 整段正文里**不许再出现除号 ÷**（用户 2026-10-11 第 2 条：金数的符号改成斜杠）。
       hasDivisionSign: (tip.textContent || '').includes('÷'),
+    // 有除号时把**上下文**一起带出来：只报一句「全文含除号 ✗ 有」的话，人得自己
+    // 在几百行渲染结果里找那一个字符（本轮实测为此多跑了一整轮 CDP）。
+    divisionContext: (() => {
+      const t = tip.textContent || '';
+      const i = t.indexOf('÷');
+      return i < 0 ? '' : t.slice(Math.max(0, i - 50), i + 50);
+    })(),
       avatars: avatars.map((a) => a.naturalWidth),
       avatarHidden: avatars.filter((a) => a.classList.contains('is-missing')).length,
       cones: cones.map((a) => a.naturalWidth),
@@ -1496,13 +1623,24 @@ if (!tipTarget) {
   const factorCellsOk = (cells) => cells.length === SOURCE_HEADERS.length
     && cells.slice(1).every((c) => c.length > 0 && !/NaN|undefined|Infinity/.test(c));
   const headValue = tipReport ? ((tipReport.headText.match(/(\+\d+)$/) || [])[1] || null) : null;
+  /**
+   * 逐关卡来源表的合计。
+   *
+   * ⚠️ **用户 2026-10-13 第 2 条之后它不再等于徽标上的数**：徽标是「角色得分」
+   * （三个分项按抽卡权重加权的**榜内归一分**），而这张表是**性价比分项**的原始来源，
+   * 合计也就是 `unit.total` 的原始量纲 —— 实测同一行「合计 +1098 / 徽标 +96」。
+   * 所以判据从「= 标题上的数」改成「= 探针从 `tip.__unit.total` 现取的期望值」，
+   * 这样它仍然钉住「表里的分加起来等于这一项的原始分」这条恒等式。
+   */
+  const sourceTotalExpected = tipReport?.sourceTotal ?? null;
   const sourceOk = Boolean(tipReport)
     && JSON.stringify(tipReport.headers) === JSON.stringify(SOURCE_HEADERS)
     && tipReport.rows.length > 0 && tipReport.rows.every(factorCellsOk)
     && (tipReport.rows.length === 1
       ? tipReport.totalRow === null
       : Array.isArray(tipReport.totalRow)
-        && tipReport.totalRow[tipReport.totalRow.length - 1] === headValue);
+        && sourceTotalExpected !== null
+        && tipReport.totalRow[tipReport.totalRow.length - 1] === sourceTotalExpected);
   // ---- 2026-10-11 第 2 条（本轮）：改名 + 版本号 + 队伍块覆盖所有关卡 ----------
   // 用户原话：「"副本/关卡"改为"关卡"，并备注关卡的版本号，最佳证据的队伍要显示所有
   // 关卡的情况和贡献」。三条判据分别钉这三件事。
@@ -1665,11 +1803,37 @@ if (!tipTarget) {
       const [a, b] = main.split('/').map(Number);
       return a > b ? /^1\.00 封顶$/.test(sub) : /^\d\.\d{2}$/.test(sub);
     });
-  const titleOk = Boolean(tipReport) && /^性价比得分 \+\d+$/.test(tipReport.headText)
-    && /^性价比得分 \+\d+$/.test(tipReport.title);
+  const titleOk = Boolean(tipReport) && /^角色得分 \+\d+$/.test(tipReport.headText)
+    && /^角色得分 \+\d+$/.test(tipReport.title);
   const renameOk = Boolean(tipReport) && tipReport.caption === '该角色的全部配队'
-    && /^\d+ 个配队 · 按性价比得分从高到低$/.test(tipReport.packCount)
+    && /^\d+ 个配队 · 按角色得分从高到低$/.test(tipReport.packCount)
     && (!tipReport.packMore || /^另有 \d+ 个配队未列出（该角色共 \d+ 个）$/.test(tipReport.packMore));
+  // ---- 三个分项那张表（用户 2026-10-13 第 1、2 条）--------------------------------
+  // 三行（强度 / 性价比 / 泛用性）+ 一行合计；表头固定；**合计 = 标题上那个数**。
+  // 这条恒等式是整块改动的锚点：权重接错层、归一化取样集合写错、或者某天有人把
+  // 角色得分又改回「含金数项总分」，这一格立刻与标题对不上。
+  const SPLIT_HEADERS = ['分项', '原始量', '得分', '权重', '贡献'];
+  const splitOk = Boolean(tipReport)
+    && JSON.stringify(tipReport.splitHeaders) === JSON.stringify(SPLIT_HEADERS)
+    && tipReport.splitRowCount === 4
+    && tipReport.splitTotal === headValue;
+  // ---- 强度 / 泛用性 两项的「完整得分来源」（用户 2026-10-13）------------------------
+  //
+  // 上面的 `sourceOk` 只管**性价比**那一张（逐关卡 × 金数）。用户要的是**三项都给来源**，
+  // 所以强度那张表（逐关卡 × 表现 × 跨版本发挥，**没有金数**）与泛用性那块（队友名单 +
+  // 归一换算）各自也要有判据 —— 否则「加了但没人测」等于下次改坏了也不知道。
+  const STRENGTH_HEADERS = ['关卡', '权重', '表现', '跨版本发挥', '贡献'];
+  const strengthSourceOk = Boolean(tipReport)
+    && JSON.stringify(tipReport.strengthHeaders) === JSON.stringify(STRENGTH_HEADERS)
+    && tipReport.strengthRowCount > 0
+    // 合计那一行只在多关卡时出现（与性价比表同一条约定）；出现时最后一格必须是 `+N`。
+    && (tipReport.strengthTotalRow === null
+      || /^\+\d+$/.test(tipReport.strengthTotalRow[tipReport.strengthTotalRow.length - 1] || ''));
+  // 泛用性那块：**名单真的有内容**、条数 = 标题上那个数、并写出归一换算。
+  const versatilitySourceOk = Boolean(tipReport)
+    && tipReport.versListCount > 0
+    && tipReport.versListCount === tipReport.versRaw
+    && /得分 = 100 ×（\d+ − [\d.]+）\/（[\d.]+ − [\d.]+）/.test(tipReport.versNote);
   // 次序：等式（`.advice-value-tip-eq`，永远是 sub 的第一个子节点）→ 表 → 全部配队 → 脚注。
   // ⚠️ 2026-10-11 第 5 条起队伍图标在**表格里面**，所以不再有「队伍块在表之前」这一项。
   const orderOk = Boolean(tipReport) && tipReport.order.table >= 0
@@ -1685,6 +1849,10 @@ if (!tipTarget) {
     && tipReport.avatarHidden === 0
     && tipReport.cones.length > 0 && tipReport.cones.every((w) => w > 0)
     && titleOk && renameOk && orderOk && sourceOk
+    // 用户 2026-10-13 第 1、2 条：三个分项那张表（列名 / 三行 + 合计 / 合计 = 标题上的数）。
+    && splitOk
+    // 用户 2026-10-13：「三项都要有**完整得分来源**」——强度那张表 + 泛用性那块名单。
+    && strengthSourceOk && versatilitySourceOk
     && notesTextOk && notesShortOk
     // 用户 2026-10-11（详情页第 1 条）：非关卡列居中 + 字号大一档。
     && fontOk
@@ -1804,17 +1972,28 @@ if (!tipTarget) {
     console.log(`      ${renameOk ? '✓' : '✗'} 改名文案：${JSON.stringify(tipReport.caption)}`
       + ` / ${JSON.stringify(tipReport.packCount)}`
       + `${tipReport.packMore ? ` / ${JSON.stringify(tipReport.packMore)}` : '（全部列出，没有「另有 N 个」）'}`
-      + `，列出 ${tipReport.packRows} 条，性价比得分：${tipReport.packScores.join(' , ') || '(无)'}`);
+      + `，列出 ${tipReport.packRows} 条，角色得分：${tipReport.packScores.join(' , ') || '(无)'}`);
     console.log(`      配队卡片 ${tipReport.cards} 张（空槽 filled=${tipReport.slotFilled}）`
       + ` / 头像 naturalWidth：${JSON.stringify(tipReport.avatars)}`
       + `（藏起来的碎图 ${tipReport.avatarHidden} 张）`
       + ` / 光锥图标：${JSON.stringify(tipReport.cones)}`);
+    // 三个分项那张表（用户 2026-10-13 第 1、2 条）：合计必须与标题上那个数逐字相同。
+    console.log(`      ${splitOk ? '✓' : '✗'} 角色得分三分项表：列 ${JSON.stringify(tipReport.splitHeaders)}`
+      + `，${tipReport.splitRowCount} 行（3 个分项 + 合计）`
+      + `，合计 ${JSON.stringify(tipReport.splitTotal)}（标题上的数是 ${headValue}）`);
     console.log(`      ${sourceOk ? '✓' : '✗'} 贡献值来源表：列 ${JSON.stringify(tipReport.headers)}`
       + `，逐副本 ${tipReport.rows.length} 行`
       + `${tipReport.rows[0] ? `（首行 ${JSON.stringify(tipReport.rows[0])}）` : ''}`
       + `${tipReport.totalRow
-        ? `，合计 ${JSON.stringify(tipReport.totalRow)}（标题上的数是 ${headValue}）`
+        ? `，合计 ${JSON.stringify(tipReport.totalRow)}`
+          + `（期望 ${sourceTotalExpected} = 性价比分项的原始分；徽标那个数是 ${headValue}）`
         : '，单副本无合计行'}`);
+    // 用户 2026-10-13：「三项都要有完整得分来源」——强度那张表与泛用性那块名单各自一行。
+    console.log(`      ${strengthSourceOk ? '✓' : '✗'} 强度来源表：列 ${JSON.stringify(tipReport.strengthHeaders)}`
+      + `，${tipReport.strengthRowCount} 行`
+      + `${tipReport.strengthTotalRow ? `，合计 ${JSON.stringify(tipReport.strengthTotalRow)}` : '，单副本无合计行'}`);
+    console.log(`      ${versatilitySourceOk ? '✓' : '✗'} 泛用性来源：名单 ${tipReport.versListCount} 个`
+      + `（标题写 ${tipReport.versRaw} 个）｜归一换算「${tipReport.versNote}」`);
     // 2026-10-11 第 2 条：三条判据各自单独打印一行，红的是哪一条一眼看得出。
     console.log(`  ${headerRenameOk ? '✓' : '✗'} 表头第一列已改名为「关卡」`
       + `（禁用「副本」）：${JSON.stringify(tipReport.headers)}`);
@@ -1842,7 +2021,8 @@ if (!tipTarget) {
       + `（用户 2026-10-11：「这些英语简称，我没要求添加」）：`
       + `第一格 ${JSON.stringify(tipReport.firstCells.map((c) => `${c.env}·${c.stage}`))}`);
     console.log(`  ${costCellOk ? '✓' : '✗'} 金数列：斜杠写法 / 封顶标出 / 0 金写 ×1.20`
-      + `（全文含除号 ${tipReport.hasDivisionSign ? '✗ 有' : '✓ 无'}）：`
+      + `（全文含除号 ${tipReport.hasDivisionSign ? '✗ 有' : '✓ 无'}`
+      + `${tipReport.hasDivisionSign ? `，位置：…${tipReport.divisionContext}…` : ''}）：`
       + JSON.stringify(tipReport.rows.map((r) => r[costCol])));
     console.log(`      ${notesTextOk && notesShortOk ? '✓' : '✗'} 脚注 `
       + `${tipReport.notes} 条（≥6 ${tipReport.notes >= 6 ? '✓' : '✗'}`
@@ -2279,8 +2459,10 @@ const teamPlanProbe = await evaluate(`(() => {
     // ⚠️ 第二项在 2026-10-12 第 6 条**回到**「差额接近度」：v4.6.87 一度叫「性价比得分」
     //    （差额接近度 与 压金度 合成），用户说这三者重叠、只要差额接近度，于是删掉中间层。
     //    标签不跟着改，numAfter 会取到 NaN（这条断言就是这么被绊到的）。
-    const parts = [numAfter('强度得分'), numAfter('差额接近度')];
-    const coefs = [coefAfter('强度得分'), coefAfter('差额接近度')];
+    const parts = [numAfter('强度得分'), numAfter('差额接近度'), numAfter('泛用性')];
+    // ⚠️ 第三项「泛用性」是用户 2026-10-13 第 3 条（「泛用性权重也适用于补金推荐」）
+    //    加进来的 —— 等式里现在是**三个**分项与三个系数，v4.6.95/96 时只有两个。
+    const coefs = [coefAfter('强度得分'), coefAfter('差额接近度'), coefAfter('泛用性')];
     const fills = [ ...card.querySelectorAll('.advice-plan-team-fill .advice-fill-item') ];
     // 一笔补金可能是**多金**（例：遐蝶 E0→E2 一笔 2 金），所以条数 ≠ 补金金数 ——
     // 正确的判据是「各条的金数之和 = 补金金数」。每条的 .advice-fill-cost 以「N 金」开头。
@@ -2345,13 +2527,20 @@ if (teamPlanProbe.missing) {
   if (hasCards) {
     // 每张卡：名次 + 四个位置 + 分项等式（两个分项 × 印出来的系数 = 徽标）+ 补金顺序之和 = 补金金数
     // ⚠️ 系数不写死 0.5：2026-10-12 第 3 条起它们来自用户可调的**抽卡权重**，
-    //    这里验的是「按卡上印出来的系数算得回去」+「两个系数加起来是 1」。
-    const eqOk = teamPlanProbe.rows.every((r) => r.parts.length === 2 && r.coefs.length === 2
-      && Math.abs(r.coefs[0] + r.coefs[1] - 1) < 0.02
-      && Math.abs(r.coefs[0] * r.parts[0] + r.coefs[1] * r.parts[1] - r.badge) < 0.51);
+    //    这里验的是「按卡上印出来的系数算得回去」+「系数加起来是 1」。
+    //    ⚠️ 2026-10-13 第 3 条（「泛用性权重也适用于补金推荐」）之后是**三个**系数。
+    //    ⚠️ 容差必须放宽到 ~1.5：卡上印的系数是**两位小数**（`formatShare`），
+    //    `1/3` 印成 `0.33`、三项合计 0.99；乘以「分项之和」（≤300）后误差可达
+    //    0.015 × 300 ≈ 4.5？不 —— 每项误差 ≤0.005，三项 ≤0.015，但**只有真实权重
+    //    与印出来的差**才进这个和，实测前 15 名的偏差在 0.7 以内。取 1.51 留足余量，
+    //    同时仍然能抓住「系数印错了一位」这类真错（那种偏差是几十）。
+    const eqOk = teamPlanProbe.rows.every((r) => r.parts.length === 3 && r.coefs.length === 3
+      && Math.abs(r.coefs[0] + r.coefs[1] + r.coefs[2] - 1) < 0.02
+      && Math.abs(r.coefs[0] * r.parts[0] + r.coefs[1] * r.parts[1]
+        + r.coefs[2] * r.parts[2] - r.badge) < 1.51);
     if (!eqOk) failures += 1;
-    console.log(`  ${eqOk ? '✓' : '✗'} 每张卡的总分 = 强度得分×系数 + 差额接近度×系数`
-      + `（系数由抽卡权重决定、印在卡上，两个系数之和必须是 1）`);
+    console.log(`  ${eqOk ? '✓' : '✗'} 每张卡的总分 = 强度得分×系数 + 差额接近度×系数 + 泛用性×系数`
+      + `（系数由抽卡权重决定、印在卡上，三个系数之和必须是 1）`);
     const shapeOk = teamPlanProbe.rows.every((r) => r.hasRank && r.slots === 4
       // ⚠️ `fills >= 1` 曾被写成硬条件，与用户第 6 条**自相矛盾**：隐金设置开着时
       //    「不添加成本的那几笔」会被隐藏，一整队的补金项全被盖掉时列表就是空的。
@@ -2474,12 +2663,15 @@ if (teamPlanProbe.missing) {
         + `（表头 ${JSON.stringify(scoreTip?.headers || [])}，次选 ${scoreTip?.alts ?? 0} 支，`
         + `内容块 ${(scoreTip?.blocks || []).length} 段`
         + `${tipScoreOk ? '' : `：${(scoreTip?.blocks || []).map((b) => b.slice(0, 18)).join(' / ') || '（空）'}`}）`);
-      // ⚠️ 用户 2026-10-12 第 6 条：分数来源表只有两个刻度，且不许再出现「压金度 / 性价比得分」。
-      const scoreScaleOk = JSON.stringify(scoreTip?.rowLabels) === JSON.stringify(['强度得分', '差额接近度'])
+      // ⚠️ 用户 2026-10-12 第 6 条：分数来源**只有真实生效的那几个刻度**，
+      //    且不许再出现「压金度 / 性价比得分」。2026-10-13 第 3 条（泛用性也进补金推荐）
+      //    之后是**三行** —— v4.6.95/96 时这里钉的是两行。
+      const scoreScaleOk = JSON.stringify(scoreTip?.rowLabels)
+        === JSON.stringify(['强度得分', '差额接近度', '泛用性'])
         && !scoreTip.text.includes('压金度')
         && !scoreTip.text.includes('性价比得分');
       if (!scoreScaleOk) failures += 1;
-      console.log(`  ${scoreScaleOk ? '✓' : '✗'} 分数来源表只有「强度得分 / 差额接近度」两行、`
+      console.log(`  ${scoreScaleOk ? '✓' : '✗'} 分数来源表是「强度得分 / 差额接近度 / 泛用性」三行、`
         + `全文不出现「压金度 / 性价比得分」（实际 ${JSON.stringify(scoreTip?.rowLabels || [])}）`);
       await evaluate("document.querySelector('#adviceTipClose')?.click(); true");
       await sleep(300);
@@ -2541,7 +2733,9 @@ if (!tierChipOk) {
     console.log('  ✗ E0 档一行都没有');
   } else {
     tierTipUnit = target.unit;
-    // 等两件事：① 窗口真的**开着且是总榜那一张**（标题以「性价比得分」开头）；
+    // 等两件事：① 窗口真的**开着且是总榜那一张**（标题以「角色得分」开头）；
+    //     ⚠️ 用户 2026-10-13 第 2 条把这个指标从「性价比得分」改名「角色得分」；
+    //     名称本身由上面的 `titleOk` 钉住，这里只用它认窗口。
     // ② 明细被 `enrichTierDetail()` **按需补齐**（那一步另发一次 packs 请求，实测 ~1s）——
     //    逐档榜的整包初始只带 1 个 env，补齐之后才有多行。
     //

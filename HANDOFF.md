@@ -23,10 +23,64 @@
 | 评分口径是怎么定下来的 | `docs/评分模型设计.md`（**当前口径看最后一节 v25**，前面多为已被推翻的早期方案） |
 
 > ⚠️ **§4.2 的历史改动表已外迁**到 `docs/变更流水账.md`；本文只保留最近几轮
-> （§4.2K / §4.2J / §4.2I / §4.2H / §4.2G / §4.2F / §4.2E / §4.2D / §4.2C / §4.2B / §4.2A / §4.2z / §4.2y / §4.2x —— **§4.2K 是最新的那一轮**；
+> （§4.2Z / §4.2Y / §4.2X / §4.2AA / §4.2P~§4.2W / §4.2K / §4.2J / §4.2I / §4.2H / §4.2G / §4.2F / §4.2E / §4.2D / §4.2C / §4.2B / §4.2A / §4.2z / §4.2y / §4.2x —— **§4.2Z 是最新的那一轮**；
 > 字母走到 `z` 之后回到 `A`，越新的轮次字母越靠后）。
 
-> 最后更新：**v4.6.82**（2026-10-11，在 `.worktrees/fill-text-vcenter` 的
+> 最后更新：**v4.6.97**（2026-10-13，同一支 worktree）—— 用户两条：
+> 「**角色得分页面需要给出强度、性价比、泛用性的完整得分来源，如同性价比得分来源**」+
+> 「**泛用性权重也适用于补金推荐**」。
+> ① 详情窗口现在**三项都有来源**：新增**强度来源表**（关卡 / 权重 / 表现 / 跨版本发挥 /
+> 贡献 —— 与性价比表同形、只少「金数」一列）、新增**泛用性来源块**（把「不同队友」那个
+> 集合**列出来**，实测一个角色最多 74 个，并写出归一换算），三分项表里的「原始量」也带上
+> **榜内区间**（否则那 100 分验算不了）。
+> ② **泛用性进补金推荐**：队级泛用性 = **队内成员各自泛用性的平均**（口径由用户选定），
+> 三项**一起归一** —— 于是「强度 3 / 性价比 1 / 泛用性 1」在方案里从 `0.75 / 0.25` 变成
+> **`0.6 / 0.2 / 0.2`**，卡片等式与「补金推荐分」窗口补上第三项（两行 → 三行）。
+> ⚠️ v4.6.95 那条「调泛用性不动方案」**反过来**了，回归已同步反向。
+> ⚠️ 载荷两次顶穿 600 KB 硬上限（745 KB → 612 KB → **569 KB** 才收住）：归一上下限改成
+> **整榜一份**（顶层 `frontierExtents`），泛用性名单改成**只在按需接口**上带
+> —— `/conclusion` **v8 → v9**、`/packs` **v4 → v5**，两条**反向**断言钉着「名单不许进结论」。
+> 详见 **§4.2Z**；口径见 `docs/评分模型设计.md` **v46**。
+> 实测：`run-tests.mjs` **19 个套件全部通过**（含真跑的 CDP 那套；`e2e` 177 项、
+> `herta` 106 项、`team-plan` 31 项）。
+>
+> 上一版 **v4.6.96**（2026-10-13，同一支 worktree `.worktrees/versatility-weight`）——
+> 用户原话：「**修复 CDP 布局套件的问题，并写入 md 文件，方便别的 agent 使用**」。
+> 上一轮唯一没能真验证的就是这一套，这轮把它**真跑起来**了，并修掉它自己的一个硬 bug：
+> ① `check-advice-layout.mjs` 的 `URL_TO_OPEN` 现在**一律规范化成带 `?view=advice`** ——
+> 改前第 100 / 552 行两次导航用的是裸地址，于是 `--url=…:8360/`（不带 `?view`）会让页面
+> 落在默认的「角色信息」页、抽卡推荐页根本没挂载，**9 条断言全读 `null`**（实测诊断
+> `{activeTab:"records", adviceHidden:true, unitRows:0, drawInputs:0}`），看起来像九项布局回归。
+> ② 新增**榜面诊断**：总榜读不到时把 `activeTab / adviceHidden / unitRows / drawInputs /
+> 榜面文字` 一起印出来（§6.3 第 7 条一直要的那一眼，以前只能手工开 devtools）。
+> ③ 旧判据 `sourceOk` 修正（逐关卡表的合计现在是**性价比原始分** `+1098`，不再是徽标 `+96`）；
+> ④ 分项表合计行改成 `+N`（与徽标 / 头行 / 下面那张表同一种写法 —— 改界面而不是给断言写特例）；
+> ⑤ `make-virtual-accounts.mjs` 自己 `mkdirSync(data/)`（新 worktree 里没这个目录，原脚本 ENOENT 崩）；
+> ⑥ 新增 **`docs/CDP布局套件.md`**（给别的 agent 的上手/排障文档，`AGENTS.md` 与 §5 都加了指针）。
+> 实测：裸地址跑那一套 **通过 ✓**（exit 0）；`run-tests.mjs` **19 个套件全部通过**（含 CDP 那套）。
+> 详见 **§4.2Y**。
+>
+> 上一版 **v4.6.95**（2026-10-13，同上）—— 用户一次给全四条，全做完：
+> ① 新增抽卡权重「**泛用性**」（默认 1，与强度/性价比同权）—— 量一个角色投稿的
+> **能通关**队伍里出现过的**不同队友数**；② **角色总榜受三个抽卡权重影响**，指标从
+> 「性价比得分」改名「**角色得分**」= 强度 × ws + 性价比 × wc + 泛用性 × wv
+> （三个分项各自**榜内归一到 0~100** 再加权；归一化的取样集合是**收敛前的全部整包**，
+> 用榜面会和「收敛」互为输入）。⚠️ 抽卡权重因此**第一次进服务端请求**（v4.6.94 那版
+> 刻意不进，因为那时它只服务抽卡方案），载荷 **v7 → v8**。
+> ⚠️ 这一版当时把方案写成「只吃强度/性价比两项（内部两两归一），调泛用性不动方案」——
+> **已在 v4.6.97 按用户要求推翻**（见上一条与 §4.2Z）。
+> ③ 虚拟账号支持**自定义角色名单**：角色列表末尾「＋ 添加角色」→ 编辑器里加任意角色、
+> 设星魂（E0/E1/E2/E6）与光锥（**同命途、专属优先**、一把锥只挂一个人、叠影 S1~S5）；
+> `GET|POST /api/virtual-accounts/:id/roster`（POST **整份替换**，只有虚拟账号能用）。
+> ④ 新增 **9 个预设**：无成本账号（常驻 0+1）/ 大隐金 MAX（常驻全 6+5、大隐金 16 人 0+0）/
+> 全角色平铺四档（0+0、0+1、2+1、6+5）/ 随机低中高氪（**精确** 20、50、100 限定金，
+> 星魂只停 E0/E1/E2/E6、锥只给已拥有角色的专属锥且恒 S1）。
+> 口径见 `docs/评分模型设计.md` **v45**，文件表与四个实测坑见 **§4.2X**；
+> 全套测试 18 个套件通过（新增 `virtual-accounts-test.mjs` 28 项；`e2e` 173 项）。
+> ⚠️ 这一版**没能真跑 CDP 布局套件**（当时 9222 没有调试浏览器），遗留已在
+> **v4.6.96** 解决（那一套真跑了，并修掉了它自己的一个硬 bug）——见 §4.2Y。
+>
+> 上一版 **v4.6.82**（2026-10-11，在 `.worktrees/fill-text-vcenter` 的
 > `fix/fill-text-vcenter` 分支上做）—— 两条修正 + 一条确认：
 > ① **补金顺序的写法错了**（用户原话：「遐蝶 本体+E2 2 金 这个描述有误，我已有遐蝶，
 > 应改为 E1-E2」）：上一版只看目标档，**已拥有**的角色也被写成「本体+E2」。现在
@@ -1844,8 +1898,12 @@ $env:DSH_HSR_DATA_FILE='accounts-virtual.json'; node bin/serve.mjs --port 8372 -
 
 ## 5. 测试命令 / 如何验证
 
+> 📄 **CDP 布局套件有一份专门的上手/排障文档：[`docs/CDP布局套件.md`](docs/CDP布局套件.md)**
+> —— 从零搭环境（服务 + 调试浏览器 + 虚拟账号库）、`CHECK_ADVICE_URL` 为什么必须设、
+> 红了怎么一眼定位、已知的「跳过」。**动界面排版之前先读它**，别再从头踩一遍。
+
 ```bash
-# 全量（15 个套件；CDP 那个在没有 9222 调试浏览器时会**跳过**而不是失败）
+# 全量（19 个套件；CDP 那个在没有 9222 调试浏览器时会**跳过**而不是失败）
 node tools/run-tests.mjs
 
 # 迭代时列出或筛选套件；--suite 可重复，参数是上表中的脚本文件名
@@ -2204,6 +2262,169 @@ node tools/_probe-data-status.mjs --port=8360             # 「数据状态」�
 | 口径演化史 / 被否定的方案 | `docs/评分模型设计.md`（读 v2 → v6 的顺序） |
 | 界面、数据链路、排障 | 本文 §3 / §4.2 的历史留档 + `docs/评分模型设计.md`（⚠️ `README.md` 自 v4.6.86 起只剩两行，不再是文档） |
 | 版本号 | `src/version.js`（+ `package.json` 同步） |
+
+---
+
+### 4.2X 本轮（v4.6.95，worktree `.worktrees/versatility-weight` / 分支 `feat/versatility-weight`，基于 `ef93c39`）—— 三条评分改动 + 虚拟账号自定义角色 + 9 个新预设
+
+**背景**：用户 2026-10-13 一次给全四条（开工约束照旧：「新建 worktree」）：
+
+> 1. 新增抽卡权重-泛用性权重，默认 1（与强度/性价比同权重），此角色投稿的能通关的所有队伍，
+>    包含的不同队友越多得分越高
+> 2. 角色总榜应受到 3 种抽卡权重的影响，因此「性价比得分」改名为「角色得分」
+> 3. 虚拟账号提供更多的角色可选……改为用户可给这个虚拟账号自定义添加角色（虚拟账号可在角色列表
+>    末尾点击添加没有的角色，并设置任意角色的星魂和光锥，设置光锥时选择该角色同命途光锥，专属光锥优先）
+> 4. 虚拟账号提供初始的几种情况：无成本账号 / 大隐金MAX 的无成本账号 / 全角色平铺 0+0·0+1·2+1·6+5 /
+>    随机低中高氪（20 / 50 / 100 限定金）……具体含义可以到社区查找，不懂的问我
+
+口径（三分项、归一化、记账方式）见 `docs/评分模型设计.md` **v45**；四条需求里**问过用户**的
+四件事与他的答复记录在那一节与本节末尾。
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `public/scripts/advice.js` | ① `SCORING.drawWeight` 加 `versatility`（默认 1）；`DRAW_WEIGHT_ROWS` 加第三个旋钮，`drawWeightDefaults()` 改成**按那张表现算**（不再手抄键名）；`normalizeDrawWeights()` 泛化到 N 个键；**新增 `drawWeightValues()`**（原值，给抽卡方案做两两归一，避免 `0.6/0.8 = 0.7499999999999999`）。② 第一趟算分处新增 `strength = 100 × perf`（**不乘金数项**；不能从 `total` 反推，0 金那支是 ×1.2）；`pack.bestPerf`（版本 → 该版本最高 perf）；第二趟 `accStrength`（**与性价比共用 `wSum` 分母**）。③ 新增 `teammateVariety` / `TRAILBLAZER_KEY` / `varietyKeyOf()`：从 `packRows`（达标/满分前沿 = 「能通关」集合）逐队记「谁和谁同队」，跨副本跨版本并成一个集合。④ `frontierBoard`：逐 env 补 `envStrength` / `envStrengthValue`；整包补 `strengthTotal` / `versatilityRaw`；新增三分项**榜内 min-max 归一**（取样集合 `all` = 收敛前全部整包）与 `characterScore`；`rankFrontier` 排序键换成 `characterScore`（次级仍是老 `total`）。⑤ `teamPlan()` 的抽卡权重改成按 `strength : cost` **两两归一**（泛用性不动方案） |
+| `src/server/conclusion.js` | `slimFrontierUnit()` / `slimCharacterPack()` 新增 `characterScore` / `strengthScore` / `costScore` / `versatilityScore` / `strengthTotal` / `versatilityRaw`，逐 env 新增 `envStrength` / `envStrengthValue`（**刻意不叫 `strength`**：那是 v4.6.87 被撤销的字段名，`herta-test` 有回归盯着）；`archiveConclusion` 接 `options.drawWeights` 并**回显归一化后的那一份**；`archiveCharacterPacks` 同样接 `drawWeights`；载荷 **v7 → v8**、面板 **v3 → v4** |
+| `src/server/app.js` | `/api/archive/conclusion` 接 `body.drawWeights`；`/api/archive/packs` 从查询串接 `drawWeights`；**新增 `GET|POST /api/virtual-accounts/:id/roster`**（取名单原文 / 整份替换；只有虚拟账号能用，真实账号 400）；预设清单路由补传 `presetContextRefs` |
+| `src/server/virtual-accounts.js` | ① `presetContext()` 多收 `popularLightCones` / `lightConePaths` / `characterPaths`，导出 `presetContextRefs(index)`；新增 `standardChars`（资料表里 `rarity=5 && limited=false` 且非开拓者的 7 个）、`signatureConeOf()`（**常驻走写死的 `STANDARD_SIGNATURE_CONES`**，其余走 `popularLightCones`）、`signatureOwnerOf`（**按角色迭代建**，见下面的坑）、`conesOfPath()`；② 新增 9 个预设（无成本 / 大隐金 MAX / 平铺四档 / 随机三档）+ `randomRosterOf()`（三类动作按 3:2:1 加权随机，**只把要花金的专属锥当动作**）；③ 新增 `normalizeRoster()` / `customRosterPreset()` / `nearestEidolonTier()`；④ `buildVirtualAccount`：光锥**挂到它自己的角色**身上（主人优先、退路每一步都找空槽）、支持 spec 的 `equips`（自定义名单显式指定主人）、账号上多带 `virtualRoster` 名单原文 |
+| `src/server/store.js` | 新增 `AccountStore.setVirtualRoster()`（**只给虚拟账号**、**整份替换**：走 `setSnapshot` 的「保留最长名单」会让删除被静默回滚）；`toPublic()` 多带 `virtualPreset` / `hasVirtualRoster`（**不下发名单原文**，编辑器单独取） |
+| `src/server/archive.js` | `/api/archive` 新增下发 `refs.lightConePaths`（170 条，数据集里一直有、只是没暴露）与 `refs.pathLabels`（命途中文名） |
+| `public/scripts/virtual-roster.js`（新增） | 虚拟账号的角色编辑器：搜索 / 全部·已拥有·未拥有筛选 / 每个角色三个下拉框（星魂 E0·E1·E2·E6、同命途光锥且专属排第一、叠影 S1~S5）/ 「＋ 添加」「移除」；保存走整条 `api()`（鉴权 + CSRF）。**决策逻辑抽成可测的纯函数** `coneChoicesFor()` / `defaultConeFor()` |
+| `public/scripts/app.js` | `renderSnapshot()`：虚拟账号的角色列表末尾追加「＋ 添加角色」卡片（`addCharacterCard()`）；保存后 `loadSnapshot()` + 抽卡页可见时 `adviceOf().show()` |
+| `public/scripts/advice-view.js` | 徽标 / 配队清单 / 详情窗口 head 全部改名「角色得分」；`unitRoleScore()` 兜底老载荷；新增 `scoreBreakdownTable()`（三分项那张表）；`tipBox()` 新增 `pre` 与 `tableClass`（主表打 `is-source`，两张表必须能区分）；抽卡权重的 meta / 输入框按 `DRAW_WEIGHT_ROWS` 渲染三个；**改抽卡权重现在要重算结论**（并进 `conclusionKey` / 面板缓存键 / 请求）；`fetchPacks` 带 `drawWeights`；`mountAdviceView` 返回值新增 `ensureIndex()` |
+| `public/scripts/advice-tip-window.js` | 默认标题 →「角色得分详情」 |
+| `public/scripts/virtual-roster.js` + `public/styles/app.css` | 新增 `.vroster-*` 与 `.char-card.is-add`（虚线框的「＋ 添加角色」卡）、`html:has(#virtualRosterModal:not([hidden]))` 锁背景滚动 |
+| `public/index.html` | 「＋ 虚拟账号」的提示补一句「角色列表末尾点『＋ 添加角色』可自己加人、设星魂与同命途光锥」 |
+| `tools/virtual-accounts-test.mjs`（新增） | **28 项**：常驻名单与专武、大隐金两组、平铺四档、随机三档（★ 金数**精确**等于 20/50/100，连抽 3 次）、`normalizeRoster` 四条、专属锥归属、编辑器候选逻辑四条 |
+| `tools/e2e-test.mjs` | **173 项**：payload 7 → 8 / packs 3 → 4；新增抽卡权重一整节（回显、非法输入、★ 榜面真的变了、全押泛用性时角色得分 = 泛用性那一项、三分项存在性、逐 env 强度字段、泛用性分得开）；新增 9 个新预设的形状断言；新增自定义名单一整节（GET 预填、无 CSRF 403、真实账号 400、★ 清空后快照真的变短、★ 专锥挂到本人、星魂吸附 / 叠影夹逼） |
+| `tools/herta-test.mjs` | 载荷 7 → 8（两处）；「0 金通关 ×1.2」那条的**取样集合换成 `frontierPacksByChar`**（收敛前）并说明原因；原来那条「不许有 `strength`」的撤销检查改成**两件事都钉**（新字段必须在、裸 `strength` 必须不在） |
+| `tools/team-plan-test.mjs` | 载荷 7 → 8；抽卡权重的边界用例改成三个键；新增「泛用性旋钮不许动抽卡方案」 |
+| `tools/check-advice-layout.mjs` | 抽卡权重框 2 → **3**；总榜浮层的**探针改选 `.advice-value-tip-table.is-source`**（现在有两张表，不区分会让十几条断言静默量错对象）；标题 / 配队清单正则改「角色得分」；新增 `splitOk`（三分项表的列名 / 3 行 + 合计 / **合计 = 标题上的数**）；抽卡权重那一节改成「改它要重算总榜」 |
+| `tools/make-virtual-accounts.mjs` / `tools/run-tests.mjs` | 预设工具补传 `presetContextRefs`；测试总入口注册新套件 |
+| `docs/评分模型设计.md` / `HANDOFF.md` / `src/version.js` / `package.json` | 新增 **v45** 一节（三分项定义 / 合成方式 / 实测分布 / 连带口径变化 / 界面与回归）；版本 → **4.6.95** |
+
+**实测（真实数据集，等权 1:1:1，隐金全勾）**：
+
+```
+收敛前整包 1753 条 → 榜面 77 条；三个分项在榜面上的分布（p25 / 中位 / p75）：
+  强度得分  9.7 / 51.8 / 88.0      性价比得分  4.0 / 19.9 / 61.3
+  泛用性得分 14.1 / 32.4 / 53.5     versatilityRaw 3 ~ 74 个不同队友
+角色得分前 6（等权）：Mortenax Blade 95.7（强度 90.9 / 性价比 96.2 / 泛用性 100.0）
+  · Robin • Summeretto 90.5 · Trailblazer (Remembrance) 90.0 · Tribbie 89.6
+  · Ashveil 89.5 · Sparkle 87.5
+全押泛用性时前 6：Mortenax Blade 100 · Tribbie 99 · Trailblazer (Remembrance) 96
+  · Robin • Summeretto 96 · Trailblazer (Elation) 96 · Sparkle 89
+⚠️ 连带口径变化：榜面「隐金后 0 金」的条目 7 → **0**（0 金整包不再是任何角色的最高分代表；
+   收敛前仍有 31 条）。`herta-test` 那条用例的取样集合因此换到收敛前。
+```
+
+**这一轮踩到的四个坑（都写进代码注释了）**：
+
+1. **常驻的「专属光锥」不能拿 `popularLightCones` 顶替** —— 那张表是「**最常用**光锥」，
+   实测姬子 → 谐乐静默之后、白露 → 一场术后对话（4★）、瓦尔特 → 决心如汗珠般闪耀（4★）、
+   克拉拉 → 记一位星神的陨落（星芒商店）。用户要的是**专武**，所以那 7 对写死在
+   `STANDARD_SIGNATURE_CONES`（也不能按命途推：毁灭有**两把**常驻五星）。
+2. **「锥 → 主人」的反向表必须按角色迭代建**：按 `popularLightCones` 的条目建时，
+   常驻那 7 对**覆盖**了最常用表，于是「记一位星神的陨落」的主人被记成克拉拉、
+   而她的专属锥又是「无可取代的东西」→ 主人槽已占用 → 退回「随便找空位」→
+   最后挂到了**阿兰**身上（`flat-0+1/2+1/6+5` 三档全错，实测）。
+3. **随机账号的锥动作只认「要花金」的专属锥**：有些角色的专属锥是常驻 / 4★（成本 0），
+   当动作会扣 1 金预算却一分金都没加上 —— 实测 100 金的号只有 96~98。
+4. **挂锥的退路链每一步都要优先找空槽**：改前第三步直接 `carriers[ci]`，那一格**可能已经
+   挂着别的锥** → 被覆盖，「72 把锥只装上 70 把」。
+
+**用户答复（本轮问过的四件事）**：①「大隐金」= 隐金设置的**①赠送 + ③兑换**两组角色
+（16 人）；②「常驻全 6+5」的 S5 = **各常驻角色自己的常驻专属光锥**；③「全角色平铺」=
+**全部角色**（含限定 5★），+1/+5 都是**各自的专属光锥**；④金数记账：**1 金 = 1 个本体 /
+1 级星魂 / 1 把光锥本体**（E0 = 1 金、E1 = 2 金、E2 = 3 金、E6 = 7 金、叠影恒 S1 = 1 金、
+E2S1 = 4 金）——与仓库既有的 `memberGoldParts` 口径完全一致。
+
+**本轮未做的（留给下一轮）**：
+
+* 虚拟账号卡片上那个「刷新角色」按钮仍是无条件渲染的（它会给虚拟账号发一次注定失败的
+  米游社请求）—— 属于 2026-10-12 就有的老毛病，本轮没动，免得把三条新需求的改动面摊大。
+* ⚠️ **CDP 布局套件（`tools/check-advice-layout.mjs`）本轮本机没法真跑**（9222 端口当时没有
+  调试浏览器，`run-tests.mjs` 会跳过它），所以那一套的改动是**按代码逐处审过、没能真跑**：
+  三处 `drawWeightInputs` 2 → 3、浮层探针改选 `.advice-value-tip-table.is-source`
+  （两张表不区分会让十几条断言静默量错对象 —— 这是本轮最需要真跑复核的一处）、
+  标题 / 配队清单正则改「角色得分」、新增 `splitOk`。
+  **✅ 已解决：下一轮（v4.6.96）把环境搭起来了，那一套真跑了，并修掉它自己的一条硬 bug
+  —— 详见 §4.2Y。**
+  新界面的 DOM（`#virtualAddCharacter` / `#virtualRosterModal`）同样**没有真浏览器验证过**，
+  所以编辑器里那段**有分支的决策逻辑**（`coneChoicesFor()` / `defaultConeFor()`）已经抽成
+  纯函数、在 `virtual-accounts-test.mjs` 里有 4 条回归兜着（DOM 接线本身仍未验证）。
+
+---
+
+### 4.2Y 本轮（v4.6.96，同一支 worktree）—— 把 CDP 布局套件**真跑起来**并修掉它的硬 bug + 写一份给 agent 的上手文档
+
+**背景**：用户原话「修复 CDP 布局套件的问题，并写入 md 文件，方便别的 agent 使用」。
+§4.2X 的遗留就是「那一套没能真跑」，而它恰好是这次改动里**唯一没有被真浏览器验证过**的部分。
+
+**做了什么**：
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `tools/check-advice-layout.mjs` | ① **硬 bug**：`URL_TO_OPEN` 不再保持调用方原样，解析参数时就规范化成一定带 `?view=advice`（`ADVICE_URL` 与它同值）。改前第 100 / 552 行两次导航用的是裸 `URL_TO_OPEN`，于是 `--url=http://127.0.0.1:8360/` 会让页面落在**默认的「角色信息」页**上 —— 抽卡推荐页的视图根本没挂载，关卡权重 / 清空输入 / 抽卡权重那 **9 条**全读到 `null`（实测：`{activeTab:"records", adviceHidden:true, unitRows:0, drawInputs:0}`）。② 新增**榜面诊断**：总榜第一条读不到时，把 `activeTab / adviceHidden / unitRows / valueNodes / drawInputs / 榜面文字` 一起印出来 —— 这正是 §6.3 第 7 条一直要求「红了先看一眼」的那件事，以前只能靠人手工开 devtools。③ 探针新增 `sourceTotal`（从 `tip.__unit.total` 现取性价比原始分）。④ 修掉旧判据：`sourceOk` 不再要求「逐关卡表的合计 = 徽标上的数」——用户 2026-10-13 第 2 条之后两者不是同一个数（实测表里 `+1098`、徽标 `+96`），改成与**成本项原始分**比，恒等式照样钉住。 |
+| `public/scripts/advice-view.js` | 分项表的合计行改成 `+N`（与徽标 / 头行 / 下面那张表同一种写法）。改前是 `96` 而头行是 `+96`，`splitOk` 判等直接红 —— 界面内两处写法不一致本来就是瑕疵，所以**改界面而不是给断言写特例**。 |
+| `tools/make-virtual-accounts.mjs` | `data/` 在**新建 worktree / 全新 clone** 里不存在（它 gitignore、也不进 worktree），原脚本直接 `ENOENT` 崩 —— 而这条命令正是「新环境里把界面跑起来」的第一步（CDP 套件也靠它准备账号）。加 `mkdirSync(dirname(OUT), { recursive: true })`。 |
+| `docs/CDP布局套件.md`（新增） | 给别的 agent 的上手/排障文档：30 秒版命令、各节盯什么、环境三件套（服务 / 调试浏览器 / 虚拟账号库）、三个必踩的坑（`CHECK_ADVICE_URL` 不指路＝在测 main；URL 必须落到抽卡推荐页；探针是模板串、注释里不能有反引号）、**症状 → 根因 → 处理**对照表、加判据的约定、已知的「跳过」。 |
+| `AGENTS.md` / `HANDOFF.md` §5 | 各加一条指向 `docs/CDP布局套件.md` 的指针；§5 里「15 个套件」改成 **19 个**（早就过期了）。 |
+
+**实测（本机把环境搭起来跑通的）**：
+
+```
+① 服务：$env:DSH_HSR_DATA_FILE='accounts-virtual.json'; node bin/serve.mjs --port 8360
+② 浏览器：Start-Process "$env:USERPROFILE\Desktop\Chrome CDP.lnk" → 9222 返回 Chrome/152
+③ 用**裸地址**跑（正是改前 9 项红的那个调用）：
+   node tools/check-advice-layout.mjs --url=http://127.0.0.1:8360/
+   → 控件位置稳定性 + 两处入口 + 两套权重 + 总榜行图标 / 详情大窗口 / 文案: 通过 ✓（exit 0）
+④ 全套：$env:CHECK_ADVICE_URL='http://127.0.0.1:8360/'; node tools/run-tests.mjs
+   → 19 个套件**全部通过**（含 CDP 那套；这是本轮第一次真跑它）
+```
+
+**顺带确认的两件事**（都写进文档了）：① 虚拟账号库让「切账号重算」那条从**跳过**变成真跑
+（实测「切到『虚拟·全图鉴』后方案重算成空态：切前 15 张卡 → 切后 0 张」✓）；
+② **关掉 Chrome 的最后一个标签页会让 Chrome 自己退出**，之后脚本报
+`ECONNREFUSED 127.0.0.1:9222` —— 看起来像「浏览器明明起着」，其实是刚被自己关掉了（本轮踩过）。
+
+**仍未验证的**：`#virtualAddCharacter` / `#virtualRosterModal` 的 DOM 接线（CDP 套件不看虚拟账号
+编辑器；要真验证得再写一节）。编辑器里那两段有分支的纯函数已有 4 条 Node 回归兜着。
+
+### 4.2Z 本轮（v4.6.97，同一支 worktree）—— 泛用性进补金推荐 + 三项的「完整得分来源」
+
+**背景**：用户 2026-10-13 两条（原话见 `docs/评分模型设计.md` **v46**）：
+① 「角色得分页面需要给出强度、性价比、泛用性的**完整得分来源**，如同性价比得分来源」；
+② 「**泛用性权重也适用于补金推荐**」。②直接**推翻**了 §4.2X 里那条「抽卡方案只吃两项」。
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `public/scripts/advice.js` | ① 第二趟累计器新增 `accStrengthBest`（该副本**表现分最高那一版**的 `100 × perf`，只累计参与平均的版本）→ 整包 `strengthBest`、逐 env `envStrengthBest`（强度来源表「跨版本发挥」列的分母）。② 整包新增 `versatilityMembers`（队友名单，**排序后**存，服务端内部用、**不投影进 `/conclusion`**）。③ `frontierBoard` 的 `extents` 改成**返回值**（`{ board, byChar, byTier, extents }` → 载荷顶层 `frontierExtents`），不再逐条挂到整包上。④ `teamPlan()`：**三项一起归一**（改用 `normalizeDrawWeights`，删掉自己那套「两项相除」）、新增「角色 → 泛用性」表（键是 **`unit.name`**，不是 `unit.char`）、候选新增 `versatilityRaw`（= **队内成员泛用性的平均**）、新增 ③ 的池内刻度与 `versatilityPct`、`total_score` 加第三项、排序次级键补 ③ 与 `versatilityPct`；返回体新增 `versatilityLo/Hi` 与逐行 `versatilityPct` / `versatilityRaw` |
+| `src/server/conclusion.js` | `slimFrontierUnit`：**刻意不投影** `versatilityMembers` / `extents`（逐条重复 = 33 KB + 117 KB，会顶穿 600 KB 上限），逐 env 新增 `envStrengthBest`；`slimCharacterPack` 同样新增 `envStrengthBest`（面板那条路必须与总榜那份在「界面要现算的字段」上等价）；`/conclusion` 顶层新增 `frontierExtents`（**v8 → v9**）；`/packs` 顶层新增 `versatilityMembers` + `frontierExtents`（**v4 → v5**） |
+| `public/scripts/advice-view.js` | ① 新增 `frontierExtentsNow()`（两条路兜底：`conclusion.frontierExtents` → `packsFrontierExtents`）、`strengthSourceBlock()`、`versatilitySourceBlock()`；`scoreBreakdownTable()` 的「原始量」带榜内区间；`frontierTip()` 的 `pre`/`extra` 接入两块。② `enrichTierDetail()` → **`enrichTipDetail()`**：同一个 `/api/archive/packs?char=` 载荷现在同时补「逐档榜的关卡明细」「泛用性名单」「归一上下限」，`learned` 为假时不重画。③ `fetchPacks()` 的返回值带 `versatilityMembers` / `frontierExtents`；`state` 新增 `packsFrontierExtents`。④ `teamPlanTip()` / `renderTeamPlan()` 的等式与分数来源表补第三项，并新增「泛用性 = 队内平均」那条脚注 |
+| `public/styles/app.css` | 新增 `.advice-vtip-members`（队友名单：换行、底色、`overflow-wrap: anywhere`）与 `.advice-source-note`（每个来源块底部那句换算） |
+| `tools/team-plan-test.mjs` | 夹具补 `versatilityRaw`（**不带它这一档根本测不出来**：两队都算 0、③ 退化）；「默认 1:1」→ 三项各 1/3；「3:1 与 0.75:0.25 同榜」→「3:1:1 与 0.6:0.2:0.2 同榜」并把那条「调泛用性不许动方案」**反向**成「泛用性拉满 → 系数 0/0/1、总分 = ③」；「强度高/性价比高」那一档**每项都显式把另两项置 0**（否则漏掉的那项按默认值 1 补进来，等于没在测这一项）；新增 `byVersatility` 检验；载荷 8 → 9 |
+| `tools/herta-test.mjs` | 载荷 8 → 9（两处）；新增 v9 字段断言（顶层三个上下限合法、逐 env `envStrengthBest`、`envStrength ≤ envStrengthBest`）+ **反向**断言「泛用性名单不许进 `/conclusion`」 |
+| `tools/e2e-test.mjs` | 载荷 9 / 5；新增「顶层带 frontierExtents」「结论不带队友名单」「packs 顶层带队友名单（去重非空）」「packs 带上下限」四条 |
+| `tools/check-advice-layout.mjs` | 新增 `strengthSourceOk`（强度表列名 / 行数 / 合计形状）与 `versatilitySourceOk`（名单**按元素**数数 = 标题上的数、归一换算那句）并并入 `tipOk`；探针新增 `divisionContext`（除号判红时把上下文印出来 —— 本轮为此多跑了一整轮 CDP）；方案等式的系数从 2 个 → **3 个**（容差放宽到 1.51，注释说明这是**两位小数显示**带来的舍入，不是分数算错）；「分数来源表两行」→ **三行**；`0.75/0.25` → `0.6/0.2`（恢复默认那条 → `0.33`） |
+| `docs/评分模型设计.md` / `HANDOFF.md` / `src/version.js` / `package.json` | 新增 **v46** 一节；§4.2X 里「方案只吃两项」那段**标注为已推翻**并保留原文说明当时的理由；版本 → **4.6.97** |
+
+**三个实测踩到的坑（都写进注释了）**：
+
+1. **载荷两次顶穿 600 KB 硬上限**：先按「逐条带上」写 → `/conclusion` **745 KB**（队友名单
+   117 KB + 上下限 33 KB，319 条各一份）；只把上下限挪到顶层 → **612 KB** 仍贴着上限；
+   再把名单改成只在按需接口上带 → **569 KB** 收住。教训：**角色级的东西不能逐条下发**
+   （一个角色在榜单里最多出现 5 次）。
+2. **`÷` 会把「金数列不许出现除号」那条判据判红** —— 它是**全窗口**断言，不只看金数那一列。
+   本轮两次因此判红（分项表标题、强度来源表脚注）。一律写 `/`（也正是用户 2026-10-11 要的）。
+3. **`teamPlan` 里的角色键是 `unit.name` 而不是 `unit.char`**：这条链吃的是
+   `projectConclusion` 投影过的整包。用错**不会报错** —— 表里只剩一个 `undefined` 键，
+   于是每支队的泛用性都算成 0、③ 整列退化（夹具那条「③ 的刻度不该退化」抓住了它）。
+
+**实测**：`run-tests.mjs` **19 个套件全部通过**（含真跑的 CDP 那套）：
+`e2e` 177 项、`herta` 106 项、`team-plan` 31 项、`virtual-accounts` 28 项；
+CDP 那套 `通过 ✓`（0 项 ✗、1 项显式跳过 —— 战斗记录 chip，虚拟账号库没有战绩，属环境事实）。
+界面实测（等权，隐金全勾）：强度来源表 5 行、合计 `+1275`；泛用性名单 **74** 个队友，
+换算印成 `得分 = 100 ×（74 − 3）/（74 − 3） = 100.0`。
 
 ---
 

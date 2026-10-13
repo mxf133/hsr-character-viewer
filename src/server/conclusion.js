@@ -9,7 +9,9 @@
 // 算法本身写在 advice.js 里（纯函数，浏览器与服务端共用），这里只负责
 // 「按副本把数据取齐 + 把中文名补上」。
 import { archiveFrontierAll, archiveIndex, archiveTeams, loadI18n, zhName } from './archive.js';
-import { buildConclusion, normalizeHiddenCosts, VERSION_WINDOW } from '../../public/scripts/advice.js';
+import {
+  buildConclusion, normalizeDrawWeights, normalizeHiddenCosts, VERSION_WINDOW,
+} from '../../public/scripts/advice.js';
 
 /** 结论覆盖的副本顺序（按游戏解锁顺序）。 */
 const MODE_ORDER = ['moc', 'pf', 'as', 'aa'];
@@ -384,7 +386,36 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
   // 整包自己的金数：只用于展示（**不进公式、不参与排序**）
   gold: Number(unit.gold ?? unit.pulls) || 0,
   total: unit.total,
-  // ⚠️ 抽卡方案的「强度得分」用的**就是**上面这个 `total`（用户 2026-10-12 第 8 条：
+  // ---- 三个分项 + 合成后的「角色得分」（用户 2026-10-13 第 1、2 条）------------------
+  //
+  // 用户第 2 条把「性价比得分」改名「**角色得分**」：榜上那个数不再是「含金数项总分」
+  // 一个量，而是三个分项按**抽卡权重**加权的结果（三个分项各自在榜内归一到 0~100）：
+  //
+  //   角色得分 = ws × 强度得分 + wc × 性价比得分 + wv × 泛用性得分
+  //
+  // ⚠️ `total` **照旧下发**，它是「性价比」那一项的**原始分**（量纲与 v4.6.94 一致）：
+  // 抽卡方案的 ① 强度得分吃的就是它，浮层也要靠它对上「合计」那一行。
+  // ⚠️ 抽不到 `characterScore` 的是**合成夹具 / 老服务端**（它们直接手搓 `frontierUnits`）：
+  // 这里如实给 `null`，由界面退回 `total`（见 `advice-view.js` 的 `unitRoleScore`）。
+  characterScore: unit.characterScore ?? null,
+  strengthScore: unit.strengthScore ?? null,
+  costScore: unit.costScore ?? null,
+  versatilityScore: unit.versatilityScore ?? null,
+  // 两个**原始量**（浮层要写清「那 100 分是怎么归一出来的」，就得给原始值）：
+  //   * `strengthTotal` —— 强度分项的原始累计（100 × 表现 × 版本加权 × 副本权重，**不含金数项**）；
+  //   * `versatilityRaw` —— 泛用性原始分 = 这个角色投稿的能通关队伍里出现过的**不同队友个数**。
+  strengthTotal: unit.strengthTotal ?? null,
+  versatilityRaw: unit.versatilityRaw ?? null,
+  // ⚠️ **泛用性的来源名单（`versatilityMembers`）刻意不在这里投影**（用户 2026-10-13 要求
+  //    「给出泛用性的完整得分来源」，但名单走的是**按需**那条路）：
+  //    它是角色级的，而一个角色在榜单里最多出现 5 次（总榜 1 + 四个星魂档各 1），
+  //    逐条带就是同一份名单重复 5 次 —— 实测 319 条共 **117 KB**，把 `/conclusion`
+  //    从 564 KB 顶到 **730 KB**，直接打穿 e2e 的 600 KB 硬上限。
+  //    改由 `/api/archive/packs?char=…` 那份载荷带**这一个角色**的名单（见 `slimCharacterPack`），
+  //    界面点开详情时按需取 —— 与「全部配队」「逐档榜补明细」共用同一个缓存请求。
+  // ⚠️ 归一上下限同理：它是**整榜一份**，挂在顶层 `frontierExtents`（见下面 `/conclusion`
+  //    的投影），逐条带一份会白花 33 KB。
+  // ⚠️ 抽卡方案的「强度得分」用的**就是**上面那个 `total`（用户 2026-10-12 第 8 条：
   //    同为 0T，9 金队要比 16 金队强得多）。v4.6.87 曾在这里多发一个 `strength`
   //    （纯强度，不含金数项），v4.6.91 已删除 —— 载荷形状回到 **v7**。
   envCount: unit.envCount,
@@ -410,6 +441,15 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
       envLabel: env.envLabel ?? null,
       // 该整包在这一副本里的贡献（Σ = total）。`score` = value ÷ 副本权重，界面自己算。
       value: env.value,
+      // 强度那一档的同一批数字（用户 2026-10-13 第 2 条）：`envStrength` 是本副本的
+      // **表现分**（不含金数项）、`envStrengthValue` 是它乘上副本权重后的贡献
+      // （Σ = `strengthTotal`）。浮层要解释「强度分项从哪来」就得有它。
+      // ⚠️ 键名**不是** `strength`：那是 v4.6.87 被撤销的字段名，回归测试盯着它别复活。
+      envStrength: env.envStrength ?? null,
+      envStrengthValue: env.envStrengthValue ?? null,
+      // 该副本里**最好的那一版**的表现分（0~100）：强度来源表的「跨版本发挥」列拿它当分母
+      // （`envStrength ÷ envStrengthBest`，恒 ≤ 1）。老载荷没有它时界面退回因子 1。
+      envStrengthBest: env.envStrengthBest ?? null,
       // 最佳证据那条**队伍**配置：界面写「7 金 · 满分 · 行动值 295 · 4.2 赛季」。
       bestTeamGold: env.bestTeamGold ?? null,
       // **最佳证据所在版本**的最便宜金数 —— 金数项的分母（用户 2026-10-10 第 5 轮：
@@ -462,6 +502,19 @@ const slimCharacterPack = (unit, i18n, maps) => ({
   superimp: Number(unit.superimp) || 1,
   gold: Number(unit.gold ?? unit.pulls) || 0,
   total: unit.total,
+  // 三个分项 + 合成后的「角色得分」——与 `slimFrontierUnit` **必须逐字段等价**：
+  // 逐档榜的浮层会拿面板这份数据整份替换 `unit.envs` 再重画，少一个字段就会静默显示
+  // 与榜上对不上的数（v4.6.88 的 `seasonMinCost` 就是这么炸过一次）。
+  // 见 `slimFrontierUnit` 里那段注释对三个分项的定义。
+  characterScore: unit.characterScore ?? null,
+  strengthScore: unit.strengthScore ?? null,
+  costScore: unit.costScore ?? null,
+  versatilityScore: unit.versatilityScore ?? null,
+  strengthTotal: unit.strengthTotal ?? null,
+  versatilityRaw: unit.versatilityRaw ?? null,
+  // ⚠️ 泛用性的**来源名单不在这里**：它是**角色级**的，同一个角色的几十个整包共用一份。
+  //    逐包带就是同一份名单重复最多 59 次（实测一个角色能到 59 条配装）——
+  //    放在这个载荷的**顶层** `versatilityMembers` 上（见 `archiveCharacterPacks` 的返回）。
   envCount: unit.envCount,
   bestTeamGold: unit.bestTeamGold ?? null,
   bestTier: unit.bestTier ?? null,
@@ -475,6 +528,13 @@ const slimCharacterPack = (unit, i18n, maps) => ({
     weight: env.weight,
     value: env.value,
     score: env.score,
+    // 强度分项（不含金数项）——与 `slimFrontierUnit` 的 env 投影等价，见那边的注释。
+    // ⚠️ 键名不是 `strength`（那是被撤销的 v4.6.87 字段名）。
+    envStrength: env.envStrength ?? null,
+    envStrengthValue: env.envStrengthValue ?? null,
+    // 与 `slimFrontierUnit` 的 env 投影**等价**（面板这条路上界面的「来源」表也是现算的，
+    // 少一个字段不会报错、只会静默少一列或算出 > 1 的因子 —— 见下面 `seasonMinCost` 那段）。
+    envStrengthBest: env.envStrengthBest ?? null,
     bestTeamGold: env.bestTeamGold ?? null,
     // ⚠️ **`seasonMinCost` 必须发**（v4.6.88 修的真 bug）：界面的「贡献值来源」表是用
     // `frontierFactorsOf(env, meta)` **现算**的，而金数项的分母是「**该版本**最便宜」
@@ -525,11 +585,17 @@ const slimCharacterPack = (unit, i18n, maps) => ({
  * `found:false` + 空数组，**不报错** —— 一个不在压金前沿里的角色本来就该是空面板。
  *
  * ⚠️ 口径与 `/conclusion` 完全一致：同一个 `buildConclusion`、同一份
- * `frontierWeights` **和同一份 `hiddenCosts`**。两边跑不同的权重 / 隐金设置会让
- * 「总榜显示的名次」与「面板显示的分数」对不上。
+ * `frontierWeights`、同一份 **`drawWeights`** 和同一份 `hiddenCosts`。两边跑不同的
+ * 权重 / 隐金设置会让「总榜显示的名次」与「面板显示的分数」对不上。
+ *
+ * ⚠️ **`drawWeights` 也必须带**（用户 2026-10-13 第 2 条之后）：角色得分是三个分项
+ * 按抽卡权重加权的**榜内归一分**，而归一用的极值取自整张 `all` 表 —— 面板这条链
+ * 用不同的权重算，同一个整包的「角色得分」就会与榜上不一致（这类「权重没带过去」
+ * 的 bug 在 v4.6.69 / v4.6.88 各炸过一次）。
  *
  * @param {string} name 角色英文数据集键**或**中文名
- * @param {{window?:string, frontierWeights?:object, hiddenCosts?:object}} options
+ * @param {{window?:string, frontierWeights?:object, hiddenCosts?:object,
+ *          drawWeights?:object}} options
  */
 export const archiveCharacterPacks = async (name, options = {}) => {
   const raw = String(name || '').trim();
@@ -569,6 +635,9 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     // 隐金设置（用户 2026-10-11）：面板与总榜必须同一份，否则同一个整包在窗口里与榜上
     // 会显示两个分（v4.6.69 修的正是同一类「权重没带过去」的 bug）。
     hiddenCosts: options.hiddenCosts,
+    // 抽卡权重（用户 2026-10-13 第 2 条）：角色得分 = 三个分项按它加权，所以面板
+    // **必须**与总榜用同一份，否则同一个整包在两个地方显示两个「角色得分」。
+    drawWeights: options.drawWeights,
   });
   // ⚠️ 键不区分大小写地兜一次：形态角色（开拓者各形态、丹恒•腾荒这类）在两边
   // 的大小写/空格写法可能不一致。
@@ -585,6 +654,17 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     // 图标表按角色/光锥维度建一次，这一整个请求里共用（下面每个整包、每个队友都要查）。
     // 图标表按角色/光锥维度建一次，这一整个请求里共用（下面每个整包、每个队友都要查）。
     packs: hit.map((unit) => slimCharacterPack(unit, i18n, maps)),
+    // 泛用性的**来源名单**（用户 2026-10-13：「给出泛用性**完整得分来源**」里唯一那个
+    // 集合型来源：这个角色能通关的队伍里出现过的不同队友）。
+    // ⚠️ 放在**顶层**而不是每个整包里：它是**角色级**的（同一个角色的几十条配装共用一份），
+    //    逐包带就是同一份名单重复最多 59 次。
+    // ⚠️ 也**不上 `/conclusion` 的载荷**：那条路上一个角色会出现 5 次（总榜 + 四个星魂档），
+    //    逐条带实测 117 KB，会把 600 KB 的硬上限打穿 —— 所以界面点开详情时按需来取这里。
+    versatilityMembers: hit[0]?.versatilityMembers ?? null,
+    // 三个分项的归一上下限：面板浮层也要写「得分 = 100 ×（原始量 − 最小）÷（最大 − 最小）」，
+    // 而面板这条路上界面**可能根本没有加载过结论**（用户直接在「角色信息」页点开的）。
+    // 它只有一个对象（~110 字节），随包带一份最省事，也省掉「结论没加载就没有刻度」的缺口。
+    frontierExtents: result.frontierExtents || null,
     // 副本元数据随包一起给：面板要写副本中文名与权重，单独再发一份不划算。
     envs: frontierAll.map((f) => {
       const meta = result.frontierEnvs?.find((e) => e.id === f.env);
@@ -620,7 +700,11 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     // v3 = 每个 env 新增 `seasonMinCost`（金数项的分母）：逐档榜的浮层会拿面板这份数据
     //      整份替换 `unit.envs` 再重画「贡献值来源」表，缺它就会让「跨版本发挥」算出 > 1
     //      （实测 39% 的行、最大 ×5.76）。见 `slimCharacterPack()` 里的注释。
-    payload: 3,
+    // v4 = 三个分项 + 合成后的「角色得分」与逐 env 的 `envStrength` / `envStrengthValue`
+    //      （用户 2026-10-13 第 1、2 条），且请求侧新增 `drawWeights`。
+    // v5 = 逐 env 新增 `envStrengthBest`（强度来源表的「跨版本发挥」列的分母）——
+    //      用户 2026-10-13「需要给出强度、性价比、泛用性的完整得分来源」。
+    payload: 5,
   };
 };
 
@@ -763,6 +847,11 @@ const projectConclusion = (result) => ({
   // ~410 KB。`envCount` 仍照发，界面照旧写「等 N 个副本」。
   frontierTiers: Object.fromEntries(Object.entries(result.frontierTiers || {})
     .map(([tier, rows]) => [tier, (rows || []).map((unit, i) => slimFrontierUnit(unit, i, 1))])),
+  // 三个分项的**归一上下限**（用户 2026-10-13：「给出强度、性价比、泛用性的完整得分来源」）。
+  // ⚠️ 它是**整榜一份**的对象（~110 字节），必须放在这里 —— 逐条挂到整包上会重复 319 次、
+  //    白花 33 KB（实测能把载荷顶到 598 KB，硬上限是 600 KB）。界面从
+  //    `state.conclusion.frontierExtents` 读。
+  frontierExtents: result.frontierExtents || null,
   gapUnits: (result.gapUnits || []).slice(0, 30).map((u) => ({
     key: u.key, kind: u.kind, name: u.name, nameCn: u.nameCn || null, icon: u.icon || null,
     total: u.total, gap: u.gap, pulls: u.pulls, from: u.from, target: u.target,
@@ -843,6 +932,11 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     // （抽卡方案 / 差距榜 / 星魂榜不受影响，用户明确选了「只影响总榜」）。
     // 不传 = 一项都不减（工具与回归测试的历史口径不变，见 `DEFAULT_HIDDEN_COSTS`）。
     hiddenCosts: options.hiddenCosts,
+    // 抽卡权重（用户 2026-10-13 第 1、2 条）：**角色总榜**的三个分项按它加权，
+    // 而总榜的收敛（每角色留一条）就发生在 `buildConclusion` 里 —— 所以这个旋钮
+    // 必须**进服务端**，不能像 v4.6.94 那样只留在浏览器（那时它只服务抽卡方案）。
+    // 不传 = `SCORING.drawWeight`（三等分），工具与探针的历史口径因此不变。
+    drawWeights: options.drawWeights,
   });
   localizeConclusion(result, i18n);
 
@@ -863,14 +957,28 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     //      合并后两份都在，所以形状号必须是 **7** —— 别再改回 6。
     // ⚠️ **没有 v8**：v4.6.87 曾把形状写成 8（总榜每个整包多一个 `strength`，纯强度），
     //    v4.6.91 按用户 2026-10-12 第 8 条撤销了那个字段，形状**回到 7**。
-    //    下一次加字段请从 8 开始，并在这里写清「8 曾经被用过又撤掉了」。
-    payload: 7,
+    // v8 = 新增三个分项与合成后的「角色得分」（`characterScore` / `strengthScore` /
+    //      `costScore` / `versatilityScore` / `strengthTotal` / `versatilityRaw`，
+    //      逐 env 另加 `envStrength` / `envStrengthValue`），以及请求侧的 `drawWeights` 回显
+    //      —— 用户 2026-10-13 第 1、2 条（「性价比得分」改名「角色得分」）。
+    //      ⚠️ **8 曾被用过又撤掉**（见上一条），所以这里曾是**第一次真正生效的 v8**。
+    //      ⚠️ 上面那行原先把逐 env 的字段写成 `strength` / `strengthValue` —— 那是**错的**，
+    //      实际下发的是 `envStrength` / `envStrengthValue`（刻意避开被撤销的字段名）。
+    // v9 = 前 `FRONTIER_DETAIL_ROWS` 条新增 `versatilityMembers`（泛用性来源名单）与
+    //      `extents`（三个分项的榜内归一上下限），逐 env 新增 `envStrengthBest`
+    //      —— 用户 2026-10-13：「角色得分页面需要给出强度、性价比、泛用性的**完整得分来源**」。
+    payload: 9,
     // 隐金设置：**回显服务端实际生效的那一份**（归一化后的五个布尔）。
     // 为什么值得多带这 ~90 字节（载荷形状因此升到 v5）：隐金要穿过四层才生效
     // （界面 → POST body → 路由 → buildConclusion），任何一层漏传都表现为
     // 「勾了没反应」，而榜面数字的变化很难分辨是「没生效」还是「生效了但数据里
     // 恰好没有这些单位」。e2e 直接断言这个回显，就能把「漏传」钉死在接口层。
     hiddenCosts: normalizeHiddenCosts(options.hiddenCosts),
+    // 抽卡权重：**回显服务端实际生效的那一份**（归一化后和为 1 的三个键）。
+    // 与 `hiddenCosts` 同一条理由 —— 它要穿过四层才生效（界面 → POST body → 路由 →
+    // buildConclusion），任何一层漏传都表现为「拖了权重榜没动」。e2e 直接断言这个
+    // 回显，就能把「漏传」钉死在接口层（用户 2026-10-13 第 2 条）。
+    drawWeights: normalizeDrawWeights(options.drawWeights),
     // 成本口径表：`charCostOf` / `coneCostOf` 的输入（见 `slimAvailability`）。
     availability: slimAvailability(index.refs?.availability),
     ...projectConclusion(result),

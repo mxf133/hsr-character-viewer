@@ -1601,12 +1601,39 @@ checkAsync('综合结论：每个副本都挑样本足够的版本，并在各�
   const index = await archiveIndex();
   const empty = await archiveConclusion({ owned: [] }, { window: 6 });
   assert.equal(empty.ok, true);
-  assert.equal(empty.payload, 7,
+  assert.equal(empty.payload, 9,
     'v4 = 整包口径；v5 = hiddenCosts 回显；v6 = availability（队伍方案在界面现算差额）；'
     + 'v7 = 逐星魂档的 frontierTiers（两支并行分支各占过 v6，合并后形状号取 7）。'
-    + '⚠️ **没有 v8**：v4.6.87 曾写过 8（整包多一个 strength = 纯强度），'
-    + 'v4.6.91 按用户 2026-10-12 第 8 条删掉了那个字段，形状回到 7。');
+    + 'v8 = 三个分项 + 合成后的「角色得分」（用户 2026-10-13 第 1、2 条），'
+    + '请求侧新增 `drawWeights`。'
+    + '⚠️ v4.6.87 曾写过 8（整包多一个 `strength` = 纯强度）又按用户 2026-10-12 第 8 条'
+    + '撤销回 7；那一次的 8 是**第一次真正生效**的 v8 —— 强度这次是用户点名的分项，'
+    + '但字段名不再叫 `strength`（见下面「撤销检查」那条）。'
+    + 'v9 = 顶层 `frontierExtents`（三个分项的榜内归一上下限）+ 逐 env 的 `envStrengthBest`'
+    + '（同日用户要「三项的完整得分来源」；泛用性队友名单走按需接口，不在这个载荷里）。');
   assert.ok(empty.envs.length >= 4, `至少要覆盖 4 个副本，实际 ${empty.envs.length}`);
+  // ---- v9 的新字段（用户 2026-10-13：「给出强度、性价比、泛用性的完整得分来源」）--------
+  assert.ok(empty.frontierExtents?.strength && empty.frontierExtents?.cost
+    && empty.frontierExtents?.versatility,
+  '载荷顶层必须有三个分项的归一上下限 `frontierExtents`（详情窗口靠它写出那 100 分）');
+  for (const [key, e] of Object.entries(empty.frontierExtents)) {
+    assert.ok(Number.isFinite(Number(e.lo)) && Number.isFinite(Number(e.hi)) && e.hi >= e.lo,
+      `${key} 的上下限不合法：${JSON.stringify(e)}`);
+  }
+  const detailed = (empty.frontierUnits || []).find((u) => (u.envs || []).length);
+  assert.ok(detailed, '至少要有一个带逐副本明细的整包');
+  assert.ok(detailed.envs.every((env) => Number.isFinite(Number(env.envStrengthBest))),
+    '逐 env 必须带 `envStrengthBest`（强度来源表「跨版本发挥」列的分母）');
+  // ⚠️ 比的是 `envStrength`（**版本加权平均**，0~100）而不是 `envStrengthValue`
+  //    （那是它再乘副本权重后的贡献）—— 后者当然可以大于前者，拿它比会误报。
+  assert.ok(detailed.envs.every((env) => Number(env.envStrength) <= Number(env.envStrengthBest) + 1e-6),
+    '版本加权平均（envStrength）不该超过「最好的那一版」（envStrengthBest）—— 超了说明分母取错了');
+  // ⚠️ **反向钉住**：泛用性的队友名单**不许**进这个载荷。它是角色级的，而一个角色在榜单里
+  //    最多出现 5 次（总榜 1 + 四个星魂档各 1），逐条带实测 117 KB —— 会把 `/conclusion`
+  //    顶到 730 KB、打穿 e2e 的 600 KB 硬上限（本轮的实测）。它走按需接口
+  //    `/api/archive/packs?char=`（见 `slimFrontierUnit` 那段注释）。
+  assert.ok((empty.frontierUnits || []).every((u) => u.versatilityMembers === undefined),
+    '泛用性队友名单不该进 /conclusion（它只在按需接口上，见 conclusion.js 的注释）');
   const minRuns = index.minSeasonRuns ?? 20;
   for (const env of empty.envs) {
     assert.ok(env.season, `${env.label} 没有版本`);
@@ -3034,10 +3061,21 @@ await checkAsync('金数项封顶 ×1 + 0 金通关 ×1.2：真实数据集上�
     hiddenCosts: DEFAULT_HIDDEN_COSTS,
   });
   const metaOf = (id) => (result.frontierEnvs || []).find((e) => e.id === id);
+  /**
+   * ⚠️ 取样集合是 **`frontierPacksByChar`（收敛前的全部整包）**，不是 `frontierUnits`。
+   *
+   * 这条用例量的是「金数项的两条规则」（封顶 ×1 / 0 金 ×1.2）在真实数据上**确实生效**，
+   * 所以它要的是「存在这样的整包」，而不是「这样的整包恰好是某个角色在榜面上的代表」。
+   * v4.6.95 起榜面排序键换成三个分项加权后的**角色得分**（用户 2026-10-13 第 2 条），
+   * 每个角色的代表整包因此会变 —— 实测收敛前有 31 条 0 金 env、榜面上 0 条
+   * （0 金整包不再是任何角色的最高分代表）。用收敛前那份，这条口径就不会因为
+   * 「谁当代表」这种无关变化而假红。
+   */
+  const allPacks = Object.values(result.frontierPacksByChar || {}).flat();
   let rows = 0;
   let zeroGold = 0;
   let capped = 0;
-  for (const unit of result.frontierUnits || []) {
+  for (const unit of allPacks) {
     for (const env of unit.envs || []) {
       const f = frontierFactorsOf(env, metaOf(env.id));
       rows += 1;
@@ -3060,21 +3098,35 @@ await checkAsync('金数项封顶 ×1 + 0 金通关 ×1.2：真实数据集上�
   // 这条用例不能变成空跑：当前数据集上必须真的存在被封顶的行与 0 金的行。
   assert.ok(rows > 0, '总榜明细不该为空');
   assert.ok(capped > 0, `当前数据集上应有被封顶的行（实测 19 条），实际 ${capped}`);
-  assert.ok(zeroGold > 0, `界面默认（隐金全勾）下应有 0 金通关的行（实测 7 条），实际 ${zeroGold}`);
+  assert.ok(zeroGold > 0, `界面默认（隐金全勾）下应有 0 金通关的行（实测 31 条），实际 ${zeroGold}`);
 
-  // ---- 撤销检查：整包上**不该**再有 `strength`（纯强度，v4.6.91 已按用户第 8 条删除）----
+  // ---- 键名检查：整包与逐副本都**不许**再出现裸的 `strength` ----
   //
   // v4.6.87 曾在每个整包上多发一个 `strength` = Σ_副本 副本权重 × (100 × 表现)（不乘金数项），
-  // 供抽卡方案的「强度得分」用。用户 2026-10-12 第 8 条把它改回「含金数项的整包分」
-  // （「同样是绝境 0T，9 金队要比 16 金队强得多」），那个字段与 `packStrengthOf()` 一并删除。
-  // 这条断言钉住「别让它悄悄复活」——载荷里多一个没人读的字段，下一个人就会拿它当口径。
+  // 用户 2026-10-12 第 8 条把它撤销之后，这条断言钉的就是「别让那个**名字**悄悄复活」——
+  // 载荷里多一个同名字段，下一个人就会拿它当旧口径用。
+  //
+  // ⚠️ 2026-10-13 用户第 1、2 条**重新要了强度这个分项**，但它换了名字与含义：
+  //   * 整包上：`strengthTotal`（原始累计）+ `strengthScore`（榜内归一到 0~100）；
+  //   * 逐副本上：`envStrength`（表现分）/ `envStrengthValue`（乘副本权重后的贡献）。
+  // 所以这里同时钉两件事：**新字段必须在**（否则界面拆不开三个分项）、
+  // **裸 `strength` 必须不在**（否则与旧口径混淆）。
   let withStrength = 0;
-  for (const unit of result.frontierUnits || []) {
+  let withNewFields = 0;
+  for (const unit of allPacks) {
     if ('strength' in unit) withStrength += 1;
-    for (const env of unit.envs || []) if ('strength' in env) withStrength += 1;
+    if (Number.isFinite(Number(unit.strengthTotal)) && Number.isFinite(Number(unit.characterScore))) {
+      withNewFields += 1;
+    }
+    for (const env of unit.envs || []) {
+      if ('strength' in env) withStrength += 1;
+      if ('envStrength' in env && 'envStrengthValue' in env) withNewFields += 1;
+    }
   }
   assert.equal(withStrength, 0,
-    `整包与逐副本都不该再带 strength（实际 ${withStrength} 处）`);
+    `整包与逐副本都不该再带裸的 strength（实际 ${withStrength} 处）`);
+  assert.ok(withNewFields > 0,
+    '三个分项的新字段必须真的下发了（整包 strengthTotal/characterScore、逐副本 envStrength/envStrengthValue）');
   assert.ok((result.frontierUnits || []).length > 0, '总榜不该为空（上面那条断言空跑会让人误以为它过了）');
 });
 
@@ -3432,8 +3484,9 @@ check('数据状态：角色快照 / 战斗记录 / 黑塔网数据三份缓存�
 checkAsync('隐金：真实数据集上确实改变了总榜，且**只**动总榜（抽卡方案一字不变）', async () => {
   const off = await archiveConclusion({ owned: [] }, { window: 6, hiddenCosts: NO_HIDDEN_COSTS });
   const on = await archiveConclusion({ owned: [] }, { window: 6, hiddenCosts: DEFAULT_HIDDEN_COSTS });
-  assert.equal(on.payload, 7,
-    '载荷形状是 v7（hiddenCosts 回显 + availability + frontierTiers；strength 已撤销）');
+  assert.equal(on.payload, 9,
+    '载荷形状是 v9（三个分项 + 角色得分 + 逐 env 的 envStrength/envStrengthBest + 顶层 frontierExtents；'
+    + 'hiddenCosts / availability / frontierTiers 都还在）');
   assert.ok(on.frontierTiers && ['0', '1', '2', '6'].every((t) => Array.isArray(on.frontierTiers[t])),
     '逐星魂档的总榜 frontierTiers 必须四档都在（界面 E0/E1/E2/E6 筛选器靠它）');
   assert.deepEqual(on.hiddenCosts, { ...DEFAULT_HIDDEN_COSTS }, '服务端要回显归一化后的隐金设置');

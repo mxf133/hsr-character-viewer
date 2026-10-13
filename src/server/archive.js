@@ -394,6 +394,26 @@ export const archiveIndex = async () => {
       })),
       characterPaths: data.refs?.characterPaths || {},
       popularLightCones: data.refs?.popularLightCones || {},
+      /**
+       * `{ 光锥英文键: 命途键 }`（170 条）。
+       *
+       * ⚠️ 用户 2026-10-13 第 3 条起**必须下发**：虚拟账号的自定义角色要「选择该角色
+       * **同命途**光锥，专属光锥优先」，界面手上只有一张光锥名字表，没有「这个光锥是
+       * 什么命途」就没法把下拉框限制在合法范围内。数据集里一直有这个映射
+       * （`tools/herta-build.mjs` 写的 `lightConePaths`），此前只是没经 `/api/archive`
+       * 暴露出去 —— 与 `popularLightCones` 一样，都是「早就在数据里、只是没发」。
+       */
+      lightConePaths: data.refs?.lightConePaths || {},
+      /**
+       * 命途键 → 中文名（`{ Warrior: '毁灭', Shaman: '同谐', … }`）。
+       *
+       * ⚠️ 用户 2026-10-13 第 3 条的要求是「设置光锥时选择该角色**同命途**光锥，专属光锥
+       * 优先」—— 界面必须把「同命途」这个约束写给用户看（下拉框分组 / 筛选提示），
+       * 而命途键在数据集里是英文的（`characterPaths` / `lightConePaths` 的值）。
+       * 界面**自己有一张 `PATH_LABELS`**（`public/scripts/format.js`），但它漏了「欢愉」
+       * （`Elation`，开拓者那个形态），而且两处各写一份迟早会漂。这里是权威那份。
+       */
+      pathLabels: i18n?.paths || {},
       // 星级与限定标记，给成本计算与「限定」标签用
       availability: data.refs?.availability || { characters: {}, lightCones: {} },
       /**
