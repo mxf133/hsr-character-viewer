@@ -1647,13 +1647,31 @@
 //           复算：`node tools/_probe-gap-curve.mjs --account=1 --hidden`（六种写法并排：
 //           线性/^1.5/^2/p50/p60/折点，含逐档取值与各自的前 6 名）。
 //
+//   v4.6.93 修一个**界面上静默错数据**的 bug：在「抽卡推荐」页**切账号**之后，抽卡方案
+//           不会重算 —— 它继续显示上一个账号的名次与分数（差额是浏览器里按当前快照现算的，
+//           而 `selectAccount()` 当时只调了 `renderView()`，那个函数只管登录/面板的显隐，
+//           抽卡页是 `selectTab('advice')` 调的 `show()` 画的，没人再调它）。
+//
+//           怎么发现的：给用户造虚拟账号做「抽卡方案可行性实测」时，切到「虚拟·白厄队」
+//           后方案首卡仍是「虚拟·全新账号」那套数字（69.1 / ② 38.2），与 CLI 测试台
+//           算出的 66.1 / ② 32.3 不一致 —— 界面错了，不是测试台错了。
+//
+//           改法：`selectAccount()` 里**先 `await loadSnapshot()`、再 `renderView()`**，
+//           并在抽卡页当前可见时显式 `adviceOf().show()` 重画一次（`activeTab() === 'advice'`）。
+//
+//           回归：`tools/check-advice-layout.mjs` 新增「切账号后方案必须重算」——用
+//           **虚拟·全图鉴**那个账号做决定性判据（它所有队伍差额为 0 ⇒ 候选池 0 ⇒
+//           方案区必须从 15 张卡变成**空态**）。跑法：
+//           `node tools/check-advice-layout.mjs --url='http://127.0.0.1:8372/?view=advice'`
+//           （虚拟账号库见 `tools/make-virtual-accounts.mjs`）。
+//
 // 游戏换版本（4.7）时主版本跟着换；工具在同一游戏版本内继续改动就只加末位。
 //
 // 注意与 src/mihoyo/constants.js 的 APP_VERSION 区分：那个是**米游社客户端**的
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.92';
+export const PROGRAM_VERSION = '4.6.93';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';

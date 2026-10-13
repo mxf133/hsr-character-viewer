@@ -608,15 +608,21 @@ const opened = await evaluate(`(() => {
 })()`);
 await sleep(2500);
 const recordPanel = await evaluate(panelProbe);
-judgePanel(`点战斗记录「${opened}」`, recordPanel, 2);
-// 关掉再走下一个入口（顺带验证「关得掉」—— 这条以前在角色信息页是坏的）
-const closed = await evaluate(`(() => {
-  document.getElementById('charPanelClose')?.click();
-  return document.getElementById('charPanelModal')?.hidden;
-})()`);
-if (closed !== true) {
-  failures += 1;
-  console.log('  ✗ 点「关闭」后浮层没有收起来');
+if (String(opened).startsWith('没有可点的角色 chip')) {
+  // ⚠️ 虚拟账号库（`tools/make-virtual-accounts.mjs`）每个账号都没有战斗记录，所以这两个
+  //    入口在这里**无从验证** —— 打印跳过说明，别计失败（否则对虚拟库跑这套永远是红的）。
+  console.log(`  – 点战斗记录的角色 chip：跳过（${opened}）`);
+} else {
+  judgePanel(`点战斗记录「${opened}」`, recordPanel, 2);
+  // 关掉再走下一个入口（顺带验证「关得掉」—— 这条以前在角色信息页是坏的）
+  const closed = await evaluate(`(() => {
+    document.getElementById('charPanelClose')?.click();
+    return document.getElementById('charPanelModal')?.hidden;
+  })()`);
+  if (closed !== true) {
+    failures += 1;
+    console.log('  ✗ 点「关闭」后浮层没有收起来');
+  }
 }
 
 if (!recordPanel.figures.length) {
@@ -2594,6 +2600,54 @@ if (!tierChipOk) {
     if (!tierTipOk) failures += 1;
     console.log(`  ${tierTipOk ? '✓' : '✗'} E0 档第一行「${tierTipUnit}」的详情页表体 `
       + `${tierTipRows} 行（必须 > 1 —— 只有一行就是用户报的那个 bug）`);
+  }
+}
+
+// ---- 切账号必须让抽卡方案**重算**（本机只有多账号时才验）------------------------
+//
+// 2026-10-12 修的真 bug：`selectAccount()` 当时只调 `renderView()`，而那个函数**不画**
+// 抽卡页（抽卡页是 `selectTab('advice')` 调的 `show()` 画的），于是切账号后方案会静静停在
+// 旧账号的数字上。
+//
+// 怎么验才**决定性**：切到「虚拟·全图鉴」那个账号 —— 它限定全 E6 / 专锥全 S5，所有队伍
+// 差额都是 0，候选池按设计为 0 ⇒ 方案区必须**从卡片变成空态**。若方案没重算，卡片会留在
+// 原地（那正是 bug 的症状）。找不到那个账号时退回「换账号后方案文本必须变」，仍取不到
+// 差异就跳过并打印说明（不做无根据的失败）。
+{
+  const chips = await evaluate("[ ...document.querySelectorAll('.role-chip') ].map((b) => b.textContent.trim())");
+  if (!chips || chips.length < 2) {
+    console.log(`  – 切账号重算：跳过（本页只有 ${chips?.length ?? 0} 个角色 chip，`
+      + `需要 ≥2 个账号；用 tools/make-virtual-accounts.mjs 起虚拟账号库再跑这条）`);
+  } else {
+    const planText = async () => evaluate(
+      `(document.getElementById('adviceTeamPlanBody')?.textContent || '').replace(/\\s+/g, ' ').trim()`);
+    const cardCount = async () => evaluate(
+      "document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team').length");
+    const before = await planText();
+    const beforeCards = await cardCount();
+    const targetIdx = chips.findIndex((t) => t.includes('全图鉴'));
+    const idx = targetIdx >= 0 ? targetIdx : 1;
+    await evaluate(`[ ...document.querySelectorAll('.role-chip') ][${idx}]?.click(); true`);
+    await sleep(7000);
+    const after = await planText();
+    const afterCards = await cardCount();
+    const activeIdx = await evaluate(`[ ...document.querySelectorAll('.role-chip') ]
+      .findIndex((b) => b.className.includes('active'))`);
+    let ok;
+    if (targetIdx >= 0) {
+      ok = activeIdx === idx && afterCards === 0;
+      if (!ok) failures += 1;
+      console.log(`  ${ok ? '✓' : '✗'} 切到「${chips[idx]}」后方案重算成空态：`
+        + `切前 ${beforeCards} 张卡 → 切后 ${afterCards} 张（激活 chip #${activeIdx + 1}）`);
+    } else {
+      ok = activeIdx === idx && after !== before;
+      if (ok) console.log(`  ✓ 切账号后抽卡方案会重算（切到「${chips[idx]}」方案文本已变）`);
+      else console.log('  – 切账号重算：跳过（本页没有「全图鉴」账号，且两个账号的方案文本相同，'
+        + '取不到决定性差异）');
+    }
+    // 切回第一个账号，别把状态留给下一次运行。
+    await evaluate("[ ...document.querySelectorAll('.role-chip') ][0]?.click(); true");
+    await sleep(5000);
   }
 }
 
