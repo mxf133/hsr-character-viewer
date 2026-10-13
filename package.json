@@ -1,6 +1,6 @@
 {
   "name": "hsr-character-viewer",
-  "version": "4.6.86",
+  "version": "4.6.94",
   "private": true,
   "description": "崩坏：星穹铁道 角色信息查询工具 — 米游社扫码登录 + 官方战绩接口，零第三方依赖",
   "type": "module",

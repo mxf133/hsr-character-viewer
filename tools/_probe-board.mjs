@@ -1,3 +1,6 @@
+// ⚠️ 口径变更：① 在 v4.6.87~v4.6.90 一度是**纯强度**（不含金数项）；v4.6.91 回到
+// **总榜分含金数项**归一化（`rows[].strengthPct` 是池内位置，原始值 `rows[].teamScore`）。
+//
 // 打印当前算法下的**前 N 名**（含补金顺序）—— 给 README / 文档抄录用，避免手抄出错。
 //
 //   node tools/_probe-board.mjs [--account=1] [--rows=10] [--hidden] [--w=aaPl=10,aa=0.1]
@@ -67,11 +70,11 @@ SCORING.teamPlanMaxRows = keep;
 
 console.log(`账号 ${ACC} ${role.nickname}｜隐金=${hidden ? '全勾' : '不减'}`
   + `${Object.keys(weights).length ? '｜自定义权重' : '｜默认权重'}`);
-console.log(`候选池 ${plan.pool} 支（去重 ${plan.poolAll}）· ① 刻度 ${plan.scoreLo.toFixed(1)}~${plan.scoreHi.toFixed(1)}`
+console.log(`候选池 ${plan.pool} 支（去重 ${plan.poolAll}）· ① 刻度 ${plan.strengthLo.toFixed(1)}~${plan.strengthHi.toFixed(1)}`
   + ` · ② 封顶 ${plan.gapMax} 金（p${Math.round(plan.gapCapPct * 100)}）`
   + ` · ② 归 0 的 ${plan.rows.filter((r) => r.gapPct === 0).length}/${plan.rows.length}\n`);
 plan.rows.forEach((r, i) => {
-  console.log(`| ${i + 1} | ${r.total.toFixed(1)} | ${r.scorePct.toFixed(1)} | ${r.gapPct.toFixed(1)}`
+  console.log(`| ${i + 1} | ${r.total.toFixed(1)} | ${r.strengthPct.toFixed(1)} | ${r.gapPct.toFixed(1)}`
     + ` | ${r.gap} 金 | ${r.members.map((m) => cn(m.char)).join('/')} |`);
   console.log(`   补金顺序：${r.fill.map((it) => `${cn(it.name)}·${it.target || ''}（${it.pulls}金）`).join(' → ') || '（无）'}`);
 });

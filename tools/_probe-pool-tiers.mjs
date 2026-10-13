@@ -1,3 +1,6 @@
+// ⚠️ 口径变更：① 在 v4.6.87~v4.6.90 一度是**纯强度**（不含金数项）；v4.6.91 回到
+// **总榜分含金数项**归一化（`rows[].strengthPct` 是池内位置，原始值 `rows[].teamScore`）。
+//
 // 决定性实验：把候选池从「每个角色只留**最强**整包」换成「每个角色 × 每个星魂档各留一条」
 // （= 现成的 `concl.frontierTiers`），看**便宜但稍弱的队伍**会不会冲上来。
 //
@@ -84,9 +87,10 @@ const scoreTeams = (teams, capPct = SCORING.teamPlanGapCapPct) => {
   const gaps = rows.map((r) => r.gap).sort((a, b) => a - b);
   const cap = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * capPct))];
   for (const r of rows) {
-    r.scorePct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
+    r.strengthPct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
     r.gapPct = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap)));
-    r.total_score = 0.5 * r.scorePct + 0.5 * r.gapPct;
+    // 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。
+    r.total_score = 0.5 * r.strengthPct + 0.5 * r.gapPct;
   }
   return { rows: rows.sort((a, b) => b.total_score - a.total_score), lo, hi, cap };
 };
@@ -108,7 +112,7 @@ const inNow = (key) => nowKeys.has(key);
 
 console.log(`账号 ${role.nickname}｜默认总榜权重｜隐金不减\n`);
 console.log(`【现在的池】整包 ${concl.frontierUnits.length} 条 → 队伍 ${plan.pool} 支`
-  + `（去重 ${plan.poolAll}）· ① 刻度 ${plan.scoreLo.toFixed(1)}~${plan.scoreHi.toFixed(1)}`
+  + `（去重 ${plan.poolAll}）· ① 刻度 ${plan.strengthLo.toFixed(1)}~${plan.strengthHi.toFixed(1)}`
   + ` · ② 封顶 ${plan.gapMax} 金`);
 console.log(`【每档各留一条】整包 ${tierUnits.length} 条 → 队伍 ${tier.rows.length} 支`
   + ` · ① 刻度 ${tier.lo.toFixed(1)}~${tier.hi.toFixed(1)} · ② 封顶 ${tier.cap} 金`);
@@ -119,21 +123,21 @@ console.log(`**因此新放进来（现在整个池都没有的）队伍：${unl
 console.log('\n【每档池的前 15 名】★ = **现在整个池里都没有**的（被「每角色只留最强」挤掉）');
 tier.rows.slice(0, 15).forEach((r, i) => {
   console.log(`  ${inNow(r.key) ? '  ' : '★ '}#${String(i + 1).padStart(2)} ${r.total_score.toFixed(1)}`
-    + ` = ①${r.scorePct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
+    + ` = ①${r.strengthPct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
     + `｜补 ${String(r.gap).padStart(2)} 金｜${nameOf(r.members)}`);
 });
 
 console.log('\n【现在的池的前 15 名（对照）】');
 plan.rows.slice(0, 15).forEach((r, i) => {
   console.log(`  #${String(i + 1).padStart(2)} ${r.total.toFixed(1)}`
-    + ` = ①${r.scorePct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
+    + ` = ①${r.strengthPct.toFixed(1).padStart(5)} + ②${r.gapPct.toFixed(1).padStart(5)}`
     + `｜补 ${String(r.gap).padStart(2)} 金｜${nameOf(r.members)}`);
 });
 
 /** ① 低但排名靠前的队伍（用户说的「靠差额接近度拉分」）。 */
 const cheapTop = (list, scoreOf) => list
   .map((r, i) => ({ r, rank: i + 1, s: scoreOf(r) }))
-  .filter((x) => x.r.scorePct < 25)
+  .filter((x) => x.r.strengthPct < 25)
   .slice(0, 6);
 console.log('\n【「① 低于 25、但排名进前 30」的队伍】');
 for (const [label, list, scoreOf] of [
@@ -144,6 +148,6 @@ for (const [label, list, scoreOf] of [
   for (const { r, rank, s } of cheapTop(list, scoreOf)) {
     if (rank > 30) continue;
     console.log(`    #${String(rank).padStart(2)} 总分 ${s.toFixed(1)}`
-      + ` = ①${r.scorePct.toFixed(1)} + ②${r.gapPct.toFixed(1)}｜补 ${r.gap} 金｜${nameOf(r.members)}`);
+      + ` = ①${r.strengthPct.toFixed(1)} + ②${r.gapPct.toFixed(1)}｜补 ${r.gap} 金｜${nameOf(r.members)}`);
   }
 }

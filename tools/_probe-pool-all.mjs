@@ -1,3 +1,6 @@
+// ⚠️ 口径变更：① 在 v4.6.87~v4.6.90 一度是**纯强度**（不含金数项）；v4.6.91 回到
+// **总榜分含金数项**归一化（`rows[].strengthPct` 是池内位置，原始值 `rows[].teamScore`）。
+//
 // 三池对照：**全放进来**到底长什么样。
 //
 // 用户 2026-10-11：「全放进来试试，让我看看结果。」
@@ -64,9 +67,7 @@ const teamsOf = (units) => {
     if (!best?.members?.length) continue;
     const key = rosterKeyOf(best.members);
     const total = Number(u.total) || 0;
-    if (!by.has(key) || total > by.get(key).total) {
-      by.set(key, { key, members: best.members, total });
-    }
+    if (!by.has(key) || total > by.get(key).total) by.set(key, { key, members: best.members, total });
   }
   return [...by.values()];
 };
@@ -85,9 +86,11 @@ const scoreTeams = (teams) => {
   const gaps = rows.map((r) => r.gap).sort((a, b) => a - b);
   const cap = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * SCORING.teamPlanGapCapPct))];
   for (const r of rows) {
-    r.scorePct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
-    r.gapPct = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap)));
-    r.total_score = 0.5 * r.scorePct + 0.5 * r.gapPct;
+    r.strengthPct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
+    // ⚠️ 曲线指数跟着生产走（见 `SCORING.teamPlanGapPower`）：线性复算会与界面名次对不上。
+r.gapPct = 100 * Math.max(0, Math.min(1, 1 - r.gap / cap)) ** (Number(SCORING.teamPlanGapPower) || 1);
+    // 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。
+    r.total_score = 0.5 * r.strengthPct + 0.5 * r.gapPct;
   }
   return { rows: rows.sort((a, b) => b.total_score - a.total_score), lo, hi, cap, zeroGap };
 };
@@ -103,8 +106,8 @@ const allPacks = Object.values(concl.frontierPacksByChar || {}).flat();
 
 const POOLS = [
   ['① 现在（每角色最强整包）', teamsOf(concl.frontierUnits),
-    { rows: nowPlan.rows.map((r) => ({ ...r, total_score: r.total, scorePct: r.scorePct, gapPct: r.gapPct })),
-      lo: nowPlan.scoreLo, hi: nowPlan.scoreHi, cap: nowPlan.gapMax, zeroGap: null }],
+    { rows: nowPlan.rows.map((r) => ({ ...r, total_score: r.total, strengthPct: r.strengthPct, gapPct: r.gapPct })),
+      lo: nowPlan.strengthLo, hi: nowPlan.strengthHi, cap: nowPlan.gapMax, zeroGap: null }],
   ['② 每档（每角色 × 每星魂档）', teamsOf(tierUnits), null],
   ['③ 全量（收敛前全部整包）', teamsOf(allPacks), null],
 ];
@@ -130,7 +133,7 @@ for (const { label, r } of results) {
   r.rows.slice(0, 15).forEach((x, i) => {
     const seen = nowKeys.has(x.key) ? '  ' : '★ ';
     console.log(`  ${seen}#${String(i + 1).padStart(2)} ${x.total_score.toFixed(1)}`
-      + ` = ①${x.scorePct.toFixed(1).padStart(5)} + ②${x.gapPct.toFixed(1).padStart(5)}`
+      + ` = ①${x.strengthPct.toFixed(1).padStart(5)} + ②${x.gapPct.toFixed(1).padStart(5)}`
       + `｜补 ${String(x.gap).padStart(2)} 金｜${nameOf(x.members)}`);
   });
   console.log('  （★ = 现在的池里没有这一条）');
@@ -139,11 +142,11 @@ for (const { label, r } of results) {
 // ---- 「低①高②」那类在各池的最好名次 -----------------------------------------
 console.log(`\n${'='.repeat(96)}\n「① 低于 25」的队伍在各池的最好名次（用户关心的那一类）\n${'='.repeat(96)}`);
 for (const { label, r } of results) {
-  const hits = r.rows.map((x, i) => ({ x, rank: i + 1 })).filter((y) => y.x.scorePct < 25).slice(0, 5);
+  const hits = r.rows.map((x, i) => ({ x, rank: i + 1 })).filter((y) => y.x.strengthPct < 25).slice(0, 5);
   console.log(`\n${label}：`);
   for (const { x, rank } of hits) {
     console.log(`  #${String(rank).padStart(3)} ${x.total_score.toFixed(1)}`
-      + ` = ①${x.scorePct.toFixed(1).padStart(5)} + ②${x.gapPct.toFixed(1).padStart(5)}`
+      + ` = ①${x.strengthPct.toFixed(1).padStart(5)} + ②${x.gapPct.toFixed(1).padStart(5)}`
       + `｜补 ${String(x.gap).padStart(2)} 金｜${nameOf(x.members)}`);
   }
 }

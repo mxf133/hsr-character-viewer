@@ -384,6 +384,9 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
   // 整包自己的金数：只用于展示（**不进公式、不参与排序**）
   gold: Number(unit.gold ?? unit.pulls) || 0,
   total: unit.total,
+  // ⚠️ 抽卡方案的「强度得分」用的**就是**上面这个 `total`（用户 2026-10-12 第 8 条：
+  //    同为 0T，9 金队要比 16 金队强得多）。v4.6.87 曾在这里多发一个 `strength`
+  //    （纯强度，不含金数项），v4.6.91 已删除 —— 载荷形状回到 **v7**。
   envCount: unit.envCount,
   // 并列分组键：同分 = 同一支队伍的成员（口径使然），界面据此标注并列。
   bestTeamGold: unit.bestTeamGold ?? null,
@@ -473,6 +476,16 @@ const slimCharacterPack = (unit, i18n, maps) => ({
     value: env.value,
     score: env.score,
     bestTeamGold: env.bestTeamGold ?? null,
+    // ⚠️ **`seasonMinCost` 必须发**（v4.6.88 修的真 bug）：界面的「贡献值来源」表是用
+    // `frontierFactorsOf(env, meta)` **现算**的，而金数项的分母是「**该版本**最便宜」
+    // ——少了这个字段它就只能退回 `meta.minCost`（**全窗口**最小值，比本版分母更小），
+    // 于是余数（跨版本发挥 = score ÷ base）会**超过 1**。
+    // 为什么这条只在**面板**这条路上炸：逐档榜的浮层只随结论载荷带 1 个 env，
+    // `enrichTierDetail()` 会拿面板这份数据**整份替换** `unit.envs` 再重画因子表
+    // （实测 305 行里 **119 行（39%）> 1**、最大 **×5.76**）。
+    // 教训：**面板的 env 投影必须与 `slimFrontierUnit()` 的 env 投影在「界面要现算的字段」
+    // 上等价** —— 少一个字段不会报错，只会静默算出一个不可能的数。
+    seasonMinCost: env.seasonMinCost ?? null,
     tier: env.tier ?? null,
     actionValue: env.actionValue ?? null,
     evidenceSeason: env.evidenceSeason ?? null,
@@ -603,7 +616,11 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     hiddenCosts: normalizeHiddenCosts(options.hiddenCosts),
     // ⚠️ 本接口（角色面板）**不发** availability：面板是渲染服务端算好的数，
     // 不像 `/conclusion` 那样要在浏览器里现算队伍差额。
-    payload: 2,
+    // v2 = 新增 `hiddenCosts` 回显（用户 2026-10-11 的「隐金设置」）。
+    // v3 = 每个 env 新增 `seasonMinCost`（金数项的分母）：逐档榜的浮层会拿面板这份数据
+    //      整份替换 `unit.envs` 再重画「贡献值来源」表，缺它就会让「跨版本发挥」算出 > 1
+    //      （实测 39% 的行、最大 ×5.76）。见 `slimCharacterPack()` 里的注释。
+    payload: 3,
   };
 };
 
@@ -844,6 +861,9 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     // v7 = 新增 `frontierTiers`（总榜按 E0/E1/E2/E6 分档，每档各自按角色收敛一条）。
     //      ⚠️ 两支并行分支各自把载荷写成 v6（一支加 `availability`、一支加 `frontierTiers`），
     //      合并后两份都在，所以形状号必须是 **7** —— 别再改回 6。
+    // ⚠️ **没有 v8**：v4.6.87 曾把形状写成 8（总榜每个整包多一个 `strength`，纯强度），
+    //    v4.6.91 按用户 2026-10-12 第 8 条撤销了那个字段，形状**回到 7**。
+    //    下一次加字段请从 8 开始，并在这里写清「8 曾经被用过又撤掉了」。
     payload: 7,
     // 隐金设置：**回显服务端实际生效的那一份**（归一化后的五个布尔）。
     // 为什么值得多带这 ~90 字节（载荷形状因此升到 v5）：隐金要穿过四层才生效

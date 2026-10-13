@@ -1,3 +1,6 @@
+// ⚠️ 口径变更：① 在 v4.6.87~v4.6.90 一度是**纯强度**（不含金数项）；v4.6.91 回到
+// **总榜分含金数项**归一化（`rows[].strengthPct` 是池内位置，原始值 `rows[].teamScore`）。
+//
 // B（每档 245 支）与 C（全量 1869 支）的**并排比较**，顺带把 A（现状 78 支）当基准。
 //
 // 同一套两个指标、同一套刻度规则；三池只在「池」上不同，所以：
@@ -82,9 +85,10 @@ const scoreTeams = (teams) => {
   const gaps = rows.map((r) => r.gap).sort((a, b) => a - b);
   const cap = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * SCORING.teamPlanGapCapPct))];
   for (const r of rows) {
-    r.scorePct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
+    r.strengthPct = hi - lo < 1e-9 ? 100 : 100 * (r.total - lo) / (hi - lo);
     r.gapPct = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap)));
-    r.total_score = 0.5 * r.scorePct + 0.5 * r.gapPct;
+    // 等权 0.5/0.5 = 默认抽卡权重（1:1）；这里刻意不读 `plan.drawWeights`。
+    r.total_score = 0.5 * r.strengthPct + 0.5 * r.gapPct;
   }
   return { rows: rows.sort((a, b) => b.total_score - a.total_score), lo, hi, cap, zeroGap };
 };
@@ -97,7 +101,7 @@ SCORING.teamPlanMaxRows = keepRows;
 const POOLS = [
   ['A 现在（每角色最强整包）', teamsOf(concl.frontierUnits),
     { rows: nowPlan.rows.map((r) => ({ ...r, total_score: r.total })),
-      lo: nowPlan.scoreLo, hi: nowPlan.scoreHi, cap: nowPlan.gapMax, zeroGap: null }],
+      lo: nowPlan.strengthLo, hi: nowPlan.strengthHi, cap: nowPlan.gapMax, zeroGap: null }],
   ['B 每档（每角色 × 每星魂档）', teamsOf(Object.values(concl.frontierTiers || {}).flat()), null],
   ['C 全量（收敛前全部整包）', teamsOf(Object.values(concl.frontierPacksByChar || {}).flat()), null],
 ];
@@ -126,7 +130,7 @@ console.log(`${'B 每档'.padEnd(52)}│ ${'C 全量'}`);
 for (let i = 0; i < 15; i += 1) {
   const b = built[1].rows[i]; const c = built[2].rows[i];
   const cell = (r) => (r ? `#${String(i + 1).padStart(2)} ${r.total_score.toFixed(1).padStart(5)}`
-    + ` = ①${r.scorePct.toFixed(0).padStart(3)} + ②${r.gapPct.toFixed(0).padStart(3)}`
+    + ` = ①${r.strengthPct.toFixed(0).padStart(3)} + ②${r.gapPct.toFixed(0).padStart(3)}`
     + `｜补${String(r.gap).padStart(2)}金｜${nameOf(r.members).slice(0, 17)}` : '（无）');
   console.log(`${cell(b).padEnd(52)}│ ${cell(c)}`);
 }
