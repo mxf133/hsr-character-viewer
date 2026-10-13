@@ -1153,11 +1153,13 @@ export const envWeightDefaults = () => Object.fromEntries(
  * 那个「权重」区块的两大类：关卡权重决定「哪些副本算数」，抽卡权重决定
  * 「**角色总榜**里强度 / 性价比 / 泛用性各占多少」（以及抽卡方案里前两项的相对大小）。
  *
- * ⚠️ 三个键的作用面**不完全相同**（用户 2026-10-13 第 1、2 条）：
- *   * `strength`、`cost` → 角色总榜的两个分项 **+** 抽卡方案（`teamPlan` 里两两归一后使用）；
- *   * `versatility`      → **只**进角色总榜。抽卡方案没有「队伍泛用性」这个刻度，
- *     所以它按 `strength : cost` 在自己内部归一，**不受这个旋钮影响**（否则「把泛用性
- *     调到 0」会连带改掉抽卡方案的名次，那不是用户要的）。
+ * ⚠️ 三个键的作用面**相同**（用户 2026-10-13 第 3 条把泛用性也接进抽卡方案之后）：
+ * 三个分项都进**角色总榜**（`frontierBoard` 的角色得分），也都进**抽卡方案**
+ * （`teamPlan` 的补金推荐分）。两处都调同一个 `normalizeDrawWeights`，所以
+ * 「强度 3 / 性价比 1 / 泛用性 1」在两个榜上都是 `0.6 / 0.2 / 0.2`。
+ *
+ * 历史（别再改回去）：v4.6.95/96 方案只吃 `strength : cost` 两项、内部再归一一次，
+ * 于是调泛用性不动方案名次 —— 用户第 3 条明确要求它**也适用于补金推荐**，已统一。
  */
 export const DRAW_WEIGHT_ROWS = [
   { key: 'strength', label: '强度' },
@@ -1181,9 +1183,9 @@ export const drawWeightDefaults = () => Object.fromEntries(
  *   * 空串 = 用户清空了输入框 → 按 0 算（与 `weightInputOf` 同一条约定）；
  *   * 非法值（负数 / NaN）→ 忽略，退回默认。
  *
- * ⚠️ 单独导出是为了让**抽卡方案**拿原值做「强度 : 性价比」的两两归一：先在三个键上
- * 归一再取其中两个会多一次除法，`3 : 1 : 1` 会算成 `0.7499999999999999` 而不是 `0.75`
- * （`team-plan-test.mjs` 有回归钉住这个精确值）。
+ * ⚠️ 现在**只有 `normalizeDrawWeights` 一个调用方**（v4.6.97 起抽卡方案也走三项归一，
+ * 不再需要「先拿原值两两相除」那一步）。单独导出是为了让测试 / 探针能直接量**边界规则**
+ * （缺键、空串 = 0、负数退回默认）而不必从分数倒推。
  */
 export const drawWeightValues = (input) => {
   const defaults = drawWeightDefaults();
@@ -2242,22 +2244,33 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   const eidolons = account?.eidolons instanceof Map ? account.eidolons : new Map();
   const cones = account?.cones instanceof Map ? account.cones : new Map();
   const units = teamPoolUnits(conclusion);
-  // 抽卡权重（用户 2026-10-12 第 3、4 条）：只认**相对大小**，归一到和为 1。
+  /**
+   * 角色 → 泛用性原始量（「能通关的队伍里出现过的不同队友数」，角色级）。
+   *
+   * 用户 2026-10-13 第 3 条：「**泛用性权重也适用于补金推荐**」。角色级那个数算在
+   * `frontierBoard` 上（`unit.versatilityRaw`），同一角色的各星魂档共用同一个值
+   * （「它和谁能一起打」是角色属性，与这一包带几魂无关），所以这里随便取一条即可。
+   */
+  const versatilityOfChar = new Map();
+  for (const unit of units) {
+    // ⚠️ 键用 `unit.name`（= 角色英文键），**不是** `unit.char`：这条链拿到的是
+    //    `projectConclusion` 投影过的整包（`slimFrontierUnit` 把角色键写在 `name` 上），
+    //    夹具也是同一个形状。用错了不会报错 —— 只会让表里只剩一个 `undefined` 键，
+    //    于是每支队的泛用性都算成 0、③ 整列退化（实测踩过）。
+    if (!versatilityOfChar.has(unit.name)) {
+      versatilityOfChar.set(unit.name, Number(unit.versatilityRaw) || 0);
+    }
+  }
+  // 抽卡权重（用户 2026-10-12 第 3、4 条 + 2026-10-13 第 3 条）：只认**相对大小**，
+  // 归一到和为 1 —— 与角色总榜**共用同一个 `normalizeDrawWeights`**（单一来源）。
   //
-  // ⚠️ **这里只用 `strength` / `cost` 两项**（用户 2026-10-13 第 2 条把「泛用性」加进
-  // 抽卡权重时，只要求**角色总榜**受三个权重影响）：抽卡方案没有「队伍泛用性」这个
-  // 刻度，所以把这两项**在自己内部**再归一一次 —— 于是「强度 3 / 性价比 1 / 泛用性 1」
-  // 在方案里仍然是 0.75 / 0.25（与 v4.6.94 完全一致），调泛用性旋钮不会连带改方案名次。
-  //
-  // ⚠️ 必须用 `drawWeightValues`（**原值**）除，不能拿 `normalizeDrawWeights` 的结果再
-  // 除一次：`0.6 / 0.8` 会得到 `0.7499999999999999`（`team-plan-test.mjs` 钉着 0.75）。
-  const drawRaw = drawWeightValues(options.drawWeights);
-  const drawPairSum = drawRaw.strength + drawRaw.cost;
-  const draw = drawPairSum > 0
-    ? { strength: drawRaw.strength / drawPairSum, cost: drawRaw.cost / drawPairSum }
-    // 两项都是 0（用户把它们都清空）= 方案内等权；这是方案自己的兜底，
-    // `normalizeDrawWeights` 那边的「全 0 退回默认」管不到「只有两项为 0」。
-    : { strength: 0.5, cost: 0.5 };
+  // ⚠️ 口径变更（用户 2026-10-13 第 3 条原话：「泛用性权重也适用于补金推荐」）：
+  // v4.6.95/96 这里只吃 `strength : cost` 两项、在自己内部再归一一次（于是「强度 3 /
+  // 性价比 1 / 泛用性 1」在方案里是 0.75 / 0.25）；现在**三项一起归一** → `0.6 / 0.2 / 0.2`，
+  // 泛用性成了方案里真正的第三个分量（见下面 ③）。
+  // ⚠️ 别再退回「自己再除一遍」的写法：那正是当初 `3 : 1 : 1` 被算成
+  // `0.7499999999999999` 的来源。归一**只做一次**，就交给那一个函数。
+  const draw = normalizeDrawWeights(options.drawWeights);
   const envMeta = new Map((conclusion?.frontierEnvs || []).map((env) => [env.id, env]));
 
   /** 一支队伍的身份：成员的整包键（排序后拼接）——同一支队伍只留一条。 */
@@ -2317,6 +2330,18 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     // `buildConclusion`）`hiddenReductionOf` 仍会退回模块级状态，行为不变。
     const hiddenCut = hiddenReductionOf(team.members, availability,
       conclusion?.hiddenCosts, 'dataset').team;
+    /**
+     * 这支队的 **③ 泛用性原始量** = 队内成员**各自**泛用性的**平均**（用户 2026-10-13
+     * 第 3 条，口径由用户本人在两个候选里选定）。
+     *
+     * 「一支队的成员越百搭，这支队越好抄、越好换人」—— 与角色级那个数同源，只是取平均。
+     * ⚠️ 分母固定是**成员数**（不是「查到几个」）：查不到的角色按 0 分参与平均，
+     * 否则一个冷门角色会把整队的泛用性**抬高**（少算几个 0 反而更有利），方向是反的。
+     */
+    const teamVersatility = team.members.length
+      ? team.members.reduce((n, m) => n + (versatilityOfChar.get(m.char) || 0), 0)
+        / team.members.length
+      : 0;
     candidates.push({
       ...team,
       gap: Math.max(0, Number(cost.pulls) || 0),
@@ -2324,6 +2349,7 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
       gold,
       displayGold: Math.max(1, gold - hiddenCut),
       hiddenCut,
+      versatilityRaw: Number(teamVersatility.toFixed(4)),
     });
   }
 
@@ -2365,6 +2391,18 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   const strengthLo = candidates.length ? Math.min(...candidates.map((t) => t.total)) : 0;
   const strengthHi = candidates.length ? Math.max(...candidates.map((t) => t.total)) : 0;
   /**
+   * ③ **泛用性得分**的刻度：候选池里**队内平均泛用性**的最小 ~ 最大值
+   * （用户 2026-10-13 第 3 条：「泛用性权重也适用于补金推荐」）。
+   *
+   * 与 ① 完全同一条写法（**池内** min-max，不是角色总榜那把榜内的尺子）：
+   * 卡片上那三个分量因此都是「这支队在候选池里的位置」，可以直接加权相加。
+   * 极值退化（池里每支队一样）时 `span` 给 1，对该分项排序无影响 —— 与 ① 同一条约定。
+   */
+  const versatilityLo = candidates.length
+    ? Math.min(...candidates.map((t) => t.versatilityRaw)) : 0;
+  const versatilityHi = candidates.length
+    ? Math.max(...candidates.map((t) => t.versatilityRaw)) : 0;
+  /**
    * ② 的**封顶值**：候选池里补金差额的 `SCORING.teamPlanGapCapPct` 分位（现在是 p75）。
    *
    * 差额 0 金的队伍**不进候选**（用户第 3 条：没有抽卡必要，不值得显示），
@@ -2400,8 +2438,14 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     // ⚠️ v4.6.87 这里还与「压金度」按 `teamPlanCostMix` 合成过 —— 已按用户要求删除，
     //    所以**不要再引入第二个金数刻度**：他与「你还要补几金」高度同向，属于重复计分。
     //    「这支队总共几金」仍逐行显示（`gold` / 卡片上的「账面 N 金」），只是不进分数。
-    // 总分 = 强度得分 × ws + 性价比得分（差额接近度）× wc（用户 2026-10-12 第 3、4、6 条）。
-    t.total_score = Number((draw.strength * t.strengthPct + draw.cost * t.gapPct).toFixed(4));
+    // ③ **泛用性得分**（用户 2026-10-13 第 3 条）：队内平均泛用性在候选池里的位置（0~100）。
+    //    「这支队好抄、好换人」这一维度 —— 与角色总榜第三列同源，只是先按队内平均合成。
+    t.versatilityPct = Number((100
+      * clampUnit(span(t.versatilityRaw, versatilityLo, versatilityHi))).toFixed(4));
+    // 总分 = 强度得分 × ws + 性价比得分（差额接近度）× wc + 泛用性得分 × wv
+    // （用户 2026-10-12 第 3、4、6 条 + 2026-10-13 第 3 条，三项系数由抽卡权重归一而来）。
+    t.total_score = Number((draw.strength * t.strengthPct + draw.cost * t.gapPct
+      + draw.versatility * t.versatilityPct).toFixed(4));
   }
 
   // ---- 排序与截断 ------------------------------------------------------------
@@ -2418,6 +2462,7 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   const ranked = [...candidates].sort((a, b) => b.total_score - a.total_score
     || b.strengthPct - a.strengthPct
     || b.gapPct - a.gapPct
+    || b.versatilityPct - a.versatilityPct
     || a.gap - b.gap
     || String(a.rosterKey).localeCompare(String(b.rosterKey)));
   const delivered = ranked.slice(0, maxRows);
@@ -2508,7 +2553,7 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     // 两个分项与总分（0~100 体系）。
     total: t.total_score,
     teamScore: t.total,
-    // ① 强度得分（**纯强度**归一化，用户 2026-10-12 第 3 条）与它的原始值。
+    // ① 强度得分与它的原始值（用户 2026-10-12 第 3 条，用户第 8 条把原始值定为**整包分**）。
     strengthPct: t.strengthPct,
     // ① 的**原始值**：角色总榜上的整包分（含金数项）。`strengthPct` 是它在池内的位置。
     // ⚠️ v4.6.87~v4.6.90 这里还下发过一个「纯强度」（不含金数项）——用户第 8 条撤销了，
@@ -2518,6 +2563,11 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     // 界面直接读 `gapPct` 印「差额接近度」。⚠️ 不要为了「兼容」再加回 `costPct` 别名：
     // 两个名字指同一个数，正是用户这次说「三者过于重叠」的来历。
     gapPct: t.gapPct,
+    // ③ 泛用性得分（用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」）：
+    // 队内成员各自泛用性的**平均**，在该候选池里的位置（0~100）。
+    // `versatilityRaw` 是那个平均值本身（「不同队友数」量纲），界面拿它写来源。
+    versatilityPct: t.versatilityPct,
+    versatilityRaw: t.versatilityRaw,
     // 补金
     gap: t.gap,
     pullsExpected: t.pullsExpected,
@@ -2642,7 +2692,10 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     //    别再拆开：界面那行刻度写的就是这一对。
     strengthLo: Number(strengthLo.toFixed(4)),
     strengthHi: Number(strengthHi.toFixed(4)),
-    /** 生效的抽卡权重（已归一化，和为 1）—— 界面照它印那两个系数。 */
+    /** ③ 的刻度（队内平均泛用性，池内最小 ~ 最大值）：界面写「N 人即 0 分 / M 人即 100 分」。 */
+    versatilityLo: Number(versatilityLo.toFixed(4)),
+    versatilityHi: Number(versatilityHi.toFixed(4)),
+    /** 生效的抽卡权重（已归一化，和为 1）—— 界面照它印**三个**系数。 */
     drawWeights: { ...draw },
     /** ② 的刻度封顶值（候选池差额的 p75）：界面写「差额达到 N 金即 0 分」。 */
     gapMax,
@@ -3857,6 +3910,19 @@ const buildConclusionInner = (envs, options = {}) => {
           // `pack.bestPerf`（该版本表现分最高那条），**不乘金数项**；分母 `wSum` 与
           // 性价比那条**完全共用**，所以两个分项的版本覆盖口径天然一致。
           let accStrength = 0;
+          /**
+           * 强度分项里**最好的那一版**（与 `accStrength` 同一条 `bestPerf` 尺子取 max）。
+           *
+           * 用途只有一个：详情窗口那张「强度来源」表要能写出**跨版本发挥**这一列 ——
+           * `跨版本发挥 = 版本加权平均 ÷ 最好的那一版`，与性价比表里的同名列同义。
+           * 没有它，读者只看到「加权后是多少」，看不出**是某一版特别强、还是版版都稳**
+           * （那正是用户 2026-10-10 要求把这一列写出来的原因）。
+           *
+           * ⚠️ 只累计**参与平均**的版本（就是下面 `observed` 那支分支），与 `accStrength`
+           * 走同一批 `continue` —— 否则「早于登场」的版本也会被算成最好的那一版，
+           * 算出来的因子会 > 1。
+           */
+          let accStrengthBest = 0;
           /** 早于登场的版本数（不参与平均，见下）。 */
           let absentSeasons = 0;
           // 用户 2026-10-10：已登场却缺证据的版本**算 0 分**（权重进分母，分子不加）。
@@ -3868,8 +3934,11 @@ const buildConclusionInner = (envs, options = {}) => {
             if (observed) {
               wSum += w;
               acc += w * observed.score;
-              accStrength += w * SCORING.frontierPackScale
+              // 强度那一档：`bestPerf` = 该版本**表现分最高**那条（不乘金数项）。
+              const strengthPerf = SCORING.frontierPackScale
                 * (pack.bestPerf.get(s) ?? observed.perf);
+              accStrength += w * strengthPerf;
+              accStrengthBest = Math.max(accStrengthBest, strengthPerf);
               continue;
             }
             // 缺证据只有**两种**「缺」，它们不是同一种（v4.6.78 起）：
@@ -3947,6 +4016,9 @@ const buildConclusionInner = (envs, options = {}) => {
             // 强度分项（**不含金数项**）：同一套版本加权、同一个分母（用户 2026-10-13
             // 第 1、2 条）。它与 `score`（性价比）一起进 `frontierBoard` 的两个分项。
             strength: accStrength / wSum,
+            // 强度分项里**最好的那一版**（0~100，与 `strength` 同一量纲）：详情窗口靠它
+            // 写强度来源表的「跨版本发挥」列（= `strength ÷ strengthBest`，恒 ≤ 1）。
+            strengthBest: accStrengthBest,
             // `absentSeasons` = 早于登场、**不参与平均**的版本数（不奖不罚）。
             absentSeasons,
             // `droppedSeasons` = 已登场却**没有任何成绩**、算 0 分的版本数（明确地差）。
@@ -4962,6 +5034,13 @@ const buildConclusionInner = (envs, options = {}) => {
           // ⚠️ 老载荷 / 合成夹具没有 `pack.strength` 时退回 `pack.score`（不出现 NaN）。
           envStrength: Number((pack.strength ?? pack.score).toFixed(4)),
           envStrengthValue: Number(((pack.strength ?? pack.score) * weight).toFixed(4)),
+          // 该副本里**最好的那一版**的表现分（0~100）：强度来源表的「跨版本发挥」列拿它
+          // 当分母（`envStrength ÷ envStrengthBest`，恒 ≤ 1）。
+          // ⚠️ 老载荷 / 合成夹具没有 `pack.strengthBest` 时退回 `envStrength` 自己
+          // （因子 = 1），既不出现 NaN 也不会算出 > 1 的假因子。
+          envStrengthBest: Number(
+            (pack.strengthBest ?? pack.strength ?? pack.score).toFixed(4),
+          ),
           // 最佳证据那条**队伍**配置：界面写「7 金 · 满分 · 行动值 295 · 4.2 版本」。
           bestTeamGold: evidence.cost ?? null,
           // **最佳证据所在版本**的最便宜金数 —— 金数项的分母就是它（用户 2026-10-10
@@ -5030,6 +5109,17 @@ const buildConclusionInner = (envs, options = {}) => {
         // 泛用性原始分 = 这个角色投稿的**能通关**队伍里出现过的不同队友数（角色级）。
         // ⚠️ 查表要用归一后的键（开拓者各命途算同一个人），见 `teammateVariety`。
         versatilityRaw: teammateVariety.get(varietyKeyOf(unit.char))?.size ?? 0,
+        // 泛用性的**来源名单**（用户 2026-10-13：「给出泛用性的**完整得分来源**」）：
+        // 上面那个数的分子，去重后的队友（数据集英文键，界面自己用 i18n 转中文）。
+        // ⚠️ 排序后再存，别让集合的插入顺序走出去 —— 那是数据集的遍历顺序，
+        //    界面按它渲染会让名单看起来「每次刷新都在变」。
+        // ⚠️ **它留在服务端，不进 `/conclusion` 的载荷**（`slimFrontierUnit` 刻意不投影它）：
+        //    它是**角色级**的，而榜单里一个角色会出现在多条整包上（总榜 1 条 + 四个星魂档
+        //    各 1 条）—— 逐条带就是同一份名单重复 5 次。实测 319 条共 117 KB，
+        //    把载荷从 564 KB 顶到 730 KB，直接打穿 e2e 的 600 KB 硬上限。
+        //    界面按需取：`/api/archive/packs?char=…` 那份载荷里带**这一个角色**的名单
+        //    （几十字节 ~ 1.5 KB），与「全部配队」共用同一个缓存请求。
+        versatilityMembers: [...(teammateVariety.get(varietyKeyOf(unit.char)) || [])].sort(),
         envCount: unit.envs.length,
         envs: unit.envs,
         basis: 'team-gold-frontier-pack',
@@ -5085,6 +5175,28 @@ const buildConclusionInner = (envs, options = {}) => {
     const strengthExtent = extentOf((u) => u.strengthTotal);
     const costExtent = extentOf((u) => u.total);
     const versatilityExtent = extentOf((u) => u.versatilityRaw);
+    /**
+     * 三个分项的**归一上下限**（用户 2026-10-13：「需要给出强度、性价比、泛用性的
+     * **完整得分来源**」）。
+     *
+     * 为什么要有它：详情窗口那张「分项 / 原始量 / 得分 / 权重 / 贡献」表只写了
+     * 「原始量 → 得分」，**中间那次榜内 min-max 归一没写出来** —— 读者拿 `性价比 1098.2`
+     * 去对 `得分 96.2` 是永远对不上的。给出上下限，窗口里就能写出
+     * `得分 = 100 × (原始量 − 最小) ÷ (最大 − 最小)`，三个分项都能自己验算。
+     *
+     * ⚠️ **它是整榜共用的一个对象，必须放在载荷顶层**
+     * （`frontierExtents`，见 `/conclusion` 的投影）：这份对象只有 ~110 字节，可整包有
+     * 319 条（总榜 77 + 四档 242），逐条带一份就是 **33 KB** —— 实测把载荷从 564 KB 顶到
+     * 598 KB，把 e2e 的 600 KB 硬上限吃光（同一批里逐条带的泛用性名单更狠，117 KB）。
+     * 界面从 `state.conclusion.frontierExtents` 读它（那边的 `drawWeights` 也是同一读法）。
+     *
+     * ⚠️ 同一份 `all` 算出来的，所以四个星魂档视图与「全部」共用同一把尺子。
+     */
+    const extents = {
+      strength: { lo: strengthExtent.lo, hi: strengthExtent.hi },
+      cost: { lo: costExtent.lo, hi: costExtent.hi },
+      versatility: { lo: versatilityExtent.lo, hi: versatilityExtent.hi },
+    };
     const drawWeights = normalizeDrawWeights(options.drawWeights);
     for (const unit of all) {
       unit.strengthScore = Number((100 * spanOf(
@@ -5183,7 +5295,7 @@ const buildConclusionInner = (envs, options = {}) => {
         return true;
       }));
     }
-    return { board, byChar, byTier };
+    return { board, byChar, byTier, extents };
   })();
 
   const frontierUnits = frontierBoard.board;
@@ -5191,6 +5303,13 @@ const buildConclusionInner = (envs, options = {}) => {
   // 每条与 `frontierUnits` 的元素**同构**（同一个对象，界面因此不用认第二套形状）。
   // ⚠️ 档位以 `EIDOLON_TIERS` 为准（E3~E5 归入 E2 桶），不要在这里写死 [0,1,2,6]。
   const frontierTiers = frontierBoard.byTier;
+  /**
+   * 三个分项的归一上下限（整榜一份，见 `frontierBoard` 里 `extents` 的注释）。
+   *
+   * ⚠️ 下发时它必须是**载荷顶层的一个对象**，不能逐条挂到整包上 —— 319 条各带一份
+   * 就是 33 KB，实测会把 `/conclusion` 顶到 598 KB（e2e 的硬上限是 600 KB）。
+   */
+  const frontierExtents = frontierBoard.extents;
 
   // 压金出分前沿强度：`{ [envId]: { characters, eidolons, raw, rawEidolons, weight } }`。
   // 由服务端 `archiveFrontierAll` 提供（建库侧每个版本的 `frontier` 汇总而来）。
@@ -5627,6 +5746,9 @@ const buildConclusionInner = (envs, options = {}) => {
     // 只有 156 条（实测 +约 250 KB，见 `tools/_probe-tier-board.mjs`）—— 仍然是每角色
     // 每档一条，不重复占行。
     frontierTiers: Object.fromEntries(frontierTiers),
+    // 三个分项的归一上下限（整榜一份，~110 字节）。详情窗口靠它写出
+    // `得分 = 100 ×（原始量 − 最小）÷（最大 − 最小）`—— 见 `frontierBoard` 里那段注释。
+    frontierExtents,
     // **收敛前**每个角色的全部整包（按角色英文键分组，各角色内按性价比降序）。
     //
     // ⚠️ 不进 `projectConclusion` 的载荷（那里只发收敛后的 `frontierUnits`）：

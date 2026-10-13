@@ -1837,6 +1837,22 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   color: var(--text-dim);
   line-height: 1.5;
 }
+/* 泛用性来源里那串队友名字（用户 2026-10-13：「给出泛用性的完整得分来源」）。
+   实测一个角色能有 74 个不同队友，所以它必然是多行的一块 —— 给紧一点的行高与
+   一点底色，让它读起来像一份名单而不是一堵字墙。`overflow-wrap: anywhere` 是给长
+   英文键名（开拓者的 `Trailblazer` 之类）留的退路，避免单个键把窗口撑宽。 */
+.advice-vtip-members {
+  display: block;
+  margin: 0 0 4px;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 12.5px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+/* 每个来源块底部那句「这个数是怎么换算出来的」（归一换算 / 口径说明）。 */
+.advice-source-note { display: block; margin-top: 3px; }
 /* 「贡献值来源」7 列。改前每列都写成 `满分 （1.00）` 单行（2026-10 用户要求「优化排版」）：
    六个因子列各自被那半截括号撑到 ~90px，七列加起来比「贡献」列还宽，整张表顶到浮层上限，
    第一列的副本名被压成落单的一个「关」字。现在：

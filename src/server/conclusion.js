@@ -406,6 +406,15 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
   //   * `versatilityRaw` —— 泛用性原始分 = 这个角色投稿的能通关队伍里出现过的**不同队友个数**。
   strengthTotal: unit.strengthTotal ?? null,
   versatilityRaw: unit.versatilityRaw ?? null,
+  // ⚠️ **泛用性的来源名单（`versatilityMembers`）刻意不在这里投影**（用户 2026-10-13 要求
+  //    「给出泛用性的完整得分来源」，但名单走的是**按需**那条路）：
+  //    它是角色级的，而一个角色在榜单里最多出现 5 次（总榜 1 + 四个星魂档各 1），
+  //    逐条带就是同一份名单重复 5 次 —— 实测 319 条共 **117 KB**，把 `/conclusion`
+  //    从 564 KB 顶到 **730 KB**，直接打穿 e2e 的 600 KB 硬上限。
+  //    改由 `/api/archive/packs?char=…` 那份载荷带**这一个角色**的名单（见 `slimCharacterPack`），
+  //    界面点开详情时按需取 —— 与「全部配队」「逐档榜补明细」共用同一个缓存请求。
+  // ⚠️ 归一上下限同理：它是**整榜一份**，挂在顶层 `frontierExtents`（见下面 `/conclusion`
+  //    的投影），逐条带一份会白花 33 KB。
   // ⚠️ 抽卡方案的「强度得分」用的**就是**上面那个 `total`（用户 2026-10-12 第 8 条：
   //    同为 0T，9 金队要比 16 金队强得多）。v4.6.87 曾在这里多发一个 `strength`
   //    （纯强度，不含金数项），v4.6.91 已删除 —— 载荷形状回到 **v7**。
@@ -438,6 +447,9 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
       // ⚠️ 键名**不是** `strength`：那是 v4.6.87 被撤销的字段名，回归测试盯着它别复活。
       envStrength: env.envStrength ?? null,
       envStrengthValue: env.envStrengthValue ?? null,
+      // 该副本里**最好的那一版**的表现分（0~100）：强度来源表的「跨版本发挥」列拿它当分母
+      // （`envStrength ÷ envStrengthBest`，恒 ≤ 1）。老载荷没有它时界面退回因子 1。
+      envStrengthBest: env.envStrengthBest ?? null,
       // 最佳证据那条**队伍**配置：界面写「7 金 · 满分 · 行动值 295 · 4.2 赛季」。
       bestTeamGold: env.bestTeamGold ?? null,
       // **最佳证据所在版本**的最便宜金数 —— 金数项的分母（用户 2026-10-10 第 5 轮：
@@ -500,6 +512,9 @@ const slimCharacterPack = (unit, i18n, maps) => ({
   versatilityScore: unit.versatilityScore ?? null,
   strengthTotal: unit.strengthTotal ?? null,
   versatilityRaw: unit.versatilityRaw ?? null,
+  // ⚠️ 泛用性的**来源名单不在这里**：它是**角色级**的，同一个角色的几十个整包共用一份。
+  //    逐包带就是同一份名单重复最多 59 次（实测一个角色能到 59 条配装）——
+  //    放在这个载荷的**顶层** `versatilityMembers` 上（见 `archiveCharacterPacks` 的返回）。
   envCount: unit.envCount,
   bestTeamGold: unit.bestTeamGold ?? null,
   bestTier: unit.bestTier ?? null,
@@ -517,6 +532,9 @@ const slimCharacterPack = (unit, i18n, maps) => ({
     // ⚠️ 键名不是 `strength`（那是被撤销的 v4.6.87 字段名）。
     envStrength: env.envStrength ?? null,
     envStrengthValue: env.envStrengthValue ?? null,
+    // 与 `slimFrontierUnit` 的 env 投影**等价**（面板这条路上界面的「来源」表也是现算的，
+    // 少一个字段不会报错、只会静默少一列或算出 > 1 的因子 —— 见下面 `seasonMinCost` 那段）。
+    envStrengthBest: env.envStrengthBest ?? null,
     bestTeamGold: env.bestTeamGold ?? null,
     // ⚠️ **`seasonMinCost` 必须发**（v4.6.88 修的真 bug）：界面的「贡献值来源」表是用
     // `frontierFactorsOf(env, meta)` **现算**的，而金数项的分母是「**该版本**最便宜」
@@ -636,6 +654,17 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     // 图标表按角色/光锥维度建一次，这一整个请求里共用（下面每个整包、每个队友都要查）。
     // 图标表按角色/光锥维度建一次，这一整个请求里共用（下面每个整包、每个队友都要查）。
     packs: hit.map((unit) => slimCharacterPack(unit, i18n, maps)),
+    // 泛用性的**来源名单**（用户 2026-10-13：「给出泛用性**完整得分来源**」里唯一那个
+    // 集合型来源：这个角色能通关的队伍里出现过的不同队友）。
+    // ⚠️ 放在**顶层**而不是每个整包里：它是**角色级**的（同一个角色的几十条配装共用一份），
+    //    逐包带就是同一份名单重复最多 59 次。
+    // ⚠️ 也**不上 `/conclusion` 的载荷**：那条路上一个角色会出现 5 次（总榜 + 四个星魂档），
+    //    逐条带实测 117 KB，会把 600 KB 的硬上限打穿 —— 所以界面点开详情时按需来取这里。
+    versatilityMembers: hit[0]?.versatilityMembers ?? null,
+    // 三个分项的归一上下限：面板浮层也要写「得分 = 100 ×（原始量 − 最小）÷（最大 − 最小）」，
+    // 而面板这条路上界面**可能根本没有加载过结论**（用户直接在「角色信息」页点开的）。
+    // 它只有一个对象（~110 字节），随包带一份最省事，也省掉「结论没加载就没有刻度」的缺口。
+    frontierExtents: result.frontierExtents || null,
     // 副本元数据随包一起给：面板要写副本中文名与权重，单独再发一份不划算。
     envs: frontierAll.map((f) => {
       const meta = result.frontierEnvs?.find((e) => e.id === f.env);
@@ -671,9 +700,11 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     // v3 = 每个 env 新增 `seasonMinCost`（金数项的分母）：逐档榜的浮层会拿面板这份数据
     //      整份替换 `unit.envs` 再重画「贡献值来源」表，缺它就会让「跨版本发挥」算出 > 1
     //      （实测 39% 的行、最大 ×5.76）。见 `slimCharacterPack()` 里的注释。
-    // v4 = 三个分项 + 合成后的「角色得分」与逐 env 的 `strength` / `strengthValue`
+    // v4 = 三个分项 + 合成后的「角色得分」与逐 env 的 `envStrength` / `envStrengthValue`
     //      （用户 2026-10-13 第 1、2 条），且请求侧新增 `drawWeights`。
-    payload: 4,
+    // v5 = 逐 env 新增 `envStrengthBest`（强度来源表的「跨版本发挥」列的分母）——
+    //      用户 2026-10-13「需要给出强度、性价比、泛用性的完整得分来源」。
+    payload: 5,
   };
 };
 
@@ -816,6 +847,11 @@ const projectConclusion = (result) => ({
   // ~410 KB。`envCount` 仍照发，界面照旧写「等 N 个副本」。
   frontierTiers: Object.fromEntries(Object.entries(result.frontierTiers || {})
     .map(([tier, rows]) => [tier, (rows || []).map((unit, i) => slimFrontierUnit(unit, i, 1))])),
+  // 三个分项的**归一上下限**（用户 2026-10-13：「给出强度、性价比、泛用性的完整得分来源」）。
+  // ⚠️ 它是**整榜一份**的对象（~110 字节），必须放在这里 —— 逐条挂到整包上会重复 319 次、
+  //    白花 33 KB（实测能把载荷顶到 598 KB，硬上限是 600 KB）。界面从
+  //    `state.conclusion.frontierExtents` 读。
+  frontierExtents: result.frontierExtents || null,
   gapUnits: (result.gapUnits || []).slice(0, 30).map((u) => ({
     key: u.key, kind: u.kind, name: u.name, nameCn: u.nameCn || null, icon: u.icon || null,
     total: u.total, gap: u.gap, pulls: u.pulls, from: u.from, target: u.target,
@@ -923,10 +959,15 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     //    v4.6.91 按用户 2026-10-12 第 8 条撤销了那个字段，形状**回到 7**。
     // v8 = 新增三个分项与合成后的「角色得分」（`characterScore` / `strengthScore` /
     //      `costScore` / `versatilityScore` / `strengthTotal` / `versatilityRaw`，
-    //      逐 env 另加 `strength` / `strengthValue`），以及请求侧的 `drawWeights` 回显
+    //      逐 env 另加 `envStrength` / `envStrengthValue`），以及请求侧的 `drawWeights` 回显
     //      —— 用户 2026-10-13 第 1、2 条（「性价比得分」改名「角色得分」）。
-    //      ⚠️ **8 曾被用过又撤掉**（见上一条），所以这里是**第一次真正生效的 v8**。
-    payload: 8,
+    //      ⚠️ **8 曾被用过又撤掉**（见上一条），所以这里曾是**第一次真正生效的 v8**。
+    //      ⚠️ 上面那行原先把逐 env 的字段写成 `strength` / `strengthValue` —— 那是**错的**，
+    //      实际下发的是 `envStrength` / `envStrengthValue`（刻意避开被撤销的字段名）。
+    // v9 = 前 `FRONTIER_DETAIL_ROWS` 条新增 `versatilityMembers`（泛用性来源名单）与
+    //      `extents`（三个分项的榜内归一上下限），逐 env 新增 `envStrengthBest`
+    //      —— 用户 2026-10-13：「角色得分页面需要给出强度、性价比、泛用性的**完整得分来源**」。
+    payload: 9,
     // 隐金设置：**回显服务端实际生效的那一份**（归一化后的五个布尔）。
     // 为什么值得多带这 ~90 字节（载荷形状因此升到 v5）：隐金要穿过四层才生效
     // （界面 → POST body → 路由 → buildConclusion），任何一层漏传都表现为

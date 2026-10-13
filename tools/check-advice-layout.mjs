@@ -886,11 +886,15 @@ if (!drawInputsOk) failures += 1;
 console.log(`  ${drawInputsOk ? '✓' : '✗'} 抽卡权重有 3 个输入框（强度 / 性价比 / 泛用性）`);
 console.log(`  初始：${drawBase.eq}`);
 console.log(`        摘要 ${drawBase.meta}`);
-// 3 : 1 : 1 → 总榜按 0.6 / 0.2 / 0.2 加权；方案只吃前两项 → 两两归一成 0.75 / 0.25。
+// 3 : 1 : 1 → **总榜与抽卡方案都是** 0.6 / 0.2 / 0.2（用户 2026-10-13 第 3 条原话：
+// 「泛用性权重也适用于补金推荐」）。v4.6.95/96 时方案只吃强度/性价比、两项自己再归一，
+// 所以那时这里钉的是「方案印 × 0.75 / × 0.25」——**已经反过来**了。
 const drawAfter = await setDrawWeights([3, 1, 1]);
-const drawEqOk = Boolean(drawAfter.eq && drawAfter.eq.includes('× 0.75') && drawAfter.eq.includes('× 0.25'));
+const drawEqOk = Boolean(drawAfter.eq && drawAfter.eq.includes('× 0.6')
+  && drawAfter.eq.includes('× 0.2') && drawAfter.eq.includes('泛用性'));
 if (!drawEqOk) failures += 1;
-console.log(`  ${drawEqOk ? '✓' : '✗'} 抽卡方案按强度:性价比两两归一 → × 0.75 / × 0.25 —— ${drawAfter.eq}`);
+console.log(`  ${drawEqOk ? '✓' : '✗'} 抽卡方案三项一起归一 → 0.6 / 0.2 / 0.2，`
+  + `且等式里带「泛用性」—— ${drawAfter.eq}`);
 const drawMetaOk = Boolean(drawAfter.meta && drawAfter.meta.includes('强度 60%')
   && drawAfter.meta.includes('性价比 20%') && drawAfter.meta.includes('泛用性 20%'));
 if (!drawMetaOk) failures += 1;
@@ -908,8 +912,10 @@ console.log(`  ${drawBoardOk ? '✓' : '✗'} 角色总榜受抽卡权重影响�
 await evaluate(`document.getElementById('adviceFrontierWeightsReset')?.click()`);
 await sleep(2500);
 const drawReset = await drawProbe();
+// ⚠️ 恢复默认 = 三个框都回到 1 → 三等分 → `formatShare(1/3)` 印成 `0.33`
+//（`toFixed(2)` 去掉尾零）。v4.6.95/96 时是两项 `0.5 / 0.5`，别再按那个写。
 const drawResetOk = (drawReset.inputs || []).join(',') === '1,1,1'
-  && Boolean(drawReset.eq && drawReset.eq.includes('× 0.5'));
+  && Boolean(drawReset.eq && drawReset.eq.includes('× 0.33'));
 if (!drawResetOk) failures += 1;
 console.log(`  ${drawResetOk ? '✓' : '✗'} 「恢复默认」把抽卡权重也还原成 1 : 1 : 1 —— ${drawReset.eq}`);
 
@@ -1384,6 +1390,17 @@ if (!tipTarget) {
     //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
     const table = tip.querySelector('.advice-value-tip-table.is-source');
     const splitTable = tip.querySelector('.advice-score-split .advice-value-tip-table');
+    // 强度来源那张表（用户 2026-10-13：三项都要有「完整得分来源」）——它有自己的 class。
+    const strengthTable = tip.querySelector('.advice-value-tip-table.is-strength-source');
+    const strengthTrs = [ ...(strengthTable?.querySelectorAll('tbody tr') || []) ];
+    // 泛用性的来源块：一份队友名单 + 一句归一换算（它**不是**表格，是名单）。
+    const versBlock = [ ...tip.querySelectorAll('.advice-score-split') ]
+      .find((b) => /^泛用性来源/.test(b.querySelector('.advice-score-split-title')?.textContent || ''));
+    const versMembers = versBlock?.querySelector('.advice-vtip-members')?.textContent || '';
+    // ⚠️ 按**元素**数数，不要 split 文本：角色名里本来就有「•」（砂金•戏浪），
+    //    用分隔符切会把一个名字切成两个（假红）。
+    const versMemberCount = versBlock
+      ? versBlock.querySelectorAll('.advice-vtip-member').length : 0;
     const trs = [ ...(table?.querySelectorAll('tbody tr') || []) ];
     const cellsOf = (tr) => [ ...tr.children ].map((td) => td.textContent);
     const totalRow = trs.find((tr) => tr.classList.contains('is-total'));
@@ -1427,6 +1444,21 @@ if (!tipTarget) {
       // 抽卡权重 + 贡献，合计行的数必须与标题上那个数**逐字相同**（同一个 packScoreText）。
       // ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
       splitHeaders: [ ...(splitTable?.querySelectorAll('th') || []) ].map((n) => n.textContent),
+      // 强度来源表（用户 2026-10-13）：列名、逐关卡行数、合计那一行。
+      strengthHeaders: [ ...(strengthTable?.querySelectorAll('th') || []) ].map((n) => n.textContent),
+      strengthRowCount: strengthTrs.filter((tr) => !tr.classList.contains('is-total')).length,
+      strengthTotalRow: (() => {
+        const tr = strengthTrs.find((r) => r.classList.contains('is-total'));
+        return tr ? [ ...tr.children ].map((td) => td.textContent) : null;
+      })(),
+      // 泛用性来源块：名单文本 + 它下面的归一换算那句。
+      versMembers,
+      versListCount: versMemberCount,
+      versNote: versBlock?.querySelector('.advice-source-note')?.textContent || '',
+      versRaw: (() => {
+        const t = versBlock?.querySelector('.advice-score-split-title')?.textContent || '';
+        return Number((t.match(/共\\s*(\\d+)\\s*个/) || [])[1]);
+      })(),
       splitTotal: String(splitTable
         ?.querySelector('tr.is-total td:last-child')?.textContent || ''),
       splitRowCount: splitTable ? splitTable.querySelectorAll('tbody tr').length : 0,
@@ -1523,6 +1555,13 @@ if (!tipTarget) {
       })(),
       // ⑤ 整段正文里**不许再出现除号 ÷**（用户 2026-10-11 第 2 条：金数的符号改成斜杠）。
       hasDivisionSign: (tip.textContent || '').includes('÷'),
+    // 有除号时把**上下文**一起带出来：只报一句「全文含除号 ✗ 有」的话，人得自己
+    // 在几百行渲染结果里找那一个字符（本轮实测为此多跑了一整轮 CDP）。
+    divisionContext: (() => {
+      const t = tip.textContent || '';
+      const i = t.indexOf('÷');
+      return i < 0 ? '' : t.slice(Math.max(0, i - 50), i + 50);
+    })(),
       avatars: avatars.map((a) => a.naturalWidth),
       avatarHidden: avatars.filter((a) => a.classList.contains('is-missing')).length,
       cones: cones.map((a) => a.naturalWidth),
@@ -1778,6 +1817,23 @@ if (!tipTarget) {
     && JSON.stringify(tipReport.splitHeaders) === JSON.stringify(SPLIT_HEADERS)
     && tipReport.splitRowCount === 4
     && tipReport.splitTotal === headValue;
+  // ---- 强度 / 泛用性 两项的「完整得分来源」（用户 2026-10-13）------------------------
+  //
+  // 上面的 `sourceOk` 只管**性价比**那一张（逐关卡 × 金数）。用户要的是**三项都给来源**，
+  // 所以强度那张表（逐关卡 × 表现 × 跨版本发挥，**没有金数**）与泛用性那块（队友名单 +
+  // 归一换算）各自也要有判据 —— 否则「加了但没人测」等于下次改坏了也不知道。
+  const STRENGTH_HEADERS = ['关卡', '权重', '表现', '跨版本发挥', '贡献'];
+  const strengthSourceOk = Boolean(tipReport)
+    && JSON.stringify(tipReport.strengthHeaders) === JSON.stringify(STRENGTH_HEADERS)
+    && tipReport.strengthRowCount > 0
+    // 合计那一行只在多关卡时出现（与性价比表同一条约定）；出现时最后一格必须是 `+N`。
+    && (tipReport.strengthTotalRow === null
+      || /^\+\d+$/.test(tipReport.strengthTotalRow[tipReport.strengthTotalRow.length - 1] || ''));
+  // 泛用性那块：**名单真的有内容**、条数 = 标题上那个数、并写出归一换算。
+  const versatilitySourceOk = Boolean(tipReport)
+    && tipReport.versListCount > 0
+    && tipReport.versListCount === tipReport.versRaw
+    && /得分 = 100 ×（\d+ − [\d.]+）\/（[\d.]+ − [\d.]+）/.test(tipReport.versNote);
   // 次序：等式（`.advice-value-tip-eq`，永远是 sub 的第一个子节点）→ 表 → 全部配队 → 脚注。
   // ⚠️ 2026-10-11 第 5 条起队伍图标在**表格里面**，所以不再有「队伍块在表之前」这一项。
   const orderOk = Boolean(tipReport) && tipReport.order.table >= 0
@@ -1795,6 +1851,8 @@ if (!tipTarget) {
     && titleOk && renameOk && orderOk && sourceOk
     // 用户 2026-10-13 第 1、2 条：三个分项那张表（列名 / 三行 + 合计 / 合计 = 标题上的数）。
     && splitOk
+    // 用户 2026-10-13：「三项都要有**完整得分来源**」——强度那张表 + 泛用性那块名单。
+    && strengthSourceOk && versatilitySourceOk
     && notesTextOk && notesShortOk
     // 用户 2026-10-11（详情页第 1 条）：非关卡列居中 + 字号大一档。
     && fontOk
@@ -1930,6 +1988,12 @@ if (!tipTarget) {
         ? `，合计 ${JSON.stringify(tipReport.totalRow)}`
           + `（期望 ${sourceTotalExpected} = 性价比分项的原始分；徽标那个数是 ${headValue}）`
         : '，单副本无合计行'}`);
+    // 用户 2026-10-13：「三项都要有完整得分来源」——强度那张表与泛用性那块名单各自一行。
+    console.log(`      ${strengthSourceOk ? '✓' : '✗'} 强度来源表：列 ${JSON.stringify(tipReport.strengthHeaders)}`
+      + `，${tipReport.strengthRowCount} 行`
+      + `${tipReport.strengthTotalRow ? `，合计 ${JSON.stringify(tipReport.strengthTotalRow)}` : '，单副本无合计行'}`);
+    console.log(`      ${versatilitySourceOk ? '✓' : '✗'} 泛用性来源：名单 ${tipReport.versListCount} 个`
+      + `（标题写 ${tipReport.versRaw} 个）｜归一换算「${tipReport.versNote}」`);
     // 2026-10-11 第 2 条：三条判据各自单独打印一行，红的是哪一条一眼看得出。
     console.log(`  ${headerRenameOk ? '✓' : '✗'} 表头第一列已改名为「关卡」`
       + `（禁用「副本」）：${JSON.stringify(tipReport.headers)}`);
@@ -1957,7 +2021,8 @@ if (!tipTarget) {
       + `（用户 2026-10-11：「这些英语简称，我没要求添加」）：`
       + `第一格 ${JSON.stringify(tipReport.firstCells.map((c) => `${c.env}·${c.stage}`))}`);
     console.log(`  ${costCellOk ? '✓' : '✗'} 金数列：斜杠写法 / 封顶标出 / 0 金写 ×1.20`
-      + `（全文含除号 ${tipReport.hasDivisionSign ? '✗ 有' : '✓ 无'}）：`
+      + `（全文含除号 ${tipReport.hasDivisionSign ? '✗ 有' : '✓ 无'}`
+      + `${tipReport.hasDivisionSign ? `，位置：…${tipReport.divisionContext}…` : ''}）：`
       + JSON.stringify(tipReport.rows.map((r) => r[costCol])));
     console.log(`      ${notesTextOk && notesShortOk ? '✓' : '✗'} 脚注 `
       + `${tipReport.notes} 条（≥6 ${tipReport.notes >= 6 ? '✓' : '✗'}`
@@ -2394,8 +2459,10 @@ const teamPlanProbe = await evaluate(`(() => {
     // ⚠️ 第二项在 2026-10-12 第 6 条**回到**「差额接近度」：v4.6.87 一度叫「性价比得分」
     //    （差额接近度 与 压金度 合成），用户说这三者重叠、只要差额接近度，于是删掉中间层。
     //    标签不跟着改，numAfter 会取到 NaN（这条断言就是这么被绊到的）。
-    const parts = [numAfter('强度得分'), numAfter('差额接近度')];
-    const coefs = [coefAfter('强度得分'), coefAfter('差额接近度')];
+    const parts = [numAfter('强度得分'), numAfter('差额接近度'), numAfter('泛用性')];
+    // ⚠️ 第三项「泛用性」是用户 2026-10-13 第 3 条（「泛用性权重也适用于补金推荐」）
+    //    加进来的 —— 等式里现在是**三个**分项与三个系数，v4.6.95/96 时只有两个。
+    const coefs = [coefAfter('强度得分'), coefAfter('差额接近度'), coefAfter('泛用性')];
     const fills = [ ...card.querySelectorAll('.advice-plan-team-fill .advice-fill-item') ];
     // 一笔补金可能是**多金**（例：遐蝶 E0→E2 一笔 2 金），所以条数 ≠ 补金金数 ——
     // 正确的判据是「各条的金数之和 = 补金金数」。每条的 .advice-fill-cost 以「N 金」开头。
@@ -2460,13 +2527,20 @@ if (teamPlanProbe.missing) {
   if (hasCards) {
     // 每张卡：名次 + 四个位置 + 分项等式（两个分项 × 印出来的系数 = 徽标）+ 补金顺序之和 = 补金金数
     // ⚠️ 系数不写死 0.5：2026-10-12 第 3 条起它们来自用户可调的**抽卡权重**，
-    //    这里验的是「按卡上印出来的系数算得回去」+「两个系数加起来是 1」。
-    const eqOk = teamPlanProbe.rows.every((r) => r.parts.length === 2 && r.coefs.length === 2
-      && Math.abs(r.coefs[0] + r.coefs[1] - 1) < 0.02
-      && Math.abs(r.coefs[0] * r.parts[0] + r.coefs[1] * r.parts[1] - r.badge) < 0.51);
+    //    这里验的是「按卡上印出来的系数算得回去」+「系数加起来是 1」。
+    //    ⚠️ 2026-10-13 第 3 条（「泛用性权重也适用于补金推荐」）之后是**三个**系数。
+    //    ⚠️ 容差必须放宽到 ~1.5：卡上印的系数是**两位小数**（`formatShare`），
+    //    `1/3` 印成 `0.33`、三项合计 0.99；乘以「分项之和」（≤300）后误差可达
+    //    0.015 × 300 ≈ 4.5？不 —— 每项误差 ≤0.005，三项 ≤0.015，但**只有真实权重
+    //    与印出来的差**才进这个和，实测前 15 名的偏差在 0.7 以内。取 1.51 留足余量，
+    //    同时仍然能抓住「系数印错了一位」这类真错（那种偏差是几十）。
+    const eqOk = teamPlanProbe.rows.every((r) => r.parts.length === 3 && r.coefs.length === 3
+      && Math.abs(r.coefs[0] + r.coefs[1] + r.coefs[2] - 1) < 0.02
+      && Math.abs(r.coefs[0] * r.parts[0] + r.coefs[1] * r.parts[1]
+        + r.coefs[2] * r.parts[2] - r.badge) < 1.51);
     if (!eqOk) failures += 1;
-    console.log(`  ${eqOk ? '✓' : '✗'} 每张卡的总分 = 强度得分×系数 + 差额接近度×系数`
-      + `（系数由抽卡权重决定、印在卡上，两个系数之和必须是 1）`);
+    console.log(`  ${eqOk ? '✓' : '✗'} 每张卡的总分 = 强度得分×系数 + 差额接近度×系数 + 泛用性×系数`
+      + `（系数由抽卡权重决定、印在卡上，三个系数之和必须是 1）`);
     const shapeOk = teamPlanProbe.rows.every((r) => r.hasRank && r.slots === 4
       // ⚠️ `fills >= 1` 曾被写成硬条件，与用户第 6 条**自相矛盾**：隐金设置开着时
       //    「不添加成本的那几笔」会被隐藏，一整队的补金项全被盖掉时列表就是空的。
@@ -2589,12 +2663,15 @@ if (teamPlanProbe.missing) {
         + `（表头 ${JSON.stringify(scoreTip?.headers || [])}，次选 ${scoreTip?.alts ?? 0} 支，`
         + `内容块 ${(scoreTip?.blocks || []).length} 段`
         + `${tipScoreOk ? '' : `：${(scoreTip?.blocks || []).map((b) => b.slice(0, 18)).join(' / ') || '（空）'}`}）`);
-      // ⚠️ 用户 2026-10-12 第 6 条：分数来源表只有两个刻度，且不许再出现「压金度 / 性价比得分」。
-      const scoreScaleOk = JSON.stringify(scoreTip?.rowLabels) === JSON.stringify(['强度得分', '差额接近度'])
+      // ⚠️ 用户 2026-10-12 第 6 条：分数来源**只有真实生效的那几个刻度**，
+      //    且不许再出现「压金度 / 性价比得分」。2026-10-13 第 3 条（泛用性也进补金推荐）
+      //    之后是**三行** —— v4.6.95/96 时这里钉的是两行。
+      const scoreScaleOk = JSON.stringify(scoreTip?.rowLabels)
+        === JSON.stringify(['强度得分', '差额接近度', '泛用性'])
         && !scoreTip.text.includes('压金度')
         && !scoreTip.text.includes('性价比得分');
       if (!scoreScaleOk) failures += 1;
-      console.log(`  ${scoreScaleOk ? '✓' : '✗'} 分数来源表只有「强度得分 / 差额接近度」两行、`
+      console.log(`  ${scoreScaleOk ? '✓' : '✗'} 分数来源表是「强度得分 / 差额接近度 / 泛用性」三行、`
         + `全文不出现「压金度 / 性价比得分」（实际 ${JSON.stringify(scoreTip?.rowLabels || [])}）`);
       await evaluate("document.querySelector('#adviceTipClose')?.click(); true");
       await sleep(300);
