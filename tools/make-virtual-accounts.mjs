@@ -11,6 +11,7 @@
 //   node tools/make-virtual-accounts.mjs [--out=data/accounts-virtual.json] [--list]
 //                                        [--preset=newbie,bai-e,full]
 import fs from 'node:fs';
+import path from 'node:path';
 import { charCostOf, coneCostOf } from '../public/scripts/advice.js';
 import { archiveIndex, loadI18n } from '../src/server/archive.js';
 import { VIRTUAL_PRESETS, buildVirtualAccount, presetContext, presetContextRefs } from '../src/server/virtual-accounts.js';
@@ -50,6 +51,10 @@ if (LIST_ONLY) {
     console.log(`${accounts[i].id}\n  ${spec.title}｜${describe(accounts[i])}\n  ${spec.hint}`);
   }
 } else {
+  // ⚠️ `data/` 在**新建的 worktree / 全新 clone** 里根本不存在（它在 `.gitignore` 里、
+  //    也不进 worktree），不先建目录这里会直接 ENOENT 崩掉 —— 而这条命令正是
+  //    「新环境里把界面跑起来」的第一步（CDP 布局套件也靠它准备账号）。
+  fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, `${JSON.stringify({ version: 1, accounts }, null, 2)}\n`);
   console.log(`已写入 ${OUT}：${accounts.length} 个虚拟账号`);
   console.log('启动沙箱界面（**不碰真实账号库**）：');
