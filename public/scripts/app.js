@@ -504,9 +504,17 @@ const selectAccount = async (accountId, uid) => {
   el.snapshot.hidden = true;
   renderAccounts();
   renderRoleSelect();
-  renderView();
   setStatus('已登录', 'pill-ok');
+  // ⚠️ **先等快照，再画页面**：抽卡方案的差额是**按当前快照现算**的
+  // （`mountAdviceView` 通过 `getSnapshot()` 现取），早画会让它拿上一份（或空）快照
+  // 算出另一套名次。代价只是切换时多转一会儿圈（加载态本来就有）。
   if (state.activeUid) await loadSnapshot();
+  renderView();
+  // ⚠️ 还必须**显式重画一次抽卡页**：`renderView()` 只切登录/面板的显隐，抽卡那页是
+  //    `selectTab('advice')` 调的 `show()` 画的 —— 不补这一句，切账号后方案会静静停在
+  //    旧账号的数字上（实测踩到：切到「虚拟·白厄队」后首卡仍是「全新账号」那套）。
+  //    只在抽卡页当前可见时才画，免得白算一遍 teamPlan。
+  if (activeTab() === 'advice') await adviceOf().show();
 };
 
 // ---------------------------------------------- 1034 验证（Geetest）

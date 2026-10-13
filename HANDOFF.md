@@ -1734,6 +1734,34 @@ node tools/team-plan-cases.mjs --rows=6 [--markdown=docs/抽卡方案-虚拟账�
 **⚠️ 免费单位提示**（不算失败），别把它当失败去改算法；若哪天决定给免费单位的星魂也计价，
 那是**口径变更**，先问用户。
 
+### 4.2V 在**界面里**看虚拟账号（`tools/make-virtual-accounts.mjs`）+ 一个真 bug（v4.6.93）
+
+用户问「我怎么看到这些测试账号」——`team-plan-cases.mjs` 只在终端里跑。做法：把虚拟账号
+写成一份**独立的账号库文件**，再起**第二个服务**（另一个端口），真实账号库一字不动。
+
+```
+node tools/make-virtual-accounts.mjs                 # 写 data/accounts-virtual.json（7 个虚拟账号）
+$env:DSH_HSR_DATA_FILE='accounts-virtual.json'; node bin/serve.mjs --port 8372 --host 127.0.0.1
+# 打开 http://127.0.0.1:8372/?view=advice ，在「账号」区点角色 chip 切换
+```
+
+* ⚠️ `DSH_HSR_DATA_FILE` 是**相对 `data/` 目录**解析的（`resolve(cwd, 'data', env)`），写
+  `data/accounts-virtual.json` 会变成 `data/data/...`（实测踩过）。
+* ⚠️ 快照路由是 `/roles/(\d+)/snapshot`，所以虚拟角色的 **uid 必须是纯数字**
+  （实测用 `9baiE` 会 404）。
+* 虚拟账号按**米游社快照形状**造（`characters: [{name:'遐蝶', rank/actived_constellation_num,
+  equip:{name, rank}}]`，名字用中文），免费角色预置 E6、免费光锥 S5；`source: 'virtual'`。
+* 7 个账号：全新账号 / 单核起步（遐蝶 E0）/ 小氪 / 中氪 / 重氪 / **白厄队**（复现用户那一问）/
+  **全图鉴**（所有队伍差额 0 ⇒ 候选池 0 ⇒ 方案必须是空态，这条被当成回归判据）。
+
+**顺手修掉一个「界面静默显示旧账号数据」的 bug（v4.6.93）**：在抽卡推荐页**切账号**后，
+抽卡方案不重算 —— 差额是浏览器按当前快照现算的，而 `selectAccount()` 只调了 `renderView()`
+（那个函数只管登录/面板显隐，抽卡页是 `selectTab('advice')` 调的 `show()` 画的，没人再调）。
+改法：先 `await loadSnapshot()` 再 `renderView()`，并在 `activeTab() === 'advice'` 时显式
+`adviceOf().show()` 重画。回归钉在 `check-advice-layout.mjs`（用「全图鉴」账号做**决定性**
+判据：切过去后方案必须 15 张卡 → 0 张）。发现途径就是这次造虚拟账号 —— CLI 测试台算出
+66.1，界面显示 69.1，**界面错了**。
+
 ---
 
 ## 5. 测试命令 / 如何验证
