@@ -40,6 +40,9 @@ const suites = [
   // ⚠️ **完全不联网**：夹具在 `theherta/backup/sync-test-<pid>/`（gitignore）里自造自清，
   // 「今天」由 `HERTA_TODAY` 注入，所以判据可复现、不会过一个月就假红。
   ['同步黑塔网（跳过判据 / 降级 / 缩水保护）', 'herta-sync-test.mjs'],
+  // 用户 2026-10-14 点名的两条不变式：强度对投入单调（E6S5 > E6S1 > E2S1 > E0S0）、
+  // 以及成本账（限定 E6S5 不算隐金 = 12 金）。离线，样本角色，实测 638 组可比档位。
+  ['强度口径不变式（投入单调 / E6S5=12 金）', 'strength-invariant-test.mjs'],
   ['中文名称映射 (对照游戏内中文)', 'herta-i18n-check.mjs'],
   ['端到端 HTTP / 静态资源 / 会话', 'e2e-test.mjs'],
   ['启动器 start.bat 自检', 'launcher-test.mjs'],

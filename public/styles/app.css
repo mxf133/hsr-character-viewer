@@ -107,7 +107,15 @@ body {
    ⚠️ 它是一个 `<button>`（可点 → 开更换选择器、键盘可达），所以要把浏览器给按钮的
    默认外观（边框 / 内边距 / 背景 / 字体）全部压掉，否则会和原来那个 `<span>` 长得不一样。
    头像本身由 `app.js` 塞一个 `<img>` 进来（`.brand-mark-img`）；拿不到图标前显示
-   `.brand-mark-glyph` 里的 ✦。 */
+   `.brand-mark-glyph` 里的 ✦。
+
+   ⚠️ 用户 2026-10-14 追加：「左上角的头像的背景颜色改为无色」。所以这里**没有背景**：
+   既没有那层金色的渐变底（改前是 `linear-gradient(140deg, gold-bright, gold)`），也去掉了
+   围着它的金色光晕（`box-shadow: 0 0 22px rgba(240,198,116,…)` —— 那圈光在透明底上就是
+   一圈**有色**的底，正是不想要的东西）。头像图自己带背景（数据集里的角色图是立绘方图），
+   所以视觉上仍然是一个圆角方块。
+   ⚠️ 跟着一起改的是 `.brand-mark-glyph` 的颜色：✦ 兜底原来写的是**深藏青**
+   （`#14203a`）—— 那是专门配金色底的，底色一透明它会在深色页面上几乎看不见。 */
 .brand-mark {
   display: grid;
   place-items: center;
@@ -119,19 +127,40 @@ body {
   overflow: hidden;
   font: inherit;
   font-size: 20px;
-  color: #14203a;
   cursor: pointer;
-  background: linear-gradient(140deg, var(--gold-bright), var(--gold));
-  box-shadow: 0 0 22px rgba(240, 198, 116, 0.45);
-  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  background: none;
+  box-shadow: none;
+  transition: transform 0.12s ease, filter 0.12s ease;
 }
-.brand-mark:hover { transform: translateY(-1px); box-shadow: 0 0 26px rgba(240, 198, 116, 0.62); }
+/* 悬停反馈改成「轻微上抬 + 提亮」——不给颜色，免得又把「无色」破坏掉。 */
+.brand-mark:hover { transform: translateY(-1px); filter: brightness(1.08); }
 .brand-mark:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
+.brand-mark-glyph { color: var(--gold-bright); }
 /* 头像是 256×256 的方图，铺满整个圆角方块即可（`object-fit` 防拉伸）。 */
 .brand-mark-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
 /* 头像选择器（顶栏图标点开的那个）：与「隐金设置」同一套浮层尺寸，里面是可搜索的
    角色头像网格。⚠️ 单独一个 class，不要复用 `.advice-gold-*`（那是抽卡页的窗口）。 */
+
+/* ⚠️ 用户 2026-10-14 报「点击左上角头像，不能滚动选择头像的界面」——
+   根因是这里（原来只用了通用的 `.modal-card`）：那个类**没有 `max-height`**，
+   88 个头像把卡片撑得比视口还高，而 `.modal` 是居中网格（`place-items: center`），
+   上下溢出部分被切掉、滚不动。所以卡片自己限高 + 内部正文滚动，
+   与 `.advice-gold-card` 同一套写法（含那条「`min-height: 0` 不能省」的教训）。 */
+html:has(#appIconPicker) { overflow: hidden; }
+.modal-card.icon-picker-card {
+  width: min(760px, 94vw);
+  max-height: min(86vh, 900px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* 标题 / 说明 / 搜索框固定在上面，不跟着网格滚。 */
+.icon-picker-top { flex: none; }
+.icon-picker-top input[type="search"] { width: 100%; margin-bottom: 12px; }
+/* 正文：`min-height: 0` 是 flex 子项能真的缩到内容高度以下的必要条件，
+   少了它 `overflow-y: auto` 在长内容下会失效（卡片被撑破）。 */
+.icon-picker-body { min-height: 0; overflow-y: auto; padding-right: 4px; }
 .icon-picker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
