@@ -94,3 +94,25 @@ git log --name-only --pretty=format: origin/main..HEAD | sort -u   # 复核
 > UID（107987102）与 66 个已解锁角色，就是用上面这条在未推送区间里整体摘除的。
 > 摘除后记得删掉 `refs/original/refs/heads/main` 与临时备份分支，并把其它含该图的分支
 > 重置到新 `main`（`git reset --mixed main` 不会动工作区里未提交的数据文件）。
+
+## 5. 已发布记录
+
+| 版本 | Release | 附件 |
+| --- | --- | --- |
+| v4.6.102 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.102> | `hsr-character-viewer-v4.6.102.zip`（4.15 MB，`git archive` 生成，不含 `data/`） |
+
+### 踩过的坑
+
+1. **REST API 发 Release 的编码**：中文 Windows 上 `Get-Content -Raw` 可能按 GBK 解码 →
+   正文变乱码、GitHub 直接 422（`For 'properties/body' ... Invalid request`）。
+   必须显式 UTF-8 读写：
+   ```powershell
+   $md = [IO.File]::ReadAllText($path, [Text.Encoding]::UTF8)
+   [IO.File]::WriteAllText($json, ($payload), (New-Object Text.UTF8Encoding($false)))
+   Invoke-RestMethod ... -ContentType 'application/json; charset=utf-8' -InFile $json
+   ```
+2. **GitHub 不可达时**：本机 v2rayN / sing-box 的混合端口在 `127.0.0.1:10808`，
+   `git -c http.proxy=http://127.0.0.1:10808 push …` 与 `Invoke-RestMethod -Proxy …` 都可用；
+   直连偶尔能通，所以脚本里按「直连 → http 代理 → socks5」依次尝试最稳。
+3. **Release 用哪条凭据**：本机 Git Credential Manager 里已有 PAT，可直接
+   `git credential fill` 取出来给 REST API 用，不必再登录 `gh`（**不要把 token 写进文件或命令行**）。

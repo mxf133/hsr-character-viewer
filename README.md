@@ -5,6 +5,8 @@
 
 零第三方依赖、纯本地运行；打开页面与切换分页**都不联网**，只有你点「同步」才会抓数据。
 
+> **下载**：最新便携包见 [Releases](https://github.com/mxf133/hsr-character-viewer/releases)（解压后双击 `start.bat` 即可，无需 `npm install`）。
+
 ![角色总榜](docs/screenshots/抽卡推荐-角色总榜.png)
 
 ## 它回答什么
