@@ -2,7 +2,7 @@
 //
 // 为什么需要它：抽卡方案只显示前 15 名，用户问「某支队伍强度得分多少 / 为什么不推荐补某一笔」
 // 时，`_probe-team-plan.mjs --rows=15` 看不到它。这里把**整个候选池**打出来，
-// 并列出总榜里含这些角色的**全部整包**（原始 ① 值 = 整包分）。
+// 并列出总榜里含这些角色的**全部整包**（旧口径的原始 ① 值 = 整包分；现行 ① 是绝对强度分）。
 //
 //   node tools/_probe-team-lookup.mjs --chars=白厄,昔涟,刻律德菈 [--account=1] [--hidden]
 import { AccountStore } from '../src/server/store.js';
@@ -62,7 +62,7 @@ const concl = buildConclusion(envs, {
   ...(HIDDEN ? { hiddenCosts: HIDDEN } : {}),
 });
 
-// ---- A. 总榜里含这些角色的**全部整包**（原始 ① 值就是整包分）----------------------
+// ---- A. 总榜里含这些角色的**全部整包**（旧口径的原始 ① 值就是整包分）----------------------
 const allUnits = [...(concl.frontierUnits || []),
   ...Object.values(concl.frontierTiers || {}).flat()];
 const hasAll = (u, keys) => keys.every((k) => (u.envs?.[0]?.members || [])
@@ -94,7 +94,7 @@ try {
   SCORING.teamPlanMaxRows = keep;
 }
 console.log(`\n候选池 ${planAll.pool} 支（逐档榜 ∪ 总榜去重后 ${planAll.poolAll} 支）`
-  + `｜① 刻度（整包分）${planAll.strengthLo.toFixed(1)} ~ ${planAll.strengthHi.toFixed(1)}`
+  + `｜① 刻度（绝对强度分 0~100）${planAll.strengthLo.toFixed(1)} ~ ${planAll.strengthHi.toFixed(1)}`
   + `｜② 封顶 ${planAll.gapMax} 金`);
 const rows = planAll.rows.filter((r) => WANT_KEYS.every((k) => r.members.some((m) => m.char === k)));
 console.log(`\n【B】候选池里**同时含**这几个角色的队伍：${rows.length} 支`
@@ -102,7 +102,7 @@ console.log(`\n【B】候选池里**同时含**这几个角色的队伍：${rows
 for (const r of rows) {
   const idx = planAll.rows.indexOf(r) + 1;
   console.log(`\n  全池第 ${idx} 名｜补金推荐分 ${r.total.toFixed(1)}`
-    + ` = ①强度得分 ${r.strengthPct.toFixed(1)}（整包分 ${r.teamScore.toFixed(1)}）`
+    + ` = ①强度得分 ${r.strengthPct.toFixed(1)}（绝对强度分；队分 ${r.teamScore.toFixed(1)}）`
     + ` × ${planAll.drawWeights.strength} + ②差额接近度 ${r.gapPct.toFixed(1)} × ${planAll.drawWeights.cost}`);
   console.log(`      账面 ${r.gold} 金｜补金 ${r.gap} 金`
     + `｜最佳证据 ${r.bestEnv?.label || '—'} ${r.bestEnv?.bestTeamGold ?? '—'} 金 · `

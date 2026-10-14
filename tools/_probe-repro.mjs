@@ -64,7 +64,7 @@ const show = (label, concl, opts = {}) => {
   console.log(`\n${'─'.repeat(100)}\n${label}`);
   console.log(`  总榜 ${concl.frontierUnits.length} 条 · 候选池 ${plan.pool} 支（去重 ${plan.poolAll}）`
     + ` · 展示 ${plan.rows.length} 条 · ②封顶 ${plan.gapMax} 金（真实最大 ${plan.gapRealMax}）`);
-  console.log(`  ① 刻度（角色总榜整包分）：${plan.strengthLo.toFixed(0)}~${plan.strengthHi.toFixed(0)}`
+  console.log(`  ① 刻度（绝对强度分 0~100）：${plan.strengthLo.toFixed(0)}~${plan.strengthHi.toFixed(0)}`
     + `　→ ① 落在 ${Math.min(...strengths).toFixed(1)} ~ ${Math.max(...strengths).toFixed(1)}`);
   console.log(`  ② 落在 ${Math.min(...plan.rows.map((r) => r.gapPct)).toFixed(1)}`
     + ` ~ ${Math.max(...plan.rows.map((r) => r.gapPct)).toFixed(1)}`

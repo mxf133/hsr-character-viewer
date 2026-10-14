@@ -61,7 +61,7 @@ console.log(`账号 ${ACC}：${role.nickname} · 已有 ${acct.owned.size} 角�
 console.log(`抽卡权重：强度 ${(draw.strength * 100).toFixed(0)}% / 性价比 ${(draw.cost * 100).toFixed(0)}%`);
 console.log(`候选池：总榜 ${conclusion.frontierUnits.length} 条 → 队伍 ${plan.poolAll} 支`
   + ` → 去掉补金 0 金后 ${plan.pool} 支；下发 ${plan.rows.length} 条（截断=${plan.truncated}）`);
-console.log(`归一化上下限（现算）：强度 = 角色总榜整包分 ${plan.strengthLo.toFixed(1)}`
+console.log(`① 刻度（常量）：绝对强度分 0~100 —— ${plan.strengthLo.toFixed(1)}`
   + ` ~ ${plan.strengthHi.toFixed(1)}`
   + `；差额封顶 ${plan.gapMax} 金（性价比 = 差额接近度，只有一个刻度）`);
 

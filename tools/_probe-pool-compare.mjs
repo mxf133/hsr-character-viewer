@@ -113,7 +113,7 @@ const built = POOLS.map(([label, teams, preset]) => ({ label, ...(preset || scor
 for (const b of built) {
   const zero = b.rows.filter((x) => x.gapPct === 0).length;
   console.log(`${b.label.padEnd(30)} 队伍 ${String(b.rows.length).padStart(4)} 支`
-    + `｜① 刻度 ${b.lo.toFixed(1)}~${b.hi.toFixed(1)}`
+    + `｜① 刻度（旧口径复刻）${b.lo.toFixed(1)}~${b.hi.toFixed(1)}`
     + `｜② 封顶 ${String(b.cap).padStart(2)} 金`
     + `｜② 归 0 的 ${String(zero).padStart(4)} 支（${(zero / b.rows.length * 100).toFixed(0)}%）`);
 }
