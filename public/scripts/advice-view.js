@@ -1207,8 +1207,13 @@ const saveDrawWeights = () => {
  * ⚠️ 2026-10-13 第 1 条加了第三个旋钮（泛用性）之后，这里按 `DRAW_WEIGHT_ROWS`
  * **逐个印**（不再手抄 strength/cost 两个键）—— 加旋钮时这里不会再漏一个。
  *
- * ⚠️ 三个百分比说的是**角色总榜**的口径。抽卡方案只吃强度/性价比两项（它内部再两两
- * 归一），所以同一行末尾补一句，免得用户以为方案也跟着泛用性走。
+ * ⚠️ 三个百分比说的是**两个榜共用**的口径（用户 2026-10-13 第 3 条之后口径统一了）：
+ * 角色总榜的角色得分与抽卡方案的补金推荐分都按这三个系数加权，所以末尾那句写的是
+ * 「都按这三个系数加权」。
+ *
+ * 历史（别再改回去）：v4.6.95/96 时抽卡方案只吃强度/性价比两项（它内部再两两归一），
+ * 那时这里印的是「；抽卡方案只用强度/性价比。」—— 用户第 3 条把泛用性也接进补金推荐分
+ * 之后那句话就是**错的**（它会让用户以为调泛用性不动方案名次）。
  */
 const renderDrawWeightsMeta = () => {
   const meta = el.drawWeightsMeta;
@@ -1221,7 +1226,9 @@ const renderDrawWeightsMeta = () => {
     .join(' · ');
   meta.textContent = `角色总榜：${parts}`
     + (changed ? '' : '（默认三等分）')
-    + '；抽卡方案只用强度/性价比。';
+    // ⚠️ 三个系数**两个榜都吃**（用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」）：
+    //    角色总榜的角色得分、抽卡方案的补金推荐分，用的是同一个 `normalizeDrawWeights`。
+    + '；角色得分与补金推荐分都按这三个系数加权。';
 };
 
 /**
@@ -2043,7 +2050,17 @@ const hideTip = (wrap) => {
  * 点背景、点关闭按钮都会走窗口自己的 `close()`，而它会回调 `onClose → hideTip()`。
  * 这里再抢着收一次，就会把两套状态拆开（窗口还开着、徽标已经不亮了）；而且内容节点
  * 此刻正在窗口里，`closest('.advice-value-wrap')` 之类的判断也不再成立。
+ *
+ * ⚠️ 本函数里唯一一个**挂在 `document` 上、且全局只接一次**的监听器是下面那个
+ * 「就地折叠块」的委托 —— 理由（两个方向都实测踩过）见它的注释。
+ *
+ * ⚠️ 那个监听器的「只接一次」用的是**模块级**的 `detailToggleWired`，**不是**上面这个
+ * `container.dataset.tipsWired`：后者只管「这个容器接过没有」，而折叠块的委托挂在
+ * `document` 上、整个页面只需要一份 —— 拿容器级守卫去挡会挂上两份，一次点击被处理
+ * 两遍（实测：`aria-expanded` 被写成 `true` 又立刻写回 `false`，等于没点）。
  */
+let detailToggleWired = false;
+
 const wireValueTips = (container) => {
   if (!container || container.dataset.tipsWired === '1') return;
   container.dataset.tipsWired = '1';
@@ -2161,6 +2178,58 @@ const wireValueTips = (container) => {
   });
   // ⚠️ **刻意不监听 `scroll`**：v4.6.59 之前这里会把全部浮层收掉，而那正是用户报的
   // 「窗口会自动关掉」。现在内容在固定的大窗口里（背后页面还锁了滚动），更不需要收。
+  /**
+   * 详情里的**就地折叠块**（用户 2026-10-13 第 8 条）。
+   *
+   * ## 为什么委托挂 `document` 上，而不是 `container` 上（本轮实测踩过）
+   *
+   * 这是本函数里**唯一**一个不能挂 `container` 的监听器，理由是结构性的：
+   * 内容节点 `.advice-value-tip` 会被 `advice-tip-window.js` 的 `openTipWindow()`
+   * **整体搬进**那个满屏窗口（`.advice-tip-body`）——`document.body > .modal > …`，
+   * 而 `container` 是总榜列表 / 抽卡方案正文。窗口一开，这些按钮就**不再是 `container`
+   * 的后代**了，`container` 上的监听器永远收不到它们的点击。
+   *
+   * 而用户**只会在窗口里点这些按钮**（窗口是满屏遮罩 + 锁定背后滚动），于是：
+   * 按钮 hover 有反应、指针是手型、点下去什么都不发生，**且不报任何错**。
+   * 本轮实测两次静默无效（先写 `container.contains()`、再改成 `document.contains()`），
+   * 直到把探针挂到祖先链上打印 `getEventListeners()` 才看清
+   * 「容器根本不是 `.modal` 的祖先」。
+   *
+   * ## 为什么必须**只接一次**（同一个坑的另一半，本轮同样实测踩过）
+   *
+   * `wireValueTips()` 会被调用**两次**（总榜 `#adviceConclusionUnits` 与抽卡方案
+   * `#adviceTeamPlanBody`，各有各的 `dataset.tipsWired` 守卫）。若把这个监听器写在
+   * 「每个容器各接一份」的地方，挂到 `document` 之后**点一次按钮两个监听器都会收到**
+   * —— 而且没有哪一条判据能干净地分清「这个按钮归谁」（窗口里同一时刻只有一个
+   * `.advice-value-tip`，`container.contains(tip)` 对两个监听器都是 false），
+   * 于是两个监听器各翻一次状态：`aria-expanded` 被写成 `true` 又立刻写回 `false`，
+   * **一次点击等于没点**（实测 `setAttribute` 的调用序列就是 `true` → `false`）。
+   * 所以这里由一个**模块级**布尔量 `detailToggleWired` 保证全局只接一次 ——
+   * 全局本来就只需要一个监听器（它处理的是页面上所有 `.advice-detail-toggle`），
+   * 而它挂在 `document` 上、与「哪个容器是主人」这件事无关。
+   *
+   * 旧节点（切档 / 改权重把内容 `replaceWith` 换下来）的点击必须**无害地作废**：
+   * 那种节点的 `isConnected` 为 false，`closest()` 仍能命中它，所以要显式判掉。
+   *
+   * `click` 由浏览器替我们做键鼠归一：真实鼠标、触摸、以及键盘在 `<button>` 上的
+   * Enter/空格，都会派发一个 `click` —— 所以**不需要再写一份 keydown**。
+   * （⚠️ 这一段与上面那条 `keydown` 互不影响：那条只认 `.advice-value-wrap`，
+   *  折叠块是它的兄弟节点，不在徽标里。）
+   */
+  if (!detailToggleWired) {
+    detailToggleWired = true;
+    document.addEventListener('click', (event) => {
+      const toggle = event.target?.closest?.('.advice-detail-toggle');
+      if (!toggle || !toggle.isConnected) return;
+      const detail = toggle.parentElement?.querySelector('.advice-detail') || null;
+      const open = toggle.getAttribute('aria-expanded') === 'true';
+      toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
+      if (detail) detail.hidden = open;
+      // ⚠️ **不做「同时只开一个」**：这是同一个数字内部的三项拆解，用户往往要对着
+      //「强度来源」与「性价比来源」两张表互相验算 —— 强制互斥会把这件事变成三次点击。
+      // （徽标那一层的「同一时刻只开一个窗口」是另一回事：那是窗口，不是展开项。）
+    });
+  }
 };
 
 /**
@@ -2503,6 +2572,54 @@ const fillTeamCards = (slot) => {
 const frontierExtentsNow = () => state.conclusion?.frontierExtents
   || state.packsFrontierExtents || null;
 
+/**
+ * **来源折叠块**的接线（用户 2026-10-13 第 8 条：「强度/性价比/泛用性三个得分项目，都可以
+ * 点击后显示来源，节省界面的空间……补金推荐分的详情页也需要类似的显示效果」）。
+ *
+ * ## 为什么是这个形状
+ *   * 一个 **`<button>`** 而不是「给那行 `tr` 挂 `onclick`」：按钮天生可 Tab、可回车/空格、
+ *     自带 `disabled` 语义，而 `<tr>` 不是可聚焦元素（要自己补 `tabindex` + 假 `role`）。
+ *     这与本文件里 `.advice-value-wrap` 那个徽标的做法一致（`role="button"` + 键盘处理），
+ *     但徽标是 `<span>` 只因为它是**行内文字**里的一段；这里的开关是一个独立的控件，
+ *     用真按钮更省事、也更难写错。
+ *   * 显隐用 **`hidden` 属性**（不是某个 `.is-open` 类）：与三个大窗口的开关同一套写法
+ *     （`advice-tip-window.js` / `advice-gold-modal.js` 都是 `el.hidden = true/false`），
+ *     而且它同时是「不显示」与「不进可访问树」——只写 CSS 的话读屏软件仍然会念出折叠的内容。
+ *     CSS 那边只需补一条 `[hidden]` 压过容器上的 `display`（见 `advice-tip-window.css` 的注释）。
+ *   * `aria-expanded` / `aria-controls` **一一对应**：读屏软件靠这两个属性知道
+ *     「这个按钮控制着哪一块、现在是开还是关」。id 由调用方给（每个窗口一整套，
+ *     同一个窗口里可能同时存在多个折叠块 —— 比如抽卡方案里每一张卡都有自己的一个）。
+ *
+ * @param {object} options
+ * @param {string} options.id 这一块的唯一 id（按钮与内容用 `${id}-toggle` / `${id}-detail`）。
+ * @param {string} options.label 按钮文字。
+ * @param {Node} options.node 展开后显示的内容。
+ * @param {string} [options.extraClass] 给**按钮**补的类（按来源分色/微调用；见 .css）。
+ * @returns {HTMLElement} 外层容器（`.advice-detail-box`）。
+ */
+const tipScoreDetails = ({ id, label, node, extraClass }) => {
+  const box = text('span', 'advice-detail-box');
+  const toggle = text('button',
+    `advice-detail-toggle${extraClass ? ` ${extraClass}` : ''}`);
+  // ⚠️ `type="button"`：不写的话按钮在 `<form>` 里的默认类型是 `submit`
+  //（本页现在没有 form，但这类「客户端自己建的控件」迟早会被搬进别处）。
+  toggle.type = 'button';
+  toggle.id = `${id}-toggle`;
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.setAttribute('aria-controls', `${id}-detail`);
+  toggle.appendChild(text('span', 'advice-detail-caret', '▾'));
+  toggle.appendChild(text('span', '', label));
+  const detail = text('div', 'advice-detail');
+  detail.id = `${id}-detail`;
+  // 默认**全部收起**（用户第 8 条的第一句就是「节省界面的空间」）—— `hidden` 就是那个初值，
+  // 不靠 CSS 的初始态：这样「折叠」这件事在 DOM 上就是真的，探针 / 读屏软件都读得到。
+  detail.hidden = true;
+  detail.appendChild(node);
+  box.appendChild(toggle);
+  box.appendChild(detail);
+  return box;
+};
+
 const scoreBreakdownTable = (unit) => {
   const w = normalizeDrawWeights(state.conclusion?.drawWeights ?? state.drawWeights ?? {});
   if (!Number.isFinite(Number(unit.strengthScore))
@@ -2511,6 +2628,17 @@ const scoreBreakdownTable = (unit) => {
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   const pct = (v) => `${(num(v) * 100).toFixed(0)}%`;
   const one = (v) => num(v).toFixed(1);
+  /**
+   * 折叠块 id 里的**作用域**（用户 2026-10-13 第 8 条）。
+   *
+   * ⚠️ 必须有它：`aria-controls` 指的 id 在整份文档里必须唯一，而这张表**同时存在多个实例**
+   * ——总榜一个窗口、抽卡方案里每一张卡一个窗口，它们的窗口甚至可能先后打开过、
+   * 内容节点都还挂在各自的徽标里（关窗只是把它搬回去，**不删**）。那时若 id 只按
+   * 分项名生成（`adviceScoreDetail-strength`），后建的那一份就会与先前那份重名，
+   * `aria-controls` 于是指到别人身上、读屏软件念错块。
+   * 角色名在同一个窗口里是唯一的，所以用它做作用域；老载荷没有 `name` 时退回下标 `unit`。
+   */
+  const idScope = String(unit?.name || 'unit').replace(/[^\w-]/g, '-');
   /**
    * 三个分项的**榜内归一上下限**（用户 2026-10-13：「需要给出强度、性价比、泛用性的
    * **完整得分来源**」）。
@@ -2529,16 +2657,39 @@ const scoreBreakdownTable = (unit) => {
   };
   /** 泛用性的原始量是「人数」（整数），另两个是 0~100 的分数（一位小数）。 */
   const rawText = (v, integer) => (integer ? num(v).toFixed(0) : num(v).toFixed(1));
-  const parts = [
+  /**
+   * 三个分项各自的**来源块**（用户 2026-10-13 第 8 条）。
+   *
+   * ⚠️ 三个块都是**先建好、再决定要不要挂**：`strengthSourceBlock()` 与
+   * `versatilitySourceBlock()` 在没有数据时返回 `null`（老载荷 / 名次靠后拿不到泛用性名单），
+   * 而 `versatilityMembers` 在**点开窗口那一步**才由 `enrichTipDetail()` 补回来
+   * （见那个函数的注释）—— 所以这里绝不能拿「现在有没有数据」当永久判据。
+   * 拿不到的项**只是没有折叠块**（不给一个点了没反应的按钮），其余两项照旧可点。
+   */
+  const partSources = [
+    { key: 'strength', label: '强度', title: '强度来源', block: strengthSourceBlock(unit) },
+    { key: 'cost', label: '性价比', title: '性价比来源', block: costSourceBlock(unit) },
+    { key: 'versatility', label: '泛用性', title: '泛用性来源',
+      block: versatilitySourceBlock(unit) },
+  ];
+  // 主表（下面那张 `.is-source`）由 `frontierTip()` 用 `tipBox.tableClass` 打上；
+  // 三个分项行与它们各自的来源块只在这里、也只建一次 —— 各分项之间不再有第二份抄写。
+  const rows = [];
+  const details = [];
+  for (const [name, why, raw, score, weight, key, integer] of [
     ['强度', '打出来的成绩（不含金数项）', unit.strengthTotal, unit.strengthScore,
       w.strength, 'strength', false],
     ['性价比', '同成绩下金数越少越高', unit.total, unit.costScore, w.cost, 'cost', false],
     ['泛用性', '能通关队伍里的不同队友数', unit.versatilityRaw, unit.versatilityScore,
       w.versatility, 'versatility', true],
-  ];
-  const rows = parts.map(([name, why, raw, score, weight, key, integer]) => {
+  ]) {
     const e = extentOf(key);
-    return [
+    const source = partSources.find((p) => p.key === key);
+    const row = [
+      // ⚠️ 第一格必须**正好**是 `tipFactor()` 造出来的 `.tip-stack`（两个 span）：
+      //    探针（`check-advice-layout.mjs`）按 `tr.children[0]` 的文本与列名判等，
+      //    里面多包一层「点击展开来源」的提示文字会把 `强度` 判成 `强度点击展开来源`。
+      //    所以开关**不做在这一格里**，而是在下面单独开一行。
       tipFactor(name, why),
       // 原始量那一格带出榜内区间（见上面 `extents` 的注释）。
       tipFactor(rawText(raw, integer),
@@ -2547,12 +2698,29 @@ const scoreBreakdownTable = (unit) => {
       pct(weight),
       one(num(weight) * num(score)),
     ];
-  });
+    rows.push(row);
+    // 有来源才给折叠：数据缺的那一项既没有块、也没有按钮（按钮点了没反应是最坏的一种）。
+    if (!source?.block) continue;
+    const box = tipScoreDetails({
+      // ⚠️ `key` 已经天然唯一（三个分项各一个），而**同一个角色的窗口可能同时开着两份**
+      //（总榜一个、抽卡方案每张卡一个），所以 id 还要带上角色名 —— 见下面的 `idScope`。
+      id: `adviceScoreDetail-${idScope}-${key}`,
+      label: `查看${source.title}`,
+      node: source.block,
+      extraClass: `is-${key}`,
+    });
+    // ⚠️ 这里只记**这一行本身**与它的折叠块，**不记下标**：`tipTable()` 会在这些数据行
+    //    之间插进 `is-total`，而下面的插入循环又是从后往前插的 —— 用下标回查
+    //    （`body.children[row]`）一旦遇上「`<tr>` 里被塞了嵌套表格」这类结构，
+    //    层级会整个错位（实测：三张来源表全被插进上一张来源表所在的那一行里，
+    //    分项表因此长成 21 行、外壳列名变成 16 个）。持有节点引用就与插入顺序无关。
+    details.push({ row, box });
+  }
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
     '角色得分 = 强度 × 权重 + 性价比 × 权重 + 泛用性 × 权重'
     + '（每个分项：得分 = 100 ×（原始量 − 榜内最小）/（榜内最大 − 榜内最小））'));
-  box.appendChild(tipTable(
+  const table = tipTable(
     ['分项', '原始量', '得分', '权重', '贡献'],
     rows,
     // 合计行写**整数 + 加号**：加号让这个数与徽标 / 头行那个数**逐字相同**
@@ -2560,7 +2728,41 @@ const scoreBreakdownTable = (unit) => {
     // 同一种写法 —— 两处不一致的话 `check-advice-layout.mjs` 的 `splitOk` 就得写特例
     // （实测踩过：表里是 `96`、头行是 `+96`，判等直接红）。分项那一列仍留一位小数。
     ['角色得分', '', '', '', `+${packScoreText(unitRoleScore(unit))}`],
-  ));
+    // ⚠️ 打上自己的 class（用户 2026-10-13 第 8 条）：这张表现在与**它自己那份来源表**
+    // （性价比逐关卡表）同处一棵子树里，而探针（`check-advice-layout.mjs`）原来靠
+    // `.advice-score-split .advice-value-tip-table` 选它 —— 那个选择器会先撞上
+    // 「性价比来源」那个 `.advice-score-split`（它是折叠块里的**第一个**同名前缀块），
+    // 于是「三个分项表的列名 / 4 行 / 合计 = 标题上的数」那三条**静默量到别的表**上。
+    // 所以这张表必须有自己的标记，探针按 `.is-score-scale` 认它。
+    'is-score-scale',
+  );
+  /**
+   * 把三个来源块**插到各自那个分项行的下一行**（用户 2026-10-13 第 8 条，原话是
+   * 「点击后在**该项下方**就地展开」）。
+   *
+   * 为什么是**另起一行**而不是把按钮放进那个 `tr`：5 列的表格里没有地方安放一个
+   * 会改行的控件（见上面第一格的注释 —— 它多一个字都会让探针的列名判等红）；
+   * 而 `<tbody>` 里再插一行是表格本来就支持的写法（`colspan="5"` 让这一格横跨整表）。
+   * ⚠️ 折叠行**也是** `tbody tr`，所以探针数行数时必须排掉 `.advice-detail-row`
+   *    （见 `check-advice-layout.mjs` 的 `dataTrs`，**改这里要同步改它**）。
+   *
+   * ⚠️ 插入用 **`tr.after(detailRow)` 且从后往前**（`details` 是 `[…].reverse()`）：
+   *    从前往后插的话，插进第一名后面的那一行会让**后面几个分项行整体下移**，
+   *    于是按先前记下的位置再插就落到了别人的行里。用节点引用 + 倒序插入与位置无关。
+   */
+  for (const { row, box: detailBox } of [...details].reverse()) {
+    const tr = table.querySelectorAll('tbody tr')[rows.indexOf(row)] || null;
+    if (!tr) continue;
+    const detailRow = document.createElement('tr');
+    detailRow.className = 'advice-detail-row';
+    // ⚠️ 5 列 = 上面那张表的列数；写成别的数会让折叠行自己撑宽表格。
+    const cell = document.createElement('td');
+    cell.colSpan = 5;
+    cell.appendChild(detailBox);
+    detailRow.appendChild(cell);
+    tr.after(detailRow);
+  }
+  box.appendChild(table);
   return box;
 };
 
@@ -2678,28 +2880,21 @@ const versatilitySourceBlock = (unit) => {
 };
 
 /**
- * 总榜行（整包口径）的浮层：**先把「这个数字怎么来的」拆成来源，再说和谁打出来的**。
+ * 「**性价比**」这一项的逐关卡来源表（用户 2026-10-13 第 8 条：它现在长在三个分项表的
+ * 「性价比」那一行**下面**的就地折叠块里，见 `scoreBreakdownTable()`）。
  *
- * 用户 2026-10 的两条要求：
- *   ① **列出贡献值来源** —— 表里逐**关卡**给出 权重 / 表现 / 金数 / 跨版本发挥 **四个因子**
- *      （「档位」与「行动值」已于 v4.6.72 合并成一列「表现」，见 `perfFactorOf()`；
- *      兼容字段 `tierFactor` / `avFactor` 仍在 `frontierFactorsOf()` 的返回值里，但**不再
- *      相乘**），它们乘起来正好是「贡献」那一列（多关卡时还有一行合计 = 徽标上的数）；
- *   ② **更简略的文字描述** —— 改前下方是 7 段两~三行的解释，现在压成 6~8 条单行脚注
- *      （每条 ≤60 字，`tools/check-advice-layout.mjs` 有断言钉住）。
+ * 口径与 `frontierTip()` 里那张主表**逐字同一套**（同一个 `frontierFactorsOf()`、
+ * 同一个 `perfLabelOf()`、同一个 `tipChain()`）—— 所以这里**只有一份公式**，
+ * 界面上不会出现「折叠块里一个数、主表里另一个数」。
+ * 两处唯一的差别是**位置**：主表在窗口正文里、折叠块在这一行下方。
  *
- * ⚠️ 因子由 `advice.js` 的 `frontierFactorsOf()` 现算（与算分共用同一批常量、
- * 同一对行动值分位边界），这里**不要**自己再写一遍公式：榜上一旦换口径，
- * 只有那边会跟着变，界面抄一份就会悄悄说谎。
- *
- * ⚠️ **用户 2026-10-13 第 2 条起，这个窗口是两层**：
- *   * 最上面那张表 = **角色得分**（三个分项按抽卡权重加权）——`scoreBreakdownTable()`；
- *   * 下面那张表 = **性价比分项**的原始来源（逐关卡的乘法链，合计 = `unit.total`）。
- *   所以脚注里那句「贡献加起来 = 徽标上的数」必须改成「= 性价比分项」，
- *   否则读者加出来的数与上面的角色得分对不上，会以为算错了。
+ * ⚠️ `unit.envs` 为空时返回 `null`：`frontierTip()` 的主表也靠它渲染，
+ * 这一份**不引入新的数据依赖**（不会出现「主表有行、来源块没有」）。
  */
-const frontierTip = (unit) => {
-  const rows = unit.envs.map((env) => {
+const costSourceBlock = (unit) => {
+  const envs = unit?.envs || [];
+  if (!envs.length) return null;
+  const rows = envs.map((env) => {
     const meta = frontierEnvMeta(env.id);
     const f = frontierFactorsOf(env, meta);
     // 用户 2026-10 要求：**贡献要写出真实的计算过程**，不再是光秃秃一个结果数。
@@ -2767,12 +2962,56 @@ const frontierTip = (unit) => {
       tipChain(chain, contribution),
     ];
   });
-  // 合计只在多副本时给：一个副本时它就是徽标本身，再写一行纯属重复。
-  // 合计只在多副本时给：一个副本时它就是那一列本身，再写一行纯属重复。
-  // ⚠️ 标签写「性价比合计」而不是「合计」：2026-10-13 起这个窗口有两张表，
-  // 上面那张的合计是**角色得分**，这张只是其中一个分项（写「合计」读者会拿它去对徽标）。
-  const foot = unit.envs.length > 1
-    ? ['性价比合计', '', '', '', '', `+${packScoreText(unit.total)}`] : null;
+  const box = text('span', 'advice-score-split');
+  box.appendChild(text('span', 'advice-score-split-title',
+    '性价比来源：逐关卡「权重 × 100 × 表现 ×（该副本最便宜金数 / 这支队金数）× 跨版本发挥」'));
+  box.appendChild(tipTable(
+    // 用户 2026-10-11 第 2 条：表头第一列原名「副本/关卡」，与下面第一列实际写的
+    // 内容（两级写法 + 版本小字 + 队伍图标）已经不一致了，用户点名改成**「关卡」**。
+    ['关卡', '权重', '表现', '金数', '跨版本发挥', '贡献'],
+    rows,
+    // 合计只在多副本时给：一个副本时它就是那一列本身，再写一行纯属重复。
+    // ⚠️ 标签写「性价比合计」而不是「合计」：这个窗口里上面那张表的合计是**角色得分**，
+    // 这张只是其中一个分项（写「合计」读者会拿它去对徽标上的数）。
+    envs.length > 1
+      ? ['性价比合计', '', '', '', '', `+${packScoreText(unit.total)}`] : null,
+    // 主表打 `is-source`：浮层里现在有两张表，探针（`check-advice-layout.mjs`）靠这个
+    // class 认准「逐关卡来源」这张，不会量到上面那张三个分项的表。
+    // 主表打 `is-source`：浮层里有**三张**表了（三个分项 / 强度来源 / 性价比来源），
+    // 探针（`check-advice-layout.mjs`）按这个 class 认准「性价比逐关卡来源」那一张
+    // —— 它的合计 = `unit.total`，探针就是这么断言的。强度那张**不带** `is-source`
+    // （它的合计是 `strengthTotal`，两者不是一个数）。
+    'is-source',
+  ));
+  return box;
+};
+
+/**
+ * 总榜行（整包口径）的浮层：**先把「这个数字怎么来的」拆成来源，再说和谁打出来的**。
+ *
+ * 用户 2026-10 的两条要求：
+ *   ① **列出贡献值来源** —— 表里逐**关卡**给出 权重 / 表现 / 金数 / 跨版本发挥 **四个因子**
+ *      （「档位」与「行动值」已于 v4.6.72 合并成一列「表现」，见 `perfFactorOf()`；
+ *      兼容字段 `tierFactor` / `avFactor` 仍在 `frontierFactorsOf()` 的返回值里，但**不再
+ *      相乘**），它们乘起来正好是「贡献」那一列（多关卡时还有一行合计 = 徽标上的数）；
+ *   ② **更简略的文字描述** —— 改前下方是 7 段两~三行的解释，现在压成 6~8 条单行脚注
+ *      （每条 ≤60 字，`tools/check-advice-layout.mjs` 有断言钉住）。
+ *
+ * ⚠️ 因子由 `advice.js` 的 `frontierFactorsOf()` 现算（与算分共用同一批常量、
+ * 同一对行动值分位边界），这里**不要**自己再写一遍公式：榜上一旦换口径，
+ * 只有那边会跟着变，界面抄一份就会悄悄说谎。
+ *
+ * ⚠️ **用户 2026-10-13 第 2 条起，这个窗口是两层**：
+ *   * 最上面那张表 = **角色得分**（三个分项按抽卡权重加权）——`scoreBreakdownTable()`；
+ *   * 下面那张表 = **性价比分项**的原始来源（逐关卡的乘法链，合计 = `unit.total`）。
+ *   所以脚注里那句「贡献加起来 = 徽标上的数」必须改成「= 性价比分项」，
+ *   否则读者加出来的数与上面的角色得分对不上，会以为算错了。
+ */
+const frontierTip = (unit) => {
+  // ⚠️ 三个分项的**来源**（强度表 / 性价比逐关卡表 / 泛用性名单）**不再直接铺在窗口里**
+  // （用户 2026-10-13 第 8 条：「三个得分项目都可以点击后显示来源，节省界面的空间」）：
+  // 它们各自被 `scoreBreakdownTable()` 收进所在分项行下方的就地折叠块（默认全部收起）。
+  // 所以这个函数现在只负责「总分 + 等式 + 脚注」这一层，行数据整个交给 `costSourceBlock()`。
   const bestEnv = unit.envs[0];
   const bestMeta = bestEnv ? frontierEnvMeta(bestEnv.id) : null;
   // 实测证据数（副本 × 有观测的版本数）：用户 2026-10-11 缺陷 5 —— 新老角色的尺子不同
@@ -2845,13 +3084,15 @@ const frontierTip = (unit) => {
     '泛用性 = 能通关的队伍里出现过的不同队友数（角色级，与本包星魂无关）。',
   ];
   // 「最佳证据的队伍」那一块**已删除**（用户 2026-10-11 第 5 条「图标都放进表格内」）：
-  // 队伍卡片现在长在表格第一格里（见上面 `labelCell`），关卡信息因此只出现一次。
+  // 队伍卡片现在长在表格第一格里（见 `costSourceBlock()` 的 `labelCell`），关卡信息因此
+  // 只出现一次。
   // `packsSlot()` 是**同一批要求的另一半**（2026-10-10，用户澄清是「性价比面板」）：
   // 总榜每角色只留一条，所以默认看不到这个角色的其他整包；这一节按需补上**全部**配队，
   // 每条带自己的性价比得分与最佳证据队伍。
-  // ⚠️ 顺序：**泛用性来源**紧跟在性价比那张表后面（三个分项的来源要连着读），
-  // 再才是「这个角色的全部配队」——后者是另一个话题（还有哪些配装），不是分数的来源。
-  const extra = [versatilitySourceBlock(unit), packsSlot(unit.name)];
+  // ⚠️ 用户 2026-10-13 第 8 条之后这里只剩 `packsSlot`：**三个分项的来源块都搬进了
+  // `scoreBreakdownTable()` 的就地折叠块**（原来泛用性名单排在这张表后面、强度表排在它
+  // 前面）。「全部配队」是另一个话题（还有哪些配装）、不是分数的来源，所以留在窗外这一层。
+  const extra = [packsSlot(unit.name)];
   // 名次靠后的条目为了载荷**不逐关卡展开队友**（`slimFrontierUnit()` 只给头条证据那一支）。
   // ⚠️ 触发条件是「**所有**关卡都没有 members」，不是「第一个关卡没有」：
   //    改前那样写时，只要有一个关卡带着队伍、另一个没带，脚注就会说「未展开队友名单」
@@ -2864,26 +3105,21 @@ const frontierTip = (unit) => {
     head: `角色得分 +${packScoreText(unitRoleScore(unit))}`,
     // 用户 2026-10-10 第 6 轮：原来这里叫「版本」，与左边的版本权重表撞名、看不出在算什么。
     // 改叫「跨版本发挥」（＝各版本加权平均 ÷ 最好的那一版，恒 ≤ 1）。
-    // ⚠️ 这条等式描述的是**下面那张表**（= 性价比分项的原始来源），不是上面的角色得分 ——
-    // 所以开头写明「性价比分项」。
+    // ⚠️ 这条等式描述的是**「性价比」那一项的来源表**（现在收在它那一行的折叠块里），
+    // 不是上面的角色得分 —— 所以开头写明「性价比分项」。
     eq: '性价比分项 = 副本权重 × 100 × 表现 ×（该副本最便宜金数 / 这支队金数）× 跨版本发挥',
-    // 用户 2026-10-11 第 2 条：表头第一列原名「副本/关卡」，与下面第一列实际写的
-    // 内容（两级写法 + 版本小字 + 队伍图标）已经不一致了，用户点名改成**「关卡」**。
-    headers: ['关卡', '权重', '表现', '金数', '跨版本发挥', '贡献'],
-    rows,
-    foot,
-    // 主表打 `is-source`：浮层里现在有两张表，探针（`check-advice-layout.mjs`）靠这个
-    // class 认准「逐关卡来源」这张，不会量到上面那张三个分项的表。
-    // 主表打 `is-source`：浮层里有**三张**表了（三个分项 / 强度来源 / 性价比来源），
-    // 探针（`check-advice-layout.mjs`）按这个 class 认准「性价比逐关卡来源」那一张
-    // —— 它的合计 = `unit.total`，探针就是这么断言的。强度那张**不带** `is-source`
-    // （它的合计是 `strengthTotal`，两者不是一个数）。
-    tableClass: 'is-source',
-    // 三个分项那张表（用户 2026-10-13 第 1、2 条）+ **强度来源表**插在等式与下面那张
-    // 性价比明细表之间 —— 与三个分项表的顺序（强度 → 性价比 → 泛用性）一致。
-    pre: [scoreBreakdownTable(unit), strengthSourceBlock(unit),
-      text('span', 'advice-score-split-title',
-        '下面是「性价比」这一项的逐关卡来源：')],
+    // ⚠️ 用户 2026-10-13 第 8 条之后这个窗口里**只剩上面那一张**（三个分项）表：
+    // 强度表 / 性价比逐关卡表 / 泛用性名单三块都收进了它下面各分项行里的就地折叠块
+    // （`scoreBreakdownTable()` 的 `tipScoreDetails`，**默认全部收起**）。窗口正文因此
+    // 短了一大截 —— 这正是用户要的「节省界面的空间」。
+    //
+    // 历史（别再改回去）：改前这里是 `pre: [scoreBreakdownTable, strengthSourceBlock, 标题]`
+    // + 一张 `is-source` 主表 + `extra: [versatilitySourceBlock, packsSlot]`，
+    // 四张表/块一次全铺开，5 个关卡的条目在 1000px 高的窗口里要滚三屏。
+    // 探针（`check-advice-layout.mjs`）原来按 `.advice-value-tip-table.is-source` /
+    // `.is-strength-source` 从窗口正文里选表，现在必须**先点开对应折叠块**再选 ——
+    // 见那个文件里 2026-10-13 第 8 条那一段。
+    pre: [scoreBreakdownTable(unit)],
     extra,
     notes,
   });
@@ -2968,10 +3204,18 @@ const teamPlanTip = (row, plan) => {
   const draw = plan.drawWeights || normalizeDrawWeights({});
   const ws = formatShare(draw.strength);
   const wc = formatShare(draw.cost);
-  // ③ 泛用性的系数（用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」）。
+  // 泛用性的系数（用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」）。
   const wv = formatShare(draw.versatility);
   /** 队内平均泛用性 / 它的池内刻度：都是**平均值**，所以要一位小数（不是整数人数）。 */
   const vers = (v) => Number(v || 0).toFixed(1);
+  /**
+   * 这张卡在方案里的序号（**只用来给折叠块的 id 去重**）。
+   *
+   * ⚠️ 必须去重：`advice-detail-toggle` 的 `aria-controls` 指向的 id 在整份文档里
+   * 唯一才有效，而抽卡方案一次渲染最多 15 张卡、每张卡都有自己的「分数来源」折叠块。
+   * 找不到时退回空串 —— id 里少一段只是退化，不会让 `aria-controls` 指错人。
+   */
+  const cardNo = Math.max(0, (plan?.rows || []).indexOf(row));
   const extra = [];
   if (row.mid) {
     const box = text('div', 'advice-plan-tip-block');
@@ -2995,14 +3239,17 @@ const teamPlanTip = (row, plan) => {
     }
     extra.push(box);
   }
-  return tipBox({
-    head: `补金推荐分 +${num(row.total)}`,
-    // ⚠️ 第二项写成**差额接近度**（不是「性价比得分」）：v4.6.89 起它俩就是同一个数，
-    // 印两个名字会让读者以为还有别的成分（用户第 6 条要的就是去掉这一层）。
-    eq: `= 强度得分 ${num(row.strengthPct)} × ${ws} + 差额接近度 ${num(row.gapPct)} × ${wc}`
-      + ` + 泛用性 ${num(row.versatilityPct)} × ${wv}`,
-    headers: ['分项', '本队取值', '刻度（按候选池现算）', '折算'],
-    rows: [
+  // ⚠️ 用户 2026-10-13 第 8 条：这一节（原先是 `headers` + `rows` 直接铺在窗口正文里）
+  // 被整个收进一个**默认收起**的折叠块，按钮文字写「分数来源」—— 与角色总榜那三个分项
+  // 的做法一致（同一个 `tipScoreDetails()`），这样两个窗口的交互是同一套。
+  //
+  // 「那两块来源」是哪些：这张表就是**分数的组成**（三个分项各自的取值、池内刻度、折算），
+  // 而下面那几段说明里有两段专门讲**它每一项的原始出处**（强度得分 `N1`、泛用性 `N2`），
+  // 它们也一并收进来 —— 收起来时窗口只剩「摘要 + 等式 + 过渡档位 + 次选配队 + 那几条
+  // 与来源无关的脚注」，正是用户要的「节省界面的空间」。
+  const scoreTable = tipTable(
+    ['分项', '本队取值', '刻度（按候选池现算）', '折算'],
+    [
       // ⚠️ 「本队取值」是**角色总榜上的整包分**（用户 2026-10-12 第 8 条：① 就是它）——
       // 这个分里含金数项，所以「同为 0T、9 金那支远强于 16 金那支」在这一格就能看出来。
       // v4.6.87~v4.6.90 这里印的是「纯强度」（不含金数项，与队分是两把尺子），已撤销。
@@ -3023,22 +3270,59 @@ const teamPlanTip = (row, plan) => {
         `${vers(plan.versatilityLo)} ~ ${vers(plan.versatilityHi)} 个`,
         `${num(row.versatilityPct)} × ${wv}`],
     ],
+    null,
+    // ⚠️ 打上自己的 class（用户 2026-10-13 第 8 条）：这张表现在与**它自己那份来源表**
+    // 同处一个窗口，两张表都没有标记的话，探针（`check-advice-layout.mjs`）按
+    // `.advice-value-tip-table tbody tr` 取「分数来源表是几行」会把两张表一起数进去
+    // —— 实测会数出 6 行（3 + 3）而不是 3 行，判据变成测别的东西。
+    'is-score-scale',
+  );
+  // 与来源无关的脚注（留在窗口里）：刻度口径、候选池、以及「性价比 = 差额接近度」那句。
+  // ⚠️ 顺序与改前**完全一致**：折叠块只搬走属于「来源」的两段，其余原位保留 ——
+  //    这样「窗口里先看结论、要看来源再点开」的读法不变。
+  const scoreNotes = [
+    // ⚠️ 用户 2026-10-12 第 8 条：「同样是绝境 0T，9 金队要比 16 金队强得多」——
+    // ① 必须是含金数项的整包分，否则同为 0T 的贵队与便宜队看不出差别。
+    '强度得分 = 角色总榜上的**整包分**（表现 × 金数项，金数项 = 该版本最便宜金数 ÷ 本队金数、'
+    + '封顶 1，0 金通关另 ×1.2）—— 所以**同为绝境 0T 时，金数越少这一项越高**；'
+    + `三个系数来自「抽卡权重」（强度 ${(draw.strength * 100).toFixed(0)}% / `
+    + `性价比 ${(draw.cost * 100).toFixed(0)}% / 泛用性 ${(draw.versatility * 100).toFixed(0)}%），`
+    + '改它不用重算数据集。',
+    // ⚠️ 用户 2026-10-13 第 3 条：泛用性**也**进补金推荐分。口径是**队内平均**（用户选定），
+    //    与角色总榜那一列的原始量同源（那一个数 = 该角色能通关的队伍里出现过的不同队友数）。
+    '泛用性 = 队内成员**各自**泛用性的平均（每人那个数 = 他在能通关的队伍里见过的不同队友数，'
+    + '开拓者各命途算一个人），再按候选池归一 —— 所以「成员越百搭，这支队越好抄、越好换人」。',
+  ];
+  const tip = tipBox({
+    head: `补金推荐分 +${num(row.total)}`,
+    // ⚠️ 第二项写成**差额接近度**（不是「性价比得分」）：v4.6.89 起它俩就是同一个数，
+    // 印两个名字会让读者以为还有别的成分（用户第 6 条要的就是去掉这一层）。
+    eq: `= 强度得分 ${num(row.strengthPct)} × ${ws} + 差额接近度 ${num(row.gapPct)} × ${wc}`
+      + ` + 泛用性 ${num(row.versatilityPct)} × ${wv}`,
+    // ⚠️ 表头 / 行 / 脚注都在**折叠块里**（见上面 `scoreTable`）——这里不再直接传
+    // `headers` / `rows` / `notes`：`tipBox` 只在 `headers && rows` 时才建表，
+    // 不传就等于「窗口正文里没有这张表」。
+    pre: [tipScoreDetails({
+      id: `advicePlanScore-${cardNo}`,
+      label: '查看分数来源',
+      node: (() => {
+        const box = text('span', 'advice-plan-tip-scale');
+        box.appendChild(scoreTable);
+        for (const line of scoreNotes) {
+          // ⚠️ 仍然是独立的 `.advice-value-tip-note`（探针按这个 class 数条数 / 量字数），
+          //    只是搬进了折叠块 —— 所以 `notesShortOk` 那类判据的**取数范围**要跟着改成
+          //    「整个窗口」而不是「.advice-value-tip-notes 里」（见 check-advice-layout.mjs）。
+          box.appendChild(text('span', 'advice-value-tip-note', line));
+        }
+        return box;
+      })(),
+      extraClass: 'is-plan',
+    })],
     extra,
     notes: [
       // ⚠️ v4.6.81 起刻度取自**整个候选池**，所以「只显示前 N 条」不影响分数。
       // 这句话改前写的是「按要下发的那批现算」——那正是那个 bug 的说明。
       '两个刻度都按**候选池**现算（不是按下面这几条），所以换账号 / 换数据之后分数不可直接比较。',
-      // ⚠️ 用户 2026-10-12 第 8 条：「同样是绝境 0T，9 金队要比 16 金队强得多」——
-      // ① 必须是含金数项的整包分，否则同为 0T 的贵队与便宜队看不出差别。
-      '强度得分 = 角色总榜上的**整包分**（表现 × 金数项，金数项 = 该版本最便宜金数 ÷ 本队金数、'
-      + '封顶 1，0 金通关另 ×1.2）—— 所以**同为绝境 0T 时，金数越少这一项越高**；'
-      + `三个系数来自「抽卡权重」（强度 ${(draw.strength * 100).toFixed(0)}% / `
-      + `性价比 ${(draw.cost * 100).toFixed(0)}% / 泛用性 ${(draw.versatility * 100).toFixed(0)}%），`
-      + '改它不用重算数据集。',
-      // ⚠️ 用户 2026-10-13 第 3 条：泛用性**也**进补金推荐分。口径是**队内平均**（用户选定），
-      //    与角色总榜那一列的原始量同源（那一个数 = 该角色能通关的队伍里出现过的不同队友数）。
-      '泛用性 = 队内成员**各自**泛用性的平均（每人那个数 = 他在能通关的队伍里见过的不同队友数，'
-      + '开拓者各命途算一个人），再按候选池归一 —— 所以「成员越百搭，这支队越好抄、越好换人」。',
       // ⚠️ 用户 2026-10-12 第 6 条：性价比这一侧**只有**差额接近度。
       `性价比 = 差额接近度（1 − 补金 ÷ ${plan.gapMax} 金）：它量的是**你还要补几金**`
       + '（与上面那一档不同：那一档看的是**数据集**里这支队压不压金，与你拥有什么无关）；'
@@ -3052,6 +3336,7 @@ const teamPlanTip = (row, plan) => {
       + `按总分降序取前 ${plan.rows.length} 支展示；改展示条数不会改分数。`,
     ],
   });
+  return tip;
 };
 
 /** 一笔补金的中文写法：`E0→E2` / `本体` / `S1→S5` / `未见→S1`。 */
@@ -3876,6 +4161,14 @@ export const mountAdviceView = (options = {}) => {
         if (meta) meta.classList.add('is-pending');
         clearTimeout(state.weightsTimer);
         state.weightsTimer = setTimeout(async () => {
+          // ⚠️ **这一条原先漏了**（用户 2026-10-13 第 10 条报的角色得分权重 bug）：
+          // 角色面板 / 角色得分详情里那份「该角色的全部配队」走 `/api/archive/packs?char=`
+          // 的 `packsCache`，而它的**缓存键里带着关卡权重**（见 `fetchPacks()` 的注释）。
+          // 抽卡权重那一行、以及隐金设置（`scheduleHiddenCostsRecompute()`）都清了这份缓存，
+          // 只有这里没清 —— 于是「改了关卡权重 → 总榜重算了 → 点开角色详情，里面还是
+          // 旧权重算出来的分」，看起来像服务端没吃新权重，其实是浏览器把旧结果又端了上来。
+          // 三处旋钮必须做同一件事，所以这段清理与另外两处**逐字一致**。
+          packsCache.clear();
           if (state.index) await loadConclusion();
           if (meta) meta.classList.remove('is-pending');
         }, WEIGHTS_DEBOUNCE);
@@ -3924,6 +4217,13 @@ export const mountAdviceView = (options = {}) => {
     saveDrawWeights();
     renderWeightRow(scope);
     renderDrawWeightRow();
+    // ⚠️ **和两个输入框处理器做同一件事**（用户 2026-10-13 第 10 条那类 bug）：这一下同样
+    // 换掉了「关卡权重 + 抽卡权重」两个缓存键里的旋钮，所以角色面板 / 角色得分详情那份
+    // 「该角色的全部配队」缓存必须一起作废。漏了它的症状与关卡权重那条一模一样
+    // ——「点了恢复默认、总榜回去了，点开角色详情还是刚才那组自定义权重算出来的分」，
+    // 而且这个按钮是**两套权重一起清**，漏掉时错得更久。
+    // 旧注释里只写了「清掉两大类权重」，没人提缓存，所以这里把理由写下来（避免下次又漏）。
+    packsCache.clear();
     if (state.index) await loadConclusion();
   };
   el.frontierWeightsReset?.addEventListener('click', () => resetWeights(WEIGHT_SCOPE));

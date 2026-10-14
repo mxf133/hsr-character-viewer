@@ -113,3 +113,116 @@
   .advice-tip-modal { padding: 10px; }
   .advice-tip-card { width: 100%; }
 }
+
+/* ==== 得分来源的**就地折叠块**（用户 2026-10-13 第 8 条）=========================
+   原话：「角色总榜-角色得分详情页，强度/性价比/泛用性三个得分项目，都可以点击后显示来源，
+   节省界面的空间，并且方便用户查阅。并且补金推荐分的详情页也需要类似的显示效果」。
+
+   改前这三份来源（强度来源表 / 性价比逐关卡表 / 泛用性名单）是**一次性全铺开**在窗口正文里的
+   —— 5 个关卡的条目要滚三屏，而用户多数时候只想看其中最想看的那一项。现在每份收在
+   它所属那个分项行下面的折叠块里，**默认全部收起**。
+
+   ⚠️ 样式**必须写在 `advice-tip-window.css`**（不能写 `app.css`）：`app.css` 由主控同时
+   在改，而且本文件才是「详情大窗口」的样式归属（见文件头那段）。`advice-view.js` 既是
+   总榜窗口、也是抽卡方案窗口的内容生产者，所以这些类名在这两个窗口里通用 ——
+   本文件对两个窗口都生效（`advice-gold-modal.js` 那个窗口里没有这些节点，不受影响）。 */
+
+/* 折叠块的外层：`display: block` 是必须的 —— 它是 `<span>`（`advice-view.js` 的 `text()`
+   造的都是 span / div 这类最朴素的容器），而它**会长在 `<td>` 里**（三个分项那三行）
+   或 `<span class="advice-value-tip-sub">` 里（补金推荐分那一个）。默认的 inline 会让
+   里面的表格与自己的按钮挤在同一行、宽度也算不准。 */
+.advice-detail-box {
+  display: block;
+  width: 100%;
+}
+
+/* 折叠按钮：「点击这里展开来源」。
+   为什么做得**低调**（弱化色、小号、无边框）：这是「补充信息」的入口，不是主操作 ——
+   它有 4 个（三个分项各一个 + 补金推荐分的「分数来源」），做得跟主按钮一样抢眼会
+   把那张真正的表（分数拆解）的注意力分走。
+   `cursor: pointer` / `user-select: none`：它是 `<button>`，默认光标已经是手型，
+   这里显式写出来是为了与 `.advice-value-wrap`（那个徽标是 span + role=button）一致。 */
+.advice-detail-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin: 2px 0 0;
+  padding: 1px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.62);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* hover / 键盘聚焦都要有可见反馈：用户要的是「可点击」（原话「都可以点击后显示来源」），
+   指针划过却没有任何变化的话，没人会去点它。`:focus-visible` 用与 hover 同一档高亮，
+   但只在键盘导航时出现（鼠标点击不画焦点圈，与仓库里其它按钮一致）。 */
+.advice-detail-toggle:hover,
+.advice-detail-toggle:focus-visible {
+  color: #8de9ff;
+  background: rgba(141, 233, 255, 0.10);
+  outline: none;
+}
+
+/* 展开指示符：▾ 收着时朝右（`detail.hidden === true`），展开后朝下。
+   用 `[aria-expanded]` 而不是自己再加一个 `.is-open` 类：那个属性本来就是
+   `advice-view.js` 里状态的**唯一真相**（读屏软件也读它）—— 再抄一个类名进 CSS
+   就是同一个状态有两个定义，两者一旦不同步，箭头就会指错方向。 */
+.advice-detail-caret {
+  display: inline-block;
+  font-size: 9px;
+  transform: rotate(-90deg);
+  transition: transform 0.12s ease;
+}
+.advice-detail-toggle[aria-expanded="true"] .advice-detail-caret {
+  transform: rotate(0deg);
+}
+
+/* 展开后的那一块。`hidden` 由 `advice-view.js` 开关（那里写了为什么用 `hidden`）。
+   ⚠️ 这一条是**保险**，不是装饰：作者样式里任何一条 `display` 都会**压过**浏览器默认
+   样式表的 `[hidden] { display: none }`（作者样式源优先于 UA 样式源，与特异度无关），
+   所以「给容器写一句 display」与「用 hidden 收起」在同一份 CSS 里是**互相抵消**的写法。
+   本文件与 `app.css` 都在同一个作用域里给这些节点写过 `display`（`.advice-score-split`
+   / `.advice-detail-box` 等），哪天有人再加一条命中 `.advice-detail` 的 `display`，
+   折叠就会**静默失效**（按钮 `aria-expanded` 变了、内容却还在）。把特异度抬到 (0,2,0)
+   写死这一条，让「收起」这件事只由 `hidden` 一个开关决定。 */
+.advice-detail[hidden] {
+  display: none;
+}
+.advice-detail {
+  display: block;
+  margin-top: 6px;
+  /* 左边一条细线（抄 `.advice-value-tip-sub` 的「从属」写法）：让读者一眼看出
+     「这一块是上面那一行的展开内容」，而不是又一个并列的分区。 */
+  padding-left: 8px;
+  border-left: 2px solid rgba(141, 233, 255, 0.28);
+}
+
+/* 折叠块里那张来源表：它现在**套在表格的单元格里**（`<td colspan="5">`），
+   所以给它一点上下留白，别贴着上面那一行的下边框。 */
+.advice-detail .advice-value-tip-table {
+  margin: 2px 0 4px;
+}
+
+/* 补金推荐分那个折叠块里的表：同一个理由。 */
+.advice-plan-tip-scale {
+  display: block;
+}
+
+/* 折叠行（三个分项表里「来源」占的那一行）：去掉它自己的边框与内边距 ——
+   它只是一个**容器行**，底下那块的左边线由 `.advice-detail` 画。
+   ⚠️ 不写这一条时 `.advice-value-tip-table td` 的 `border-bottom` 会在每个
+   分项行下面再画一条线，展开后视觉上像「表格多了一行空行」。 */
+.advice-value-tip-table tr.advice-detail-row > td {
+  padding: 0;
+  border-bottom: 0;
+}
+.advice-value-tip-table tr.advice-detail-row > td > .advice-detail-box {
+  padding: 0 8px 6px;
+}
+

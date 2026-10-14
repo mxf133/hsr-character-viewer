@@ -238,13 +238,47 @@ export class AccountStore {
     // 整份替换（不是合并）：用户删掉的角色必须真的消失。
     account.snapshots[key] = { ...(payload.snapshot || {}), uid: key, source: 'virtual' };
     // 记下这份名单原文：界面下次打开编辑器要按它预填（快照只有最终状态，反推不回来）。
+    // ⚠️ `charCones`（逐角色装备，权威）与 `trailblazer`（开拓者头像）**必须一起存**：
+    // 前者是一把成本 0 的锥挂给多个角色的唯一表达，后者是用户改过的头像
+    // （2026-10-14 第 1、4 条）。漏存的表现是「保存成功、下次打开又变回去了」。
     account.virtualRoster = {
       chars: { ...(payload.roster?.chars || {}) },
       cones: { ...(payload.roster?.cones || {}) },
       // 光锥 → 挂在谁身上：用户在编辑器里是**逐个角色**配锥的，非专属锥的主人推不出来。
       coneOwners: { ...(payload.roster?.coneOwners || {}) },
+      charCones: { ...(payload.roster?.charCones || {}) },
+      trailblazer: payload.roster?.trailblazer
+        ? { ...payload.roster.trailblazer } : null,
       updatedAt: new Date().toISOString(),
     };
+    await this.save();
+    return account;
+  }
+
+  /**
+   * 给虚拟账号**重命名**（用户 2026-10-14 第 5 条：「用户可以给已有的虚拟账号重命名」）。
+   *
+   * 三处一起改，缺一处界面上就会自相矛盾：账号卡片读 `account.nickname`、
+   * 角色 chip 与下拉框读 `roles[i].nickname`、角色面板的标题读快照的 `basicInfo.nickname`。
+   * （改前虚拟账号这两个字段是建号时按预设标题写死的，所以「改名」必须三处同改。）
+   *
+   * ⚠️ 与 `setVirtualRoster` 同一条硬约束：**只允许虚拟账号**（真实账号的昵称来自米游社，
+   * 本地改只会让下一次刷新时又变回去）。也仍然**不新增不删除账号**。
+   */
+  async renameVirtualAccount(accountId, nickname) {
+    await this.load();
+    const account = this.accounts.get(accountId);
+    if (!account) return null;
+    if (account.source !== 'virtual') throw new Error('只有虚拟账号可以重命名');
+    const name = String(nickname ?? '').trim().slice(0, 40);
+    if (!name) throw new Error('名称不能为空');
+    account.nickname = name;
+    if (account.roles?.[0]) account.roles[0].nickname = name;
+    for (const key of Object.keys(account.snapshots || {})) {
+      const snap = account.snapshots[key];
+      if (!snap) continue;
+      snap.basicInfo = { ...(snap.basicInfo || {}), nickname: name };
+    }
     await this.save();
     return account;
   }

@@ -1789,11 +1789,76 @@
 //
 // 游戏换版本（4.7）时主版本跟着换；工具在同一游戏版本内继续改动就只加末位。
 //
+//   v4.6.99 用户 2026-10-14 的一张十条清单（bug + 改进），逐条：
+//           ① **虚拟账号预设「不符合描述」—— 全角色平铺缺角色 / 缺光锥（点名缇宝、花火）**。
+//              根因：`signatureConeOf` 退回的是 `refs.popularLightCones`（一张「**最常用**
+//              光锥」表），辅助角色常常**共用**一把通用锥（实测 93 个角色里有 10 把锥被
+//              2~8 人共用，`Dance Dance Dance` 一支就占了 8 个），`Object.fromEntries` 去重
+//              之后平铺档只剩 **72** 把锥、**21 个角色没有光锥**。
+//              修法：新写 `deriveSignatureCones()` —— 用 `archive.json` 顶层
+//              `characters[角色].topLightCones`（**该角色实际装备过**的光锥）做一次
+//              「限定 5★ 角色 × 限定 5★ 光锥」的按用量**互选**（贪心，实测 57/58 命中，
+//              抽查 Sparkle→Earthly Escapade、Tribbie→If Time Were a Flower 等十余对全部正确），
+//              外加一张只写能确认的 `LIMITED_SIGNATURE_OVERRIDES`（罗刹 / 灵砂那一对：
+//              统计把罗刹的「棺的回响」判给了更热门的灵砂）。
+//              4★ / 开拓者本来没有专属锥 → 用**成本 0 的同命途锥**补（优先有图标、rarity ≥ 4），
+//              新增 `charCones`（逐角色装备）让同一把**免费**锥可以挂给多个角色
+//              （成本 > 0 的锥仍然只允许一个主人 —— `cones` 是金数口径）。
+//              ⚠️ 必须过 `withSignatureCones(index)`（建号 / 预设清单 / roster 三条路由 +
+//              `tools/make-virtual-accounts.mjs`）：漏了会**静默**退回「最常用光锥」。
+//              实测：平铺 0+1 / 2+1 / 6+5 的 89 行**全部有光锥**（改前 21 行没有）。
+//              顺带修好 7 个角色拿不到图标 / id（`March 7th (Hunt|Preservation)` 与 5 个
+//              `Trailblazer (...)`）：服务端 `iconOf()` 原来只做精确键匹配，现在搬了客户端
+//              那套「宽松键」回退（`{NICKNAME}` / 去掉括号后缀）。
+//              预设清单接口也补了 `limitedChars` / `totalChars`：界面原来把 `chars`（含 4★ 与
+//              开拓者）写成「N 限定角色」，平铺档的 93 **名不副实**。
+//           ② **随机低 / 中 / 高氪改成「大隐金 MAX + 50 / 100 / 200 限定金」**（用户原话）。
+//              `dayinjinMaxRoster()` 抽成一份定义，`randomRosterOf(ctx, budget, base)` 以它为
+//              起点、预算只算**新增**的部分。实测三档新增恰好 **50 / 100 / 200 金**
+//              （按增量口径复核：基底的 16 金不算在内）。
+//           ③ **虚拟账号「添加角色 / 改星魂 / 改光锥」失效** —— 找到两处真 bug：
+//              (a) 服务端 `normalizeRoster` 用 `!chars[ownerKey]` 判「主人在名单里」，而
+//                  **E0 的星魂值是 `0`（假值）**，于是「加一个角色（默认 E0）+ 给它配光锥」
+//                  这个最常见的操作把光锥主人**静默丢掉**（锥还在、主人没了 → 快照按
+//                  「找空槽」把锥挂到别人身上）。改判 `charKey in chars`。
+//                  ⚠️ 这是本仓库第 N 次踩「假值判空」这个坑（`Number(null) === 0`、
+//                  `weightOr` 的 `|| 1` 吃掉合法的 0）。
+//              (b) 界面侧（`virtual-roster.js`）见该文件里的注释。
+//           ④ **开拓者只留一行**：`buildVirtualAccount` 不再给 5 个命途各写一行，而是写
+//              **一行**「开拓者」（`rank` = 6、`id` ∈ 8001..8010）。「全部命途都有」由
+//              客户端展开 —— `ownedCharacters` 早就有这条规则，**`eidolonsOf` 本轮才补上**
+//              （实测改前单行开拓者的 5 个命途键**全是 `undefined`**，星魂被当成 0）。
+//              头像的 10 个 id 与「男 / 女 × 命途」的归属是**实测核实**的
+//              （StarRailRes 的 `tag` 字段：奇数 = playerboy = 男主，偶数 = playergirl = 女主；
+//              10 个 `icon/character/<id>.png` 全部 200），见 `TRAILBLAZER_AVATARS`。
+//           ⑤ **「新增同配置虚拟账号」+ 虚拟账号重命名**：
+//              `POST /api/virtual-accounts/from-account`（把真实账号那份快照**反解**成名单原文，
+//              再走同一个 `buildVirtualAccount`，源账号只读不动 —— 「完全一致」只有一份实现）、
+//              `POST /api/virtual-accounts/:id/rename`（`AccountStore.renameVirtualAccount()`
+//              三处同改：账号 `nickname` / `roles[0].nickname` / 快照 `basicInfo.nickname`）。
+//           ⑥ **程序改名「崩坏：星穹铁道 抽卡推荐计算器」**，描述改成「通过黑塔网 theherta.com
+//              获取角色真实强度，提供抽卡推荐」；顶栏图标改成**角色头像**（默认大黑塔
+//              `The Herta`）、**点击可换**并记进 localStorage（同时改写 `<link id="appIcon">`）。
+//           ⑦ **异相仲裁 · 绝境的默认权重 10 → 5**（用户第 9 条）。只动 `SCORING.envWeight`
+//              的默认值：用户自己存过的覆盖不受影响，界面「恢复默认」才回到 5。
+//           ⑧ **角色得分详情页的三个分项与「补金推荐分」详情改成点击展开来源**（用户第 8 条，
+//              省空间）。默认收起，数据契约不变（来源本来就在载荷 / 按需接口里）。
+//           ⑨ **角色得分页面的权重 bug**（用户第 10 条），查出两处：
+//              (a) 「关卡权重」输入框那条链**没有清 `packsCache`**（隐金与抽卡权重两条都有），
+//                  于是改完权重、总榜重算了，角色详情里那份「全部配队」还在吃**旧权重**的缓存分；
+//              (b) 抽卡权重那行状态仍印着「抽卡方案只用强度/性价比」—— 这条口径 v4.6.97 已被
+//                  用户推翻（三项都进补金推荐分），文案过期。
+//           ⑩ **修复「同步黑塔网数据」**：见 `tools/herta-update.mjs` / `herta-availability.mjs`
+//              与 `src/server/archive-update.js` 里本轮的注释（同步不了 / 耗时过长 / 旧数据不跳过
+//              三个症状各自的根因与修法）。
+//
+// 游戏换版本（4.7）时主版本跟着换；工具在同一游戏版本内继续改动就只加末位。
+//
 // 注意与 src/mihoyo/constants.js 的 APP_VERSION 区分：那个是**米游社客户端**的
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.98';
+export const PROGRAM_VERSION = '4.6.99';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';

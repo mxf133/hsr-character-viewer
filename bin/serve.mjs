@@ -74,7 +74,7 @@ const main = async () => {
   const app = await startServer({ port: args.port, host: args.host });
 
   console.log('');
-  console.log(`  崩坏：星穹铁道 · 角色信息查询   ${VERSION_TEXT}`);
+  console.log(`  崩坏：星穹铁道 抽卡推荐计算器   ${VERSION_TEXT}`);
   console.log('  ─────────────────────────────────────────');
   console.log(`  界面地址   ${app.url}`);
   console.log(`  监听地址   ${app.host}:${app.port}`);

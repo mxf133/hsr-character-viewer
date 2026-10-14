@@ -45,6 +45,11 @@ const el = {
   virtualAccountPanel: $('virtualAccountPanel'),
   virtualAccountList: $('virtualAccountList'),
   virtualAccountClose: $('virtualAccountClose'),
+  // 程序图标（用户 2026-10-14 第 6 条）：顶栏那个可点的品牌图标 + 标签页图标。
+  // ⚠️ 两个 id 由 `index.html` 提供（`#brandMark` 是 `<button>`、`#appIcon` 是
+  // `<link rel="icon">`），改名要两边一起改。
+  brandMark: $('brandMark'),
+  appIcon: $('appIcon'),
   viewLogin: $('viewLogin'),
   viewDashboard: $('viewDashboard'),
   loginTitle: $('loginTitle'),
@@ -362,6 +367,169 @@ const pollQrStatus = async (sessionId) => {
   }
 };
 
+// ----------------------------------------------------------- 程序图标（第 6 条）
+
+/**
+ * 程序图标（用户 2026-10-14 第 6 条：「图标默认为大黑塔的角色头像，点击可以更换」）。
+ *
+ * 改的落点有**两个**，必须同时改，否则「换了图标」只生效一半：
+ *   ① 顶栏那个品牌图标（`.brand-mark`；`index.html` 里是 `<button id="brandMark">`，
+ *      可点 → 开选择器，键盘 Tab 也能到）；
+ *   ② 浏览器标签页的图标（`<link id="appIcon" rel="icon">` 的 `href`）。
+ *
+ * 存档只记**数据集英文键**（`localStorage['hsr.appIcon']`）：中文名会随译名变，
+ * 存中文名的话改一次译名用户的图标就丢了。
+ * ⚠️ 拿不到图标表（数据集还没采集）时**保持 `index.html` 里的 emoji 兜底**，
+ * 不要写一个必然 404 的地址 —— 那是「图标坏掉」而不是「图标还没好」。
+ */
+const APP_ICON_KEY = 'hsr.appIcon';
+/** 默认图标 = 大黑塔（没有任何存档时用它）。 */
+const APP_ICON_DEFAULT = 'The Herta';
+
+const readAppIconChar = () => {
+  try { return localStorage.getItem(APP_ICON_KEY) || APP_ICON_DEFAULT; } catch { return APP_ICON_DEFAULT; }
+};
+const writeAppIconChar = (charKey) => {
+  try { localStorage.setItem(APP_ICON_KEY, charKey); } catch { /* 隐私模式：记不住就记不住 */ }
+};
+
+/**
+ * 某个角色的头像地址。图标表是按 **StarRailRes 的角色名**登记的，而角色键来自
+ * theherta —— 两者对有多个形态的角色不一样（`March 7th (Hunt)` 只有 `March 7th`），
+ * 所以掉一次括号后缀再找一遍（与服务端 `iconOf()` 的宽松回退同一口径）。
+ */
+const iconUrlOf = (index, charKey) => {
+  const table = index?.refs?.icons?.characters || {};
+  if (table[charKey]) return table[charKey];
+  const base = String(charKey || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+  return base && table[base] ? table[base] : null;
+};
+
+/** 角色的中文名（选择器与 tooltip 用；取不到就退回英文键）。 */
+const charLabelOf = (index, charKey) => (index?.refs?.characters || [])
+  .find((c) => c.name === charKey)?.nameCn || charKey;
+
+/** 把「当前选中的角色头像」应用到顶栏 + 标签页图标。 */
+const applyAppIcon = async () => {
+  const key = readAppIconChar();
+  let index = null;
+  try { index = await adviceOf().ensureIndex(); } catch { index = null; }
+  const url = iconUrlOf(index, key) || iconUrlOf(index, APP_ICON_DEFAULT);
+  if (!url) return; // 没有图标表：保留 index.html 里的 emoji / ✦
+  if (el.brandMark) {
+    const img = document.createElement('img');
+    img.className = 'brand-mark-img';
+    img.alt = '';
+    img.src = url;
+    // ⚠️ `replaceChildren` 而不是 `appendChild`：重复调用（换图标之后）不能越堆越多。
+    el.brandMark.replaceChildren(img);
+    el.brandMark.title = `程序图标：${charLabelOf(index, key)}（点击更换）`;
+  }
+  if (el.appIcon) el.appIcon.href = url;
+};
+
+/** 角色头像选择器（点顶栏图标打开）。 */
+const openIconPicker = async () => {
+  let index = null;
+  try {
+    index = await adviceOf().ensureIndex();
+  } catch (err) {
+    toast(err.message, 'err');
+    return;
+  }
+  const chars = (index?.refs?.characters || []).filter((c) => iconUrlOf(index, c.name));
+  if (!chars.length) {
+    toast('还没有图标数据：先在「抽卡推荐」页点「同步黑塔网数据」', 'err');
+    return;
+  }
+  const current = readAppIconChar();
+  const previous = document.getElementById('appIconPicker');
+  if (previous) previous.remove();
+  const modal = document.createElement('div');
+  modal.id = 'appIconPicker';
+  modal.className = 'modal';
+  const card = document.createElement('div');
+  card.className = 'modal-card';
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-modal', 'true');
+  card.setAttribute('aria-label', '选择程序图标');
+  const head = document.createElement('h3');
+  head.textContent = '选择程序图标';
+  const hint = document.createElement('p');
+  hint.className = 'muted small';
+  hint.textContent = '默认是大黑塔。选中的头像会同时用在顶栏和浏览器标签页上，并记在本机。';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.placeholder = '搜索角色名';
+  search.setAttribute('aria-label', '搜索角色');
+  const grid = document.createElement('div');
+  grid.className = 'icon-picker-grid';
+  const actions = document.createElement('div');
+  actions.className = 'icon-picker-actions';
+  const reset = document.createElement('button');
+  reset.type = 'button';
+  reset.className = 'btn btn-ghost btn-sm';
+  reset.textContent = '恢复默认（大黑塔）';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'btn btn-ghost btn-sm';
+  close.textContent = '关闭';
+  actions.append(reset, close);
+  card.append(head, hint, search, grid, actions);
+  modal.appendChild(card);
+  document.body.appendChild(modal);
+
+  const closePicker = () => {
+    modal.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (event) => {
+    if (event.key === 'Escape') { event.stopPropagation(); closePicker(); }
+  };
+  document.addEventListener('keydown', onKey);
+  close.addEventListener('click', closePicker);
+  modal.addEventListener('click', (event) => { if (event.target === modal) closePicker(); });
+
+  const pick = async (charKey) => {
+    writeAppIconChar(charKey);
+    await applyAppIcon();
+    closePicker();
+    toast(`程序图标已改为 ${charLabelOf(index, charKey)}`, 'ok');
+  };
+  reset.addEventListener('click', () => { void pick(APP_ICON_DEFAULT); });
+
+  const renderGrid = () => {
+    const needle = search.value.trim().toLowerCase();
+    const rows = chars.filter((c) => !needle
+      || `${c.nameCn || ''} ${c.name}`.toLowerCase().includes(needle));
+    grid.replaceChildren(...rows.slice(0, 200).map((c) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `icon-picker-item${c.name === current ? ' is-active' : ''}`;
+      btn.title = c.nameCn || c.name;
+      const img = document.createElement('img');
+      img.src = iconUrlOf(index, c.name);
+      img.alt = '';
+      img.loading = 'lazy';
+      const label = document.createElement('span');
+      label.textContent = c.nameCn || c.name;
+      btn.append(img, label);
+      btn.addEventListener('click', () => { void pick(c.name); });
+      return btn;
+    }));
+    if (!rows.length) {
+      const empty = document.createElement('p');
+      empty.className = 'muted small';
+      empty.textContent = '没有匹配的角色。';
+      grid.replaceChildren(empty);
+    }
+  };
+  search.addEventListener('input', renderGrid);
+  renderGrid();
+  modal.hidden = false;
+  search.focus();
+};
+
 // ------------------------------------------------------------------- account
 
 const renderAccounts = () => {
@@ -451,6 +619,68 @@ const renderAccounts = () => {
         toast(err.message, 'err');
       }
     });
+    // ---- 虚拟账号专属的两个动作（用户 2026-10-14 第 5 条）------------------------
+    //
+    // ① 「**新增同配置虚拟账号**」：按钮就放在**这个真实账号自己的选项框里**
+    //    （用户原话：「该按钮位于此用户的真实账号的选项框内」）。它把该账号
+    //    **当前选中角色**的角色 / 星魂 / 光锥整份复制成一个虚拟账号，用来试抽卡方案
+    //    —— 源账号只读不动（服务端那条路由的注释里写了为什么不会碰到它）。
+    // ② 「重命名」：只给虚拟账号（真实账号的昵称来自米游社，本地改会被下一次刷新覆盖）。
+    if (account.source === 'virtual') {
+      const rename = document.createElement('button');
+      rename.type = 'button';
+      rename.className = 'btn btn-ghost btn-sm';
+      rename.textContent = '重命名';
+      rename.title = '给这个虚拟账号改个名字';
+      rename.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        const next = window.prompt('给这个虚拟账号改个名字：', account.nickname || '');
+        if (next === null) return;
+        try {
+          await api(`/api/virtual-accounts/${account.id}/rename`, {
+            method: 'POST', body: { nickname: next },
+          });
+          toast('已重命名', 'ok');
+          await loadConfig();
+        } catch (err) {
+          toast(err.message, 'err');
+        }
+      });
+      actions.appendChild(rename);
+    } else {
+      const clone = document.createElement('button');
+      clone.type = 'button';
+      clone.className = 'btn btn-ghost btn-sm';
+      clone.textContent = '新增同配置虚拟账号';
+      clone.title = '把当前选中角色的角色 / 星魂 / 光锥复制成一个虚拟账号，用来试抽卡方案；不会动你的真实账号';
+      clone.addEventListener('click', async (event) => {
+        event.stopPropagation();
+        clone.disabled = true;
+        try {
+          // 用**这个账号当前选中的角色**；不是当前账号时用它自己的第一个角色。
+          const uid = state.activeAccountId === account.id
+            ? state.activeUid
+            : ((account.roles || []).filter(roleIsEnabled)[0]?.uid ?? null);
+          const data = await api('/api/virtual-accounts/from-account', {
+            method: 'POST', body: { accountId: account.id, uid },
+          });
+          toast(data.skipped
+            ? `已新建 ${data.account?.nickname || '虚拟账号'}（有 ${data.skipped} 项没能复制）`
+            : `已新建 ${data.account?.nickname || '虚拟账号'}`, 'ok');
+          const keepId = data.account?.id || null;
+          await loadConfig();
+          const created = state.accounts.find((a) => a.id === keepId);
+          const newUid = created?.roles?.[0]?.uid || null;
+          if (created && newUid) await selectAccount(created.id, newUid);
+          else renderView();
+        } catch (err) {
+          toast(err.message, 'err');
+        } finally {
+          clone.disabled = false;
+        }
+      });
+      actions.appendChild(clone);
+    }
     actions.append(refresh, remove);
     card.appendChild(actions);
 
@@ -1141,6 +1371,8 @@ const wireTabs = () => {
 
 const wireEvents = () => {
   wireTabs();
+  // 顶栏那个品牌图标可点（用户 2026-10-14 第 6 条：「点击可以更换」）。
+  el.brandMark?.addEventListener('click', () => { void openIconPicker(); });
   el.qrRefresh.addEventListener('click', startQrLogin);
   // ---- 虚拟账号（用户 2026-10-12）------------------------------------------
   //
@@ -1318,6 +1550,9 @@ const main = async () => {
   wireEvents();
   try {
     const config = await loadConfig();
+    // 程序图标（用户 2026-10-14 第 6 条）：默认大黑塔、可在本机改。放在 loadConfig
+    // **之后**（它要先拿到 `/api/archive` 的图标表）；拿不到就保持 emoji 兜底，不报错。
+    void applyAppIcon();
     if (config.accounts.length === 0) await startQrLogin();
     // Deep link: ?view=advice opens the recommendation page directly. Runs
     // after loadConfig so the advice view can see the active snapshot.
