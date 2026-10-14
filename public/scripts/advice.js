@@ -2396,9 +2396,6 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
 
   /**
    * 一个整包的键（`角色|E档|光锥|S档`）——队伍成员与榜上的整包**共用同一种写法**。
-   *
-   * ⚠️ 两处各写一份会漂：队伍身份（`rosterKeyOf`）与「成员整包 → 强度分」这张表
-   * 必须能对上，否则查不到就静默按 0 分算（见下面 `strengthOfPack` 的注释）。
    */
   const packKeyOf = (name, eidolon, lc, superimp) => `${name}|E${eidolonTierOf(eidolon)}`
     + `|${lc || '-'}|S${Math.max(1, Math.round(Number(superimp) || 1))}`;
@@ -2409,42 +2406,23 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     .sort().join('~');
 
   /**
-   * 整包键 → 角色总榜上的**绝对强度分**（0~100，2026-10-14 第 10 条的新口径）。
-   *
-   * 为什么先建这张表、而不是直接读「头条整包」自己的 `strengthScore`：
-   *   `strengthScore` 是**整包自己**的属性（由该整包的投稿证据算出，与它在哪支队里无关），
-   *   而一支队的四个成员会各自在池里有自己的整包 —— 头条那条只是**恰好**由某个成员带头。
-   *   ① 要的是「这支队里**最强**的那个配置有多强」，所以按**成员**取最高：
-   *   同一个成员在不同队伍里强度分相同，取法才不会随「谁是头条」漂。
-   *   ⚠️ 实测差别不小（真载荷前 40 名里就有 89.0 → 94.0 的那种：头条是辅助、最强的是主 C）。
-   * ⚠️ 查不到的成员按 **0 分** 参与取最高（合成夹具不带 `strengthScore` / 成员整包不在池里）。
-   *   真实数据里**必然有一条能查到** —— 头条整包自己的配置就是它的成员之一。
-   */
-  const strengthOfPack = new Map();
-  for (const unit of units) {
-    const score = Number(unit.strengthScore);
-    if (!Number.isFinite(score)) continue;
-    const key = packKeyOf(unit.name, unit.eidolon, unit.lc, unit.superimp);
-    strengthOfPack.set(key, Math.max(strengthOfPack.get(key) ?? 0, score));
-  }
-  /** ① 的原始值 = 该队成员整包里最高的那个强度分（0~100）。 */
-  const teamStrengthOf = (members) => members.reduce((best, m) => Math.max(best,
-    strengthOfPack.get(packKeyOf(m.char, m.eidolon, m.lc, m.superimp)) ?? 0), 0);
-
-  /**
-   * 逐条整包 → 队伍。同一支队伍取**分最高**的那个整包当它的队伍分。
+   * 逐条整包 → 队伍。同一支队伍取**分最高**的那个整包当它的代表。
    *
    * 为什么不是「取第一个」：整包的 total 只统计**它自己有过证据的副本**，
    * 所以同一支队伍里不同成员的 total 可能不同（分最低的那个通常缺几个副本的证据）。
-   * 队伍分取最高的那一个，才等于「这支队伍里最强成员在总榜上的位置」。
+   * 代表取分最高的那一个，才等于「这支队伍里最强成员在总榜上的位置」。
    *
-   * ⚠️ 这里同时维护**两个**该队伍的取值（2026-10-15）：
-   *   * `total`    —— 老口径的整包分（含金数项），现在只用来**展示队分**与做同分兜底排序，
-   *                  仍取「头条那条整包」的分（与老口径一字不差）；
-   *   * `strength` —— **新口径的绝对强度分**（0~100），① 读它，按**成员**取最高
-   *                  （见上面 `strengthOfPack` 那段注释 —— 两者不是一回事）。
-   *   代表整包（`best` / `unit`，喂卡片上那行「最佳证据」）按 `total` 取：那一行写的是
-   *   **数据集里这支队的成绩**，不该被这次换成强度口径牵动。
+   * ⚠️ 这里同时维护**两个**该队伍的取值：
+   *   * `total`    —— 老口径的整包分（含金数项），**只**用来展示队分与做同分兜底排序；
+   *   * `strength` —— **绝对强度分**（0~100），① 读它，取**代表整包自己**的分。
+   *   两者都跟着同一个代表走（`total` 最高的那一条），与 v4.6.91 的「代表整包」口径一致；
+   *   代表整包（`best` / `unit`，喂卡片上那行「最佳证据」）也是它。
+   *
+   * ⚠️ **别再改成「队内四个成员里谁的强度分最高就用谁」**（v4.6.103 当初那么写过，一天后
+   *    被用户报掉）：「整包的强度分」是**整包自己**在**它自己的证据队伍**里打出来的成绩，
+   *    而那支队伍通常**不是**眼前这支队伍 —— 于是「云璃E1/千冶•刃E2/花火E2/昔涟E6」这种队
+   *    会借到「昔涟E6 在别的队伍里」的 98 分，自己承载的证据只有 13 分（实测）。用户原话：
+   *    「老队伍的强度得分过高」。① 必须描述**这支队自己的证据**。
    */
   const byRoster = new Map();
   for (const unit of units) {
@@ -2455,12 +2433,19 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     if (!members.length) continue;
     const rosterKey = rosterKeyOf(members);
     const total = Number(unit.total) || 0;
+    /**
+     * ① 的原始值 = 这个整包自己的 `strengthScore`（0~100，缺字段的合成夹具按 0 计）。
+     * ⚠️ 它**不是** `total` 去掉金数项就能还原的数（0 金通关那一支在 `total` 里是 ×1.2），
+     *    所以如实读 `strengthScore`，不要从 `total` 反推。
+     */
+    const strength = Number(unit.strengthScore);
     const prev = byRoster.get(rosterKey);
     if (prev) {
       if (total > prev.total) {
         prev.total = total;
         prev.best = best;
         prev.unit = unit;
+        prev.strength = Number.isFinite(strength) ? strength : 0;
       }
       continue;
     }
@@ -2470,8 +2455,7 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
       total,
       best,
       unit,
-      // 成员相同 ⇒ 这个值与是哪条整包带头无关，所以只在首次入表时算一次。
-      strength: teamStrengthOf(members),
+      strength: Number.isFinite(strength) ? strength : 0,
     });
   }
 
@@ -4143,11 +4127,23 @@ const buildConclusionInner = (envs, options = {}) => {
            */
           let accStrengthBest = 0;
           /**
-           * 该整包在**这个副本**里「行动值最少」的那一次成绩（含它所在版本）。
+           * 该整包在**这个副本**里「**最近版本**那一次成绩」的行动值（含它所在版本）。
            *
            * 用户 2026-10-14：「行动值越低则强度分越高，**仅取最少行动值**」——
-           * 所以强度口径的输入就是它，而**不是**按 `perf` 挑出来的那一行
+           * 所以强度口径的输入是行动值本身，而**不是**按 `perf` 挑出来的那一行
            * （`perf` 在满分线以内是平的，定位不到最快的那一次，见 `bestAvHit` 的注释）。
+           *
+           * ⚠️ **2026-10-15 用户报「老队伍的强度得分过高」之后改了口径**：原先这里是
+           *    「跨窗口（3 版）取**最少行动值**」，于是两三个版本前打出的旧 0 行动值
+           *    一直按**当前版本的判据线**折算成满分 —— 实测前排那些 E6 老队（飞霄 / 黄泉 /
+           *    希儿 / 镜流 …）的满分档几乎全来自 4.4 / 4.5，池内 p50 被顶到 **92.5**、
+           *    17 支并列 98.18，强度这一档失去分辨力。现在改成**只取最近版本的那一次成绩**：
+           *    一个副本里优先用「它最近一版打出来的行动值」，旧版本的成绩不再压过新版本。
+           *    `pack.bestAvHit` 是**逐版本**的最好一次（版本内仍取最少行动值），所以这里
+           *    只是把「跨版本怎么挑」从「取最快」换成「取最新」。
+           * ⚠️ 比较必须按**版本号**（`cmpVersion`），不能靠循环顺序：`windowSeasons` 会把
+           *    窗口外「有观测但不在窗口里」的版本**并到末尾**，那种版本可能比窗口内的更新
+           *    （服务端窗口锚点回退时就会这样，见 `conclusionEnvs` 的注释）。
            */
           let strengthAvHit = null;
           /** 早于登场的版本数（不参与平均，见下）。 */
@@ -4166,12 +4162,13 @@ const buildConclusionInner = (envs, options = {}) => {
                 * (pack.bestPerf.get(s) ?? observed.perf);
               accStrength += w * strengthPerf;
               accStrengthBest = Math.max(accStrengthBest, strengthPerf);
-              // 强度口径的输入：这个版本里行动值最少的那一行，再跨版本取最小的那个。
+              // 强度口径的输入：这个版本里行动值最少的那一行 —— 再**取版本最新的那个**
+              // （2026-10-15 用户报「老队伍强度过高」后改；改前是跨版本取行动值最少的）。
               const avHit = pack.bestAvHit.get(s);
               if (avHit) {
-                const av = Number(avHit.actionValue);
-                const curAv = strengthAvHit ? Number(strengthAvHit.actionValue) : Number.NaN;
-                if (Number.isFinite(av) && (!strengthAvHit || !Number.isFinite(curAv) || av < curAv)) {
+                const curSeason = strengthAvHit?.season ?? null;
+                if (!strengthAvHit || !curSeason
+                  || cmpVersion(String(s), String(curSeason)) > 0) {
                   strengthAvHit = avHit;
                 }
               }

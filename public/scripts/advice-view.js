@@ -2720,10 +2720,11 @@ const scoreBreakdownTable = (unit) => {
   const rows = [];
   const details = [];
   for (const [name, why, raw, score, weight, key, integer] of [
-    // ⚠️ 强度的 `why` 是**新口径**（2026-10-14）：它不再是「打出来的成绩」这种含糊说法，
-    //    而是「各副本取最少行动值那一次 → 按关卡权重加权平均」。这一格会被探针按文本判等
-    //    （`check-advice-layout.mjs` 的 `splitHeaders` / `tipFactor`），改它要同步那边。
-    ['强度', '各副本最少行动值 → 按关卡权重加权平均', unit.strengthTotal, unit.strengthScore,
+    // ⚠️ 强度的 `why` 是**新口径**（2026-10-14 定、2026-10-15 改过一次取数版本问题）：
+    //    不再是「打出来的成绩」这种含糊说法，而是「各副本取**最近版本**那一次行动值 →
+    //    按关卡权重加权平均」。这一格会被探针按文本判等（`check-advice-layout.mjs` 的
+    //    `splitHeaders` / `tipFactor`），改它要同步那边。
+    ['强度', '各副本最近版本的行动值 → 按关卡权重加权平均', unit.strengthTotal, unit.strengthScore,
       w.strength, 'strength', false],
     ['性价比', '同成绩下金数越少越高', unit.total, unit.costScore, w.cost, 'cost', false],
     ['泛用性', '能通关队伍里的不同队友数', unit.versatilityRaw, unit.versatilityScore,
@@ -2863,9 +2864,15 @@ const strengthSourceBlock = (unit) => {
     // 「0 行动值通关」那一段要在表里说清它为什么按金数扣分（用户点名的那条规则）。
     // ⚠️ 措辞不能用「满分/达标/及格」——`herta-test.mjs` 有一条全源码判据盯着这类自造词
     //    （用户 2026-10-10：「把『满分』『达标』改为具体的行动值」）。所以这里说「判据线」。
-    const avNote = Number.isFinite(av) && av === 0
-      ? `0 行动值通关${Number.isFinite(gold) ? `（${gold} 金）` : ''}`
-      : (isPerfect ? '已达判据线' : '');
+    // ⚠️ 2026-10-15（用户报「老队伍的强度得分过高」后）：这一列的行动值改成取**最近版本**
+    //    的那一次成绩，所以**必须把版本写出来** —— 否则读者会以为它还是「窗口内最快的那次」，
+    //    拿两三版前的旧 0 行动值来对账。版本缺失（老载荷）时不写，不编。
+    const avNote = [
+      Number.isFinite(av) && av === 0
+        ? `0 行动值通关${Number.isFinite(gold) ? `（${gold} 金）` : ''}`
+        : (isPerfect ? '已达判据线' : ''),
+      env.strengthSeason ? `${env.strengthSeason} 版本` : '',
+    ].filter(Boolean).join(' · ');
     return [
       tipEnvLabel(meta?.label || env.envLabel || env.id, env.evidenceSeason),
       Number.isFinite(av) ? tipFactor(avText, avNote) : '—',
@@ -2879,9 +2886,9 @@ const strengthSourceBlock = (unit) => {
   });
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
-    '强度来源：逐关卡取该整包**最少行动值**那一次成绩，再按你设的关卡权重各自贡献'));
+    '强度来源：逐关卡取该整包**最近版本**的那一次成绩（版本内取最少行动值），再按你设的关卡权重各自贡献'));
   box.appendChild(tipTable(
-    ['关卡', '最少行动值', '本副本强度', '权重', '贡献'],
+    ['关卡', '最近版本行动值', '本副本强度', '权重', '贡献'],
     rows,
     // 合计 = `strengthTotal`（三个分项表里「强度」那一行的**原始量**），不是角色得分。
     // 单副本时它就是那一列本身，不必再写一行（与性价比表同一条约定）。
@@ -2893,7 +2900,8 @@ const strengthSourceBlock = (unit) => {
     'is-strength-source',
   ));
   box.appendChild(text('div', 'muted small advice-source-note',
-    '上表是**这一档自己**打出来的成绩（每格 = 最少行动值 → 该副本强度，再按关卡权重加权平均）。'
+    '上表是**这一档自己**打出来的成绩（每格 = 该副本**最近版本**那一次行动值 → 该副本强度，'
+    + '再按关卡权重加权平均；行动值下面那行小字就是它的版本）。'
     // ⚠️ 这一段是本轮补的：榜上/列表里那个「强度分」与上表的合计**不是同一个数** ——
     //    强度分还过了一道「投入越高不更弱」的兜底与 5 分投入加成。不写出来读者会以为算错了
     //    （实测用户就是拿着两档的合计在比，看到「装了光锥反而更低」来报 bug）。
@@ -3370,7 +3378,8 @@ const teamPlanTip = (row, plan) => {
     //    那条被用户第 10 条推翻（同一个词在两处不能指两个东西：总榜里 E6S5 更强，
     //    而抽卡方案里越便宜越「强」，用户 2026-10-15 报的正是这个错位）。
     '强度得分 = **角色总榜那一列的强度分**（绝对 0~100，与总榜同一把尺子）：'
-    + '每个副本取该整包**最少行动值**那一次成绩（不跨版本平均），按你设的关卡权重加权，'
+    + '每个副本取该整包**最近版本**那一次成绩的行动值（旧版本的成绩不再压过新版本），'
+    + '按你设的关卡权重加权，'
     + '再按「星魂 ≤、叠影 ≤ 的档位里打过的最好成绩」向上兜底，最后 5 分按投入档位给 —— '
     + '所以**行动值越低越高、投入越高越高**（E6S5 > E6S1 > E2S1 > E0S0），'
     + `**与金数、与你有多少钱无关**。三个系数来自「抽卡权重」（强度 ${(draw.strength * 100).toFixed(0)}% / `
@@ -3726,7 +3735,7 @@ const renderTeamPlan = (conclusion) => {
     //    「含金数项的整包分按候选池归一」，那会让**池内最省金**的那支自动拿 100 分 ——
     //    用户 2026-10-15 报的「这支 10 金的队强度得分怎么是 100」就是这个错位。
     + `强度得分 = **角色总榜那一列的强度分**（绝对 0~100，与总榜同一把尺子：`
-    + `每副本取最少行动值的那次成绩、按关卡权重加权、再按投入档位补 5 分 —— `
+    + `每副本取**最近版本**那一次成绩的行动值、按关卡权重加权、再按投入档位补 5 分 —— `
     + `所以**行动值越低越高、投入越高越高**，E6S5 > E6S1 > E2S1 > E0S0），`
     + '**与金数无关**（「这支队打得多好」与「你要补几金」是两件事）；'
     // ⚠️ 用户 2026-10-12 第 6 条之后这里**只有一个刻度**（差额接近度）——
