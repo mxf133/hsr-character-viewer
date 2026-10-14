@@ -99,6 +99,7 @@ git log --name-only --pretty=format: origin/main..HEAD | sort -u   # 复核
 
 | 版本 | Release | 附件 |
 | --- | --- | --- |
+| v4.6.103 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.103> | `hsr-character-viewer-v4.6.103.zip`（4.17 MB，`git archive` 生成，不含 `data/`） |
 | v4.6.102 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.102> | `hsr-character-viewer-v4.6.102.zip`（4.15 MB，`git archive` 生成，不含 `data/`） |
 
 ### 踩过的坑
