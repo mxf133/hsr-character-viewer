@@ -535,12 +535,14 @@ check('下发行数受 SCORING.teamPlanMaxRows 约束，且带 truncated 标记'
   assert.ok(plan.pool >= plan.rows.length);
 });
 
-check('队伍分取「同一支队伍里分最高的那个成员」（成员分数不同时不能取第一个）', () => {
+check('队分与 ① 都跟着**同一个代表整包**走（不许借队内别的成员在别队打出的强度）', () => {
   const mixed = {
     ...conclusionFixture,
     frontierUnits: [
-      // ⚠️ 两条**刻意反着给**（2026-10-15）：队分取**高**的那个成员，强度取**各自最高**——
-      //    所以这里让「队分低的那条」带更高的 strengthScore，两个数必须各走各的。
+      // ⚠️ 两条**刻意反着给**：队分（`total`）低的那个成员 `strengthScore` 高得多。
+      //    v4.6.103 一度让 ① 取「队内成员里最高的那个强度分」，于是这条会算出 88 ——
+      //    那是**借**了「charA 在别的队伍里」的成绩（用户 2026-10-15 报的「老队伍强度过高」）。
+      //    现在 ① 必须与队分同源：都取**代表整包**（`total` 最高的那一条 = charB）自己的分。
       { key: 'low', name: 'charA', eidolon: 0, lc: 'coneA', superimp: 1, total: 300,
         strengthScore: 88,
         envs: [{ id: 'env1', value: 300, members: TEAMS.coneGap }] },
@@ -552,8 +554,10 @@ check('队伍分取「同一支队伍里分最高的那个成员」（成员分�
   const plan = teamPlan(mixed, accountFixture, { availability });
   assert.equal(plan.poolAll, 1, '同一支队伍必须只留一条');
   assert.equal(plan.rows[0].teamScore, 900, '队分应取分最高的那个成员');
-  assert.equal(plan.rows[0].strengthPct, 88,
-    '① 应取该队成员里**最高**的强度分（不是队分那条的 24）—— 两者互不牵连');
+  assert.equal(plan.rows[0].strengthPct, 24,
+    '① 必须取**代表整包自己**的强度分（不是队内最高的 88 —— 那是别的队伍打出来的）');
+  // 反向钉一条：① 永远 ≤ 「队内成员里最高的那个强度分」（代表本身也是成员之一）。
+  assert.ok(plan.rows[0].strengthPct <= 88, '① 不该超过队内最高成员的强度分');
 });
 
 check('没有可补金的队伍时：rows 为空（界面据此给说明），不抛异常', () => {
@@ -753,15 +757,16 @@ check('界面现算的差额 = 服务端口径（同一份 availability、同一
   }
 });
 
-check('⭐ 真载荷：① = 队员里最高的那个 **`strengthScore`**（绝对刻度，与角色总榜同源）', () => {
-  // 2026-10-15 起 ① 读**角色总榜那一列的绝对强度分**（用户 2026-10-14 第 10 条把「强度」
-  // 重定为「围绕行动值 + 投入单调」，并明确「省金是**性价比**那一项的事」）。
+check('⭐ 真载荷：① = **代表整包自己**的 `strengthScore`（绝对刻度，与角色总榜同源）', () => {
+  // ① 读**角色总榜那一列的绝对强度分**（用户 2026-10-14 第 10 条把「强度」重定为
+  // 「围绕行动值 + 投入单调」，并明确「省金是**性价比**那一项的事」）。
   //
-  // ⚠️ 它替换掉的旧口径（① = 含金数项的整包分、池内 min-max）用了一整天，症状正是
-  //    用户 2026-10-15 报的那条：**池内最省金的那支必然拿 100 分**（截图里那支 10 金的队
-  //    拿了「强度 100」，而成本更高、行动值更低的队伍排在它后面）。
-  // 下面这条断言直接拿**载荷里的 `strengthScore`** 复算：① 必须等于该队成员里最高的那一个
-  // （每个成员整包各带一条证据，取最高 = 「这支队最强成员在总榜上的位置」，与队分同一条约定）。
+  // 它替换掉的两条旧口径，各自的症状都被用户报过：
+  //   * `total`（含金数项）+ 池内 min-max ⇒ **池内最省金的那支必然拿 100 分**（2026-10-15 报）；
+  //   * 「取队内成员里最高的 `strengthScore`」⇒ **借**某个 E6 成员在**别的队伍**里打出的成绩，
+  //     老队伍因此普遍 98+（同一天报的第二条）。
+  // 现在 ① 与队分同源：都取**代表整包**（`total` 最高的那一条）自己的分 —— 那条整包就是
+  // 「承载这支队证据」的那一个。
   const account = { owned: new Set(), eidolons: new Map(), cones: new Map() };
   // ⚠️ 端点必须**在整池**上量：`options.maxRows` 只能往下夹（`SCORING.teamPlanMaxRows`）。
   const keepRows = SCORING.teamPlanMaxRows;
@@ -773,7 +778,7 @@ check('⭐ 真载荷：① = 队员里最高的那个 **`strengthScore`**（绝�
     SCORING.teamPlanMaxRows = keepRows;
   }
   assert.ok(whole.rows.length > 50, `整池应当有几十支，实际 ${whole.rows.length}`);
-  // ① 的刻度是**绝对 0 ~ 100**：池内第一不再被顶成 100 分（那是旧口径的必然结果）。
+  // ① 的刻度是**绝对 0 ~ 100**：池内第一不再被顶成 100 分。
   assert.equal(whole.strengthLo, 0, '① 的下限是绝对刻度 0');
   assert.equal(whole.strengthHi, 100, '① 的上限是绝对刻度 100');
   const packKey = (name, eidolon, lc, superimp) => `${name}|E${eidolonTierOf(eidolon)}|`
@@ -784,12 +789,37 @@ check('⭐ 真载荷：① = 队员里最高的那个 **`strengthScore`**（绝�
     strengthOf.set(key, Math.max(strengthOf.get(key) ?? 0, Number(unit.strengthScore) || 0));
   }
   assert.ok(strengthOf.size > 0, '载荷里必须有 `strengthScore`（v9 起就有，① 靠它）');
-  for (const r of whole.rows.slice(0, 40)) {
-    const expect = Math.max(0, ...r.members.map((m) => strengthOf
-      .get(packKey(m.char, m.eidolon, m.lc, m.superimp)) ?? 0));
-    assert.ok(Math.abs(Number(r.strengthPct) - expect) < 1e-3,
-      `${r.key}: ① ${r.strengthPct} 应等于队员里最高的 strengthScore ${expect}`);
+  /**
+   * 复算「代表整包」：与 `teamPlan()` 的 `byRoster` 同一条规则 —— 同一支队伍（成员整包键
+   * 排序后拼接）里取 `total` 最高的那一条；① 就是它自己的 `strengthScore`。
+   */
+  const repOf = new Map();
+  const rosterKeyOf = (members) => members
+    .map((m) => packKey(m.char, m.eidolon, m.lc, m.superimp)).sort().join('~');
+  for (const unit of teamPoolUnits(livePayload)) {
+    const members = (unit.envs || []).find((e) => (e.members || []).length)?.members || [];
+    if (!members.length) continue;
+    const key = rosterKeyOf(members);
+    const total = Number(unit.total) || 0;
+    const prev = repOf.get(key);
+    if (prev && !(total > prev.total)) continue;
+    repOf.set(key, { total, strength: Number(unit.strengthScore) || 0 });
   }
+  let borrowed = 0;
+  for (const r of whole.rows.slice(0, 40)) {
+    const rep = repOf.get(r.key);
+    assert.ok(rep, `${r.key}: 应当能复算出代表整包`);
+    assert.ok(Math.abs(Number(r.strengthPct) - rep.strength) < 1e-3,
+      `${r.key}: ① ${r.strengthPct} 应等于代表整包自己的 strengthScore ${rep.strength}`);
+    // 反向钉住「不借队内其他成员的强度」：① 必须 ≤ 队内最高成员的分，且**至少有一批**
+    // 严格更低（那些就是「队里有个 E6 成员、但它是在别的队伍里打出的成绩」的队）。
+    const memberMax = Math.max(0, ...r.members.map((m) => strengthOf
+      .get(packKey(m.char, m.eidolon, m.lc, m.superimp)) ?? 0));
+    assert.ok(Number(r.strengthPct) <= memberMax + 1e-3,
+      `${r.key}: ① 不该超过队内最高成员的分（${r.strengthPct} vs ${memberMax}）`);
+    if (Number(r.strengthPct) < memberMax - 5) borrowed += 1;
+  }
+  assert.ok(borrowed > 0, '真载荷上应当存在「借不到就明显更低」的队伍（否则这条反借用的断言空跑）');
   // 分辨率：换成绝对刻度之后池内必须真的分得开（不是清一色 90+，也不是全 0）。
   const pcts = whole.rows.map((r) => Number(r.strengthPct));
   assert.ok(Math.min(...pcts) < 50, `池内应当有 ① 明显偏低的队伍（实际最低 ${Math.min(...pcts)}）`);
