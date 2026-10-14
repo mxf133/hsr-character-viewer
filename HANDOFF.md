@@ -1948,7 +1948,13 @@ $env:DSH_HSR_DATA_FILE='accounts-virtual.json'; node bin/serve.mjs --port 8372 -
 * 回归：`e2e-test.mjs` 新增 `[virtual accounts]` 段 13 条（预设列表 / CSRF / 未知预设 400 /
   只增不删 / 同预设两次不覆盖 / uid 纯数字 / **星级齐全** / **图标是同源 `/icons`** / 角色 id /
   光锥 icon+rarity）。
-* 截图：`docs/screenshots/虚拟账号-入口.png`、`docs/screenshots/虚拟账号-抽卡方案.png`。
+* 截图：`docs/screenshots/抽卡推荐-角色总榜.png`（在**虚拟账号实例**上截的，页面自带「角色数据由本机构造」标注）。
+  ⚠️ **别把带个人信息的截图提交进仓库**（2026-10-14 准备公开发布时发现）：原先那两张
+  `虚拟账号-入口.png` / `虚拟账号-抽卡方案.png` 里带着**真实 UID、账号名与已解锁角色列表**，
+  已在**未推送**的历史区间里用 `git filter-branch --index-filter` 整体摘除 —— 只重写
+  `origin/main..main`（基线是公开提交），所以推送仍是 fast-forward、**不需要 force push**。
+  规矩：对外截图一律用**虚拟账号**实例（`data/accounts-virtual.json`）截，别用真实账号；
+  提交前用 `git log --name-only origin/main..HEAD` 过一遍新增的图片/数据文件。
 
 ---
 
