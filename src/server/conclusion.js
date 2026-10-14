@@ -405,6 +405,11 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
   //   * `strengthTotal` —— 强度分项的原始累计（100 × 表现 × 版本加权 × 副本权重，**不含金数项**）；
   //   * `versatilityRaw` —— 泛用性原始分 = 这个角色投稿的能通关队伍里出现过的**不同队友个数**。
   strengthTotal: unit.strengthTotal ?? null,
+  // 「投入越高强度不可能更低」的**单调兜底值**（0~100，用户 2026-10-14 的不变式）：
+  // 该角色在「星魂 ≤、叠影 ≤」范围内达到过的最好行动值表现。强度分 = 95% × 它 + 5% × 投入。
+  // ⚠️ 界面必须能看到它：`strengthTotal` 是**本档自己**打出来的原始平均分（稀疏投稿时会
+  // 低于低投入档位），两者不同时详情窗口要写出「为什么榜上是这个数」（否则读者会以为算错了）。
+  strengthFloor: unit.strengthFloor ?? null,
   versatilityRaw: unit.versatilityRaw ?? null,
   // ⚠️ **泛用性的来源名单（`versatilityMembers`）刻意不在这里投影**（用户 2026-10-13 要求
   //    「给出泛用性的完整得分来源」，但名单走的是**按需**那条路）：
@@ -441,15 +446,22 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
       envLabel: env.envLabel ?? null,
       // 该整包在这一副本里的贡献（Σ = total）。`score` = value ÷ 副本权重，界面自己算。
       value: env.value,
-      // 强度那一档的同一批数字（用户 2026-10-13 第 2 条）：`envStrength` 是本副本的
-      // **表现分**（不含金数项）、`envStrengthValue` 是它乘上副本权重后的贡献
-      // （Σ = `strengthTotal`）。浮层要解释「强度分项从哪来」就得有它。
+      // 强度那一档的同一批数字（用户 2026-10-13 第 2 条 + 2026-10-14 新口径）：
+      // `envStrength` 是本副本的**强度**（0~100，由行动值定；0 行动值那一档内按金数扣分）、
+      // `envStrengthValue` 是它乘上副本权重后的贡献。浮层要解释「强度分项从哪来」就得有它。
       // ⚠️ 键名**不是** `strength`：那是 v4.6.87 被撤销的字段名，回归测试盯着它别复活。
       envStrength: env.envStrength ?? null,
       envStrengthValue: env.envStrengthValue ?? null,
-      // 该副本里**最好的那一版**的表现分（0~100）：强度来源表的「跨版本发挥」列拿它当分母
-      // （`envStrength ÷ envStrengthBest`，恒 ≤ 1）。老载荷没有它时界面退回因子 1。
+      // 该副本里**最好的那一版**的表现分（0~100）。⚠️ 新口径下强度**不再跨版本平均**，
+      // 所以它不再是「跨版本发挥」的分母；留着只为兼容旧载荷的消费方。
       envStrengthBest: env.envStrengthBest ?? null,
+      // ⚠️ **新强度口径的那几个原始字段（avBest / strengthGold / isPerfect / perfectLine /
+      // weight）刻意不在这一份载荷里** —— 它们只在按需的 `/api/archive/packs` 上（见
+      // `slimCharacterPack`）。理由：逐条带会让 `/conclusion` 从 597 KB 顶到 **614 KB**，
+      // 超过 `e2e-test.mjs` 的 600 KB 硬上限（实测判红一次）。而详情窗口打开时本来就会
+      // 取那份按需载荷并**整份替换 `unit.envs`**（`enrichTipDetail`），强度来源表读到的
+      // 就是带齐字段的那一份；权重还能从顶层 `frontierEnvs[].weight` 回退（见界面的
+      // `frontierEnvMeta`）。
       // 最佳证据那条**队伍**配置：界面写「7 金 · 满分 · 行动值 295 · 4.2 赛季」。
       bestTeamGold: env.bestTeamGold ?? null,
       // **最佳证据所在版本**的最便宜金数 —— 金数项的分母（用户 2026-10-10 第 5 轮：
@@ -511,6 +523,9 @@ const slimCharacterPack = (unit, i18n, maps) => ({
   costScore: unit.costScore ?? null,
   versatilityScore: unit.versatilityScore ?? null,
   strengthTotal: unit.strengthTotal ?? null,
+  // 单调兜底值（与 `slimFrontierUnit` 同字段同义，见那边的注释）——强度来源表要写出
+  // 「为什么榜上的分比本档自己打出来的高」。
+  strengthFloor: unit.strengthFloor ?? null,
   versatilityRaw: unit.versatilityRaw ?? null,
   // ⚠️ 泛用性的**来源名单不在这里**：它是**角色级**的，同一个角色的几十个整包共用一份。
   //    逐包带就是同一份名单重复最多 59 次（实测一个角色能到 59 条配装）——
@@ -535,6 +550,13 @@ const slimCharacterPack = (unit, i18n, maps) => ({
     // 与 `slimFrontierUnit` 的 env 投影**等价**（面板这条路上界面的「来源」表也是现算的，
     // 少一个字段不会报错、只会静默少一列或算出 > 1 的因子 —— 见下面 `seasonMinCost` 那段）。
     envStrengthBest: env.envStrengthBest ?? null,
+    // 新强度口径（2026-10-14）要的同一批字段 —— 与 `slimFrontierUnit` 的 env 投影**必须
+    // 逐字段等价**（那两条接口会互相整份替换 `unit.envs` 再重画强度来源表）。
+    weight: env.weight ?? null,
+    avBest: env.avBest ?? null,
+    strengthGold: env.strengthGold ?? null,
+    isPerfect: env.isPerfect === true,
+    perfectLine: env.perfectLine ?? null,
     bestTeamGold: env.bestTeamGold ?? null,
     // ⚠️ **`seasonMinCost` 必须发**（v4.6.88 修的真 bug）：界面的「贡献值来源」表是用
     // `frontierFactorsOf(env, meta)` **现算**的，而金数项的分母是「**该版本**最便宜」

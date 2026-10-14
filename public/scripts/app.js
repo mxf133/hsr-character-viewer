@@ -449,10 +449,12 @@ const openIconPicker = async () => {
   modal.id = 'appIconPicker';
   modal.className = 'modal';
   const card = document.createElement('div');
-  card.className = 'modal-card';
+  card.className = 'modal-card icon-picker-card';
   card.setAttribute('role', 'dialog');
   card.setAttribute('aria-modal', 'true');
   card.setAttribute('aria-label', '选择程序图标');
+  const top = document.createElement('div');
+  top.className = 'icon-picker-top';
   const head = document.createElement('h3');
   head.textContent = '选择程序图标';
   const hint = document.createElement('p');
@@ -464,6 +466,21 @@ const openIconPicker = async () => {
   search.setAttribute('aria-label', '搜索角色');
   const grid = document.createElement('div');
   grid.className = 'icon-picker-grid';
+  /**
+   * 网格外面必须再套一个**可滚动的正文**（用户 2026-10-14 报「点击左上角头像，
+   * 不能滚动选择头像的界面」）。
+   *
+   * 原因：这里最早直接用了通用的 `.modal-card` —— 那个类**没有 `max-height`**，
+   * 于是 88 个头像把卡片撑得比视口还高，而 `.modal` 是 `place-items: center` 的居中网格，
+   * 超出上下两边的部分就这么被切掉、**既看不见也滚不动**（页面锁死、卡片不动）。
+   * 现在按仓库里高浮层的既有做法（见 app.css 的 `.advice-gold-card`）：
+   * 卡片 `max-height` + flex 纵列 + `overflow: hidden`，正文 `min-height: 0` + `overflow-y: auto`。
+   * ⚠️ `min-height: 0` **不能省** —— flex 子项默认 `min-height: auto`，不写它长内容会把卡片撑破、
+   * 正文的 `overflow-y` 直接失效（那条注释在 `.advice-gold-card` 上面已经踩过一次）。
+   */
+  const body = document.createElement('div');
+  body.className = 'icon-picker-body';
+  body.appendChild(grid);
   const actions = document.createElement('div');
   actions.className = 'icon-picker-actions';
   const reset = document.createElement('button');
@@ -475,7 +492,8 @@ const openIconPicker = async () => {
   close.className = 'btn btn-ghost btn-sm';
   close.textContent = '关闭';
   actions.append(reset, close);
-  card.append(head, hint, search, grid, actions);
+  top.append(head, hint, search);
+  card.append(top, body, actions);
   modal.appendChild(card);
   document.body.appendChild(modal);
 

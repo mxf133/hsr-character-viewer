@@ -3367,12 +3367,14 @@ check('隐金：兑换角色 / 常驻角色「及其星魂」、兑换光锥「�
   // ② 常驻角色：希儿 E6 = 本体 1 + 六金 = 7 金 → 全免
   assert.deepEqual(cut([{ char: 'Seele', eidolon: 6 }]).byIndex, [7], '希儿 E6 应免 7 金');
   // ③ 光锥兑换「及其叠影」：数据集那条 `c` 里光锥是「本体 × 叠影」
-  //    （实测 4230/4230 行 = 本体 + 真实星魂级数 + 光锥本体×叠影），所以 S2 免 2 金；
-  //    而整包展示口径（`packGoldOf`）里光锥不算叠影 → 那一档只免 1 金。
+  //    （实测 4230/4230 行 = 本体 + 真实星魂级数 + 光锥本体×叠影），所以 S2 免 2 金。
+  //    ⚠️ 2026-10-14 起**两种口径都含叠影**：用户点名「E6S5 的限定角色+限定光锥不算隐金
+  //    应当是 **12** 成本」，`packGoldOf` 随之把叠影算进整包金数 ——
+  //    减免这边必须同步（改前整包展示口径只免本体那 1 金，会把叠影钱留在榜上）。
   assert.deepEqual(cut([{ char: 'Solid', eidolon: 0, lc: 'In the Night', superimp: 2 }]).byIndex, [2],
     '数据集口径下 S2 的兑换光锥应免 2 金（本体 + 一层叠影）');
-  assert.deepEqual(cut([{ char: 'Solid', eidolon: 0, lc: 'In the Night', superimp: 2 }], on, 'tiered').byIndex, [1],
-    '整包展示口径下光锥不算叠影，只免本体那 1 金');
+  assert.deepEqual(cut([{ char: 'Solid', eidolon: 0, lc: 'In the Night', superimp: 2 }], on, 'tiered').byIndex, [2],
+    '整包展示口径同样含叠影（用户 2026-10-14 的 E6S5=12 金口径），S2 也免 2 金');
   // 各开关关掉 → 对应那一组一点都不减
   assert.equal(cut([{ char: 'Luocha', eidolon: 2 }], { ...on, exchange: false }).team, 0);
   assert.equal(cut([{ char: 'Seele', eidolon: 6 }], { ...on, standard: false }).team, 0);
@@ -3549,8 +3551,11 @@ checkAsync('隐金：真实数据集上确实改变了总榜，且**只**动总�
   const unfree = onBoard.filter((u) => !charPartFullyFree(u));
   assert.equal(unfree.length, 0,
     `兑换 / 常驻单位的角色本体与星魂应当被全免，实际未全免：${unfree.map((u) => u.name).join(', ')}`);
+  // ⚠️ 2026-10-14：整包金数现在**含叠影**（`packGoldOf` 的光锥那份是「本体 × 叠影」，
+  //    用户点名的 E6S5 = 12 金），所以这里也要乘叠影 —— 否则会算出负数（实测
+  //    `Ruan Mei=0（应为 -4）`：减免已按 ×5 全免，而期望值只减了本体那 1 金）。
   const coneLeft = (u) => (u.lc
-    ? coneCostOf(u.lc, availability)
+    ? coneCostOf(u.lc, availability) * Math.max(1, Number(u.superimp) || 1)
       - hiddenReductionOf([{ char: 'X', lc: u.lc, superimp: u.superimp }],
         availability, DEFAULT_HIDDEN_COSTS, 'tiered').byIndexCone[0]
     : 0);

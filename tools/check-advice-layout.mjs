@@ -1303,7 +1303,12 @@ const tipTarget = await evaluate(`(() => {
   //    ⚠️ 这一段整个是模板字符串：注释里**不能出现反引号**（见 HANDOFF §6.1 第 16 条）。
   // ⚠️ 还要挑**关卡最多的那一行**：下面要断言「最佳证据覆盖所有关卡」与「关卡之间有分隔线」，
   //    而榜首那一行可能只有一个关卡的证据（实测第 2 行起才有 5 块）。
-  const count = wraps.map((w) => w.querySelectorAll('.advice-plan-team-slot').length);
+  //    ⚠️ 2026-10-14 起总榜的详情浮层是**懒构建**的（用户报「网页非常的卡」：92 套详情全在
+  //    渲染时建进 DOM = 26,561 个节点里占 21,339 个）。所以点开之前 tip 里**没有**
+  //    .advice-plan-team-slot 这个节点，数它是全 0、等于随机挑第一行。
+  //    行渲染时会在占位上写 data-team-slots（= 这一行有几个关卡的队伍槽），改数它。
+  const count = wraps.map((w) => Number(
+    w.querySelector('.advice-value-tip')?.dataset.teamSlots || 0));
   let idx = 0;
   for (let i = 1; i < count.length; i += 1) if (count[i] > count[idx]) idx = i;
   const wrap = wraps[idx];
@@ -1918,15 +1923,24 @@ if (!tipTarget) {
   // ---- 强度 / 泛用性 两项的「完整得分来源」（用户 2026-10-13）------------------------
   //
   // 上面的 `sourceOk` 只管**性价比**那一张（逐关卡 × 金数）。用户要的是**三项都给来源**，
-  // 所以强度那张表（逐关卡 × 表现 × 跨版本发挥，**没有金数**）与泛用性那块（队友名单 +
-  // 归一换算）各自也要有判据 —— 否则「加了但没人测」等于下次改坏了也不知道。
-  const STRENGTH_HEADERS = ['关卡', '权重', '表现', '跨版本发挥', '贡献'];
+  // 所以强度那张表（逐关卡 × 最少行动值 × 本副本强度，**没有金数、也没有跨版本发挥**）
+  // 与泛用性那块（队友名单 + 归一换算）各自也要有判据 —— 否则「加了但没人测」等于
+  // 下次改坏了也不知道。
+  // ⚠️ 2026-10-14 用户换了强度的口径（「围绕行动值决定…仅取最少行动值…0 行动值通关则
+  //    成本越低越强」）：强度**不再跨版本平均**，所以「跨版本发挥」那一列没有了，
+  //    换成「最少行动值」与「本副本强度」。改这组列名必须同时改
+  //    `advice-view.js` 的 `strengthSourceBlock()`（两边是同一份契约）。
+  const STRENGTH_HEADERS = ['关卡', '最少行动值', '本副本强度', '权重', '贡献'];
   const strengthSourceOk = Boolean(tipReport)
     && JSON.stringify(tipReport.strengthHeaders) === JSON.stringify(STRENGTH_HEADERS)
     && tipReport.strengthRowCount > 0
-    // 合计那一行只在多关卡时出现（与性价比表同一条约定）；出现时最后一格必须是 `+N`。
+    // 合计那一行只在多关卡时出现（与性价比表同一条约定）。
+    // ⚠️ 写法变过两次：`+N`（各副本**贡献之和**）→ `合计 N.N` → 现在是第一格写「本档自身合计」、
+    //    最后一格只放数字（新的强度原始量是**加权平均**，不等于各贡献之和，写 `+` 会误导；
+    //    而「合计」两个字挪到第一格是为了让最后一格能被上面的列名表读数）。
+    //    所以三种写法都接受。
     && (tipReport.strengthTotalRow === null
-      || /^\+\d+$/.test(tipReport.strengthTotalRow[tipReport.strengthTotalRow.length - 1] || ''));
+      || /^((合计|\+)\s?)?[\d.]+$/.test(tipReport.strengthTotalRow[tipReport.strengthTotalRow.length - 1] || ''));
   // 泛用性那块：**名单真的有内容**、条数 = 标题上那个数、并写出归一换算。
   const versatilitySourceOk = Boolean(tipReport)
     && tipReport.versListCount > 0

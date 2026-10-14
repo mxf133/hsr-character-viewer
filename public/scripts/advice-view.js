@@ -1801,6 +1801,41 @@ const valueBadge = (value, tip, format = scorePercent, label = '角色得分') =
 const packScoreText = (value) => Math.round(Number(value) || 0);
 
 /**
+ * **懒构建的详情浮层**（2026-10-14 性能修复，用户报「网页非常的卡」）。
+ *
+ * ⚠️ 为什么必须懒构建 —— 实测数据（`tools/_perf2.mjs`，改前）：
+ *   * 总榜 **92 行**，每一行都在**渲染时**就把整套详情建进 DOM（三个分项表 + 强度/性价比
+ *     来源表 + 逐关卡表 + 每关一个队伍槽 + 头像与光锥图）；
+ *   * 结果 DOM 共 **26,561** 个节点，其中 **21,339 个（80%）** 都在这 92 个浮层里，
+ *     803 张图里有 **400 张**也在里面；
+ *   * 代价是**滚动只有 16 帧 / 3 秒（平均帧 194 ms、p95 392 ms ≈ 5 FPS）** —— 就是卡的原因。
+ *   而同一时刻**只会打开一个**浮层，剩下 91 个纯属白造（用户点开率≈0）。
+ *
+ * 所以渲染时只放一个**空占位**（揣一个构建函数），第一次点开才真正建内容
+ * （见 `wireValueTips()` 的 `openTip()`：先 `__lazyBuild()` 替换掉占位，再走原有的
+ * 「补明细 → 填队伍卡片 → 开窗口」那条链）。
+ *
+ * 为什么是「占位元素 + 构建函数」而不是「点开时现找 unit 再建」：`.advice-value-tip` 是
+ * `advice-tip-window.js` 的**内容契约**（它按 `parentNode` / `nextSibling` 把内容搬进窗口、
+ * 关闭时再搬回来）。占位换实现能保证「内容元素的父节点始终是那个徽标」这条不变量不变，
+ * 窗口那侧**一行都不用改**。
+ *
+ * `hints.teamSlots` 只给**探针**用（`check-advice-layout.mjs` 原来靠「tip 里有几个
+ * `.advice-plan-team-slot`」挑出关卡最多的那一行；懒构建之后那些槽在点开前不存在，
+ * 于是改成读占位上这个计数）。界面本身不读它。
+ */
+const lazyTip = (build, hints = {}) => {
+  const tip = text('span', 'advice-value-tip');
+  tip.__lazyBuild = build;
+  tip.dataset.teamSlots = String(Math.max(0, Number(hints.teamSlots) || 0));
+  return tip;
+};
+
+/** 一个 unit/方案行在浮层里会有几个队伍槽（= 关卡数，用来给探针排序）。 */
+const teamSlotHint = (unit) => Math.max(0, Number(unit?.envCount) || 0, (unit?.envs || []).length);
+
+
+/**
  * 总榜一个整包的**角色得分**（用户 2026-10-13 第 1、2 条）。
  *
  * 服务端算好下发（`unit.characterScore`，0~100）。⚠️ 退回 `unit.total` 是给
@@ -2115,6 +2150,14 @@ const wireValueTips = (container) => {
     }
     let tip = wrap.querySelector('.advice-value-tip');
     if (!tip) return;
+    // ⚠️ **懒构建**（见 `lazyTip()`）：行渲染时这里只有一个空占位，第一次点开才真正建内容。
+    // 必须在 `enrichTipDetail()` **之前**替换 —— 那个函数是拿 `tip.__unit` 干活的，
+    // 而 `__unit` 是 `frontierTip(unit)` 建内容时挂上去的。
+    if (typeof tip.__lazyBuild === 'function') {
+      const built = tip.__lazyBuild();
+      tip.replaceWith(built);
+      tip = built;
+    }
     // ⚠️ 补明细必须在**开窗之前**：窗口正文是固定尺寸、内容在里面滚，
     // 先开窗再换内容会让用户看到「一个关卡 → 五个关卡」跳一下。
     if (tip.__unit) {
@@ -2677,13 +2720,19 @@ const scoreBreakdownTable = (unit) => {
   const rows = [];
   const details = [];
   for (const [name, why, raw, score, weight, key, integer] of [
-    ['强度', '打出来的成绩（不含金数项）', unit.strengthTotal, unit.strengthScore,
+    // ⚠️ 强度的 `why` 是**新口径**（2026-10-14）：它不再是「打出来的成绩」这种含糊说法，
+    //    而是「各副本取最少行动值那一次 → 按关卡权重加权平均」。这一格会被探针按文本判等
+    //    （`check-advice-layout.mjs` 的 `splitHeaders` / `tipFactor`），改它要同步那边。
+    ['强度', '各副本最少行动值 → 按关卡权重加权平均', unit.strengthTotal, unit.strengthScore,
       w.strength, 'strength', false],
     ['性价比', '同成绩下金数越少越高', unit.total, unit.costScore, w.cost, 'cost', false],
     ['泛用性', '能通关队伍里的不同队友数', unit.versatilityRaw, unit.versatilityScore,
       w.versatility, 'versatility', true],
   ]) {
     const e = extentOf(key);
+    // ⚠️ 强度是**绝对刻度**（0~100 就是原始量本身），没有榜内归一那一步 —— 对它写
+    //    「（榜内 0 ~ 100）」既没用又会让人以为还有一次归一（用户 2026-10-14 的新口径）。
+    const isAbsolute = key === 'strength';
     const source = partSources.find((p) => p.key === key);
     const row = [
       // ⚠️ 第一格必须**正好**是 `tipFactor()` 造出来的 `.tip-stack`（两个 span）：
@@ -2691,9 +2740,10 @@ const scoreBreakdownTable = (unit) => {
       //    里面多包一层「点击展开来源」的提示文字会把 `强度` 判成 `强度点击展开来源`。
       //    所以开关**不做在这一格里**，而是在下面单独开一行。
       tipFactor(name, why),
-      // 原始量那一格带出榜内区间（见上面 `extents` 的注释）。
+      // 原始量那一格带出榜内区间（见上面 `extents` 的注释）；强度那行写绝对刻度。
       tipFactor(rawText(raw, integer),
-        e ? `（榜内 ${rawText(e.lo, integer)} ~ ${rawText(e.hi, integer)}）` : ''),
+        isAbsolute ? '（绝对刻度 0~100）'
+          : (e ? `（榜内 ${rawText(e.lo, integer)} ~ ${rawText(e.hi, integer)}）` : '')),
       one(score),
       pct(weight),
       one(num(weight) * num(score)),
@@ -2719,7 +2769,9 @@ const scoreBreakdownTable = (unit) => {
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
     '角色得分 = 强度 × 权重 + 性价比 × 权重 + 泛用性 × 权重'
-    + '（每个分项：得分 = 100 ×（原始量 − 榜内最小）/（榜内最大 − 榜内最小））'));
+    // ⚠️ 强度**不再榜内归一**（用户 2026-10-14 的口径）：它本来就是 0~100 的绝对刻度。
+    //    这里必须分开说，否则读者会拿 min-max 那条式子去验算强度，永远对不上。
+    + '（强度 = 绝对刻度 0~100；性价比与泛用性：得分 = 100 ×（原始量 − 榜内最小）/（榜内最大 − 榜内最小））'));
   const table = tipTable(
     ['分项', '原始量', '得分', '权重', '贡献'],
     rows,
@@ -2767,73 +2819,101 @@ const scoreBreakdownTable = (unit) => {
 };
 
 /**
- * 「**强度**」这一项的完整来源（用户 2026-10-13：「角色得分页面需要给出强度、性价比、
- * 泛用性的**完整得分来源**，如同性价比得分来源」）。
+ * 「**强度**」这一项的完整来源（用户 2026-10-13 要求三项都给来源；2026-10-14 换了口径）。
  *
- * 与性价比那张表**同一套形状**，只少一列「金数」——那正是两个分项唯一的差别：
+ * 用户 2026-10-14 的原话：「强度分应当围绕**行动值**决定，此角色参与的队伍，行动值越低则
+ * 强度分越高，**仅取最少行动值**，若达成 **0 行动值通关**，则**成本越低越强**」，
+ * 以及「按照已有的用户设置的关卡权重，**各自贡献**」。落地成这张表：
  *
  * ```
- *   性价比：副本权重 × 100 × 表现 ×（该副本最便宜金数 ÷ 这支队金数）× 跨版本发挥
- *   强度  ：副本权重 × 100 × 表现 × 跨版本发挥
+ *   某副本强度 = av == 0 → 100 − 5 × (1 − 最便宜满分金数 / 这次成绩的金数)   ← 段内按金数
+ *                av > 0  → 95 × 判据线曲线(av)（满分线 0.80、达标线 0.45、及格线 0.20）
+ *   强度原始量 = Σ(关卡权重 × 某副本强度) ÷ Σ(**全部**副本的关卡权重)
+ *   强度得分   = 强度原始量（绝对刻度 0~100，不再榜内归一）
  * ```
  *
- * ⚠️ **两处的「表现」不是同一个数**，必须在脚注里说清（不说的话读者会以为其中一个错了）：
- *   * 性价比那张表写的是**最佳证据那一版**的表现（就是榜上那支队伍）；
- *   * 这张表写的是**该副本内按版本加权后**的表现（`envStrength ÷ 100`）——
- *     强度分项的分子用的正是它（见 `advice.js` 里 `accStrength` 那段）。
- * 所以「跨版本发挥」两处也就跟着不同分母：这里 = 加权平均 ÷ **表现分最高的那一版**。
+ * ⚠️ 分母是**全部**副本的权重和：缺副本按 0 计。改前那版除以「有数据的副本」，实测奖励
+ * 了数据少的整包（绝境覆盖率 36/77 → 1/77），见 `advice.js` 里 `strengthTotal` 那段注释。
  *
- * ⚠️ 第一列**不画队伍图标**（性价比那张表有）：强度那一档的「最好的一版」可能来自
- * 与最佳证据**不同**的行，把最佳证据的队伍画在这一列会指错人。
+ * ⚠️ 这张表**不再有**「跨版本发挥」列：新口径**不跨版本平均**（用户要的是「仅取最少
+ * 行动值」那一次成绩）。该列仍然保留在**性价比**那张表里 —— 那边确实按版本加权。
  */
 const strengthSourceBlock = (unit) => {
   const envs = unit.envs || [];
   if (!envs.length) return null;
   const rows = envs.map((env) => {
     const meta = frontierEnvMeta(env.id);
-    const weight = Number(env.weight) || 0;
+    // ⚠️ `weight` 优先读 env 上的（按需载荷带），退回顶层 `frontierEnvs[].weight`
+    //    （总榜载荷为了守住 600 KB 硬上限**不发** env.weight，见服务端 `slimFrontierUnit`
+    //    里那段注释 —— 改前界面那一列因此恒印 `×0`，是个一直没人发现的历史 bug）。
+    const weight = Number(env.weight ?? meta?.weight) || 0;
     const strength = Number(env.envStrength);
-    const best = Number(env.envStrengthBest);
-    // 表现分（0~100）换回 0~1 的系数：链子上那枚 ×100 就是 `frontierPackScale`。
-    const perf = Number.isFinite(strength) ? strength / 100 : null;
-    // 跨版本发挥 = 版本加权平均 ÷ 表现最高的那一版，恒 ≤ 1。
-    // ⚠️ 老载荷没有 `envStrengthBest`（或它是 0）时给 null，那一格写 `—` ——
-    //    与性价比表里 `seasonFactor === null` 同一种写法，绝不拿 1 冒充（那会像「版版都稳」）。
-    const season = Number.isFinite(strength) && Number.isFinite(best) && best > 0
-      ? strength / best : null;
-    const f = frontierFactorsOf(env, meta);
-    // 贡献的乘法链与性价比那张表同一种写法：把隐形的 ×100 也写出来，
-    // 否则读者拿左边可见的因子相乘只能得到 1/100 的数。
-    const chain = [`×${formatWeight(weight)}`];
-    if (Number.isFinite(f.packScale)) chain.push(formatWeight(f.packScale));
-    if (perf !== null) chain.push(factorText(perf));
+    const av = Number(env.avBest);
+    const gold = Number(env.strengthGold);
+    // 「是否达到满分线」优先读载荷给的（按需载荷带）；总榜载荷没带时按 `av ≤ 满分线`
+    // 现算一次 —— 判据线与 `avLinesOf` 同源，都在顶层 `frontierEnvs[].tierLines` 里。
+    const lines = meta?.tierLines || null;
+    const perfectLine = Number(env.perfectLine
+      ?? (lines ? avLinesOf(lines, meta?.lowerIsBetter !== false).perfect : Number.NaN));
+    const isPerfect = env.isPerfect === true
+      || (Number.isFinite(av) && Number.isFinite(perfectLine) && av <= perfectLine + 1e-9);
+    const avText = Number.isFinite(av)
+      ? `行动值 ${Number.isInteger(av) ? av : av.toFixed(1)}`
+      : '—';
+    // 「0 行动值通关」那一段要在表里说清它为什么按金数扣分（用户点名的那条规则）。
+    // ⚠️ 措辞不能用「满分/达标/及格」——`herta-test.mjs` 有一条全源码判据盯着这类自造词
+    //    （用户 2026-10-10：「把『满分』『达标』改为具体的行动值」）。所以这里说「判据线」。
+    const avNote = Number.isFinite(av) && av === 0
+      ? `0 行动值通关${Number.isFinite(gold) ? `（${gold} 金）` : ''}`
+      : (isPerfect ? '已达判据线' : '');
     return [
       tipEnvLabel(meta?.label || env.envLabel || env.id, env.evidenceSeason),
+      Number.isFinite(av) ? tipFactor(avText, avNote) : '—',
+      Number.isFinite(strength)
+        ? tipFactor(`${strength.toFixed(1)}`, isPerfect && av > 0 ? '判据线内' : '')
+        : '—',
       `×${formatWeight(weight)}`,
-      perf === null ? '—' : tipFactor(factorText(perf), '版本加权'),
-      season === null ? '—' : `×${factorText(season)}`,
-      tipChain(chain, `+${packScoreText(env.envStrengthValue)}`),
+      tipChain([`${Number.isFinite(strength) ? strength.toFixed(1) : '—'}`, `×${formatWeight(weight)}`],
+        `+${packScoreText(env.envStrengthValue)}`),
     ];
   });
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
-    '强度来源：逐关卡「权重 × 100 × 表现 × 跨版本发挥」——它只数**打出来的成绩**，不乘金数项'));
+    '强度来源：逐关卡取该整包**最少行动值**那一次成绩，再按你设的关卡权重各自贡献'));
   box.appendChild(tipTable(
-    ['关卡', '权重', '表现', '跨版本发挥', '贡献'],
+    ['关卡', '最少行动值', '本副本强度', '权重', '贡献'],
     rows,
     // 合计 = `strengthTotal`（三个分项表里「强度」那一行的**原始量**），不是角色得分。
     // 单副本时它就是那一列本身，不必再写一行（与性价比表同一条约定）。
     envs.length > 1
-      ? ['强度合计', '', '', '', `+${packScoreText(unit.strengthTotal)}`] : null,
+      ? ['本档自身合计', '', '', '', `${Number(unit.strengthTotal || 0).toFixed(1)}`] : null,
     // ⚠️ 打上自己的 class：浮层里现在有**三张**表（三个分项 / 强度来源 / 性价比来源），
     //    `check-advice-layout.mjs` 的探针按 class 选表 —— 不给这张加标记，
     //    它就只能按下标猜，而「按下标取」在这类探针里是假红的常客。
     'is-strength-source',
   ));
   box.appendChild(text('div', 'muted small advice-source-note',
-    '这一格的「表现」是**该副本内按版本加权后**的成绩（性价比那张表写的是最佳证据那一版）——'
-    // ⚠️ 除法写斜杠：浮层有一条**全窗口**判据禁止出现 `÷`（见 `scoreBreakdownTable` 那段注释）。
-    + '所以「跨版本发挥」在这里 = 加权平均 / 表现最高的那一版。'));
+    '上表是**这一档自己**打出来的成绩（每格 = 最少行动值 → 该副本强度，再按关卡权重加权平均）。'
+    // ⚠️ 这一段是本轮补的：榜上/列表里那个「强度分」与上表的合计**不是同一个数** ——
+    //    强度分还过了一道「投入越高不更弱」的兜底与 5 分投入加成。不写出来读者会以为算错了
+    //    （实测用户就是拿着两档的合计在比，看到「装了光锥反而更低」来报 bug）。
+    + '榜上那个强度分还要再走两步（见下），所以它可能高于本档合计。'));
+  // ① 单调兜底：低投入档位打出过更好的成绩时，高投入档位至少取那个成绩。
+  const floor = Number(unit.strengthFloor);
+  const own = Number(unit.strengthTotal);
+  if (Number.isFinite(floor) && Number.isFinite(own) && floor > own + 0.05) {
+    box.appendChild(text('div', 'muted small advice-source-note',
+      `单调兜底：该角色在**更低投入**的档位打出过更好的成绩，按「投入越高不会更弱」取 `
+      + `${floor.toFixed(1)}（本档自己 ${own.toFixed(1)} → ${floor.toFixed(1)}）。`));
+  }
+  // ② 投入加成：最多 5 分，按 (星魂档 + 叠影档) / 11 给。
+  const eRank = Number(unit.eidolon) || 0;
+  const sRank = unit.lc ? Math.max(1, Number(unit.superimp) || 1) : 0;
+  const investRank = Math.min(eRank, 6) + sRank;
+  box.appendChild(text('div', 'muted small advice-source-note',
+    `投入加成：星魂档 ${Math.min(eRank, 6)} + 叠影档 ${sRank} = ${investRank} / 11，`
+    + `占 5 分 → +${((5 * Math.min(1, investRank / 11))).toFixed(1)} 分；`
+    + '强度分 = 95% × 兜底后的成绩 + 这 5 分。'));
   return box;
 };
 
@@ -3488,7 +3568,9 @@ const renderTeamPlan = (conclusion) => {
     // ⚠️ 2026-10-12 第 3、4、6 条之后第二项叫**差额接近度**（它本来就是那句原话里的名字）：
     // v4.6.87 一度改成合成的「性价比得分」，v4.6.89 按用户要求收回成单一刻度 ——
     // 所以这里印的是 `gapPct`，不是中间量。
-    head.appendChild(valueBadge(row.total, teamPlanTip(row, plan),
+    // ⚠️ 同样**懒构建**（`lazyTip()`）：抽卡方案有 15 张卡，改前 15 套详情也一起建进 DOM。
+    // `teamSlots` 这里给 0 —— 那个计数只服务总榜那条探针的选择逻辑（见 `lazyTip()` 的注释）。
+    head.appendChild(valueBadge(row.total, lazyTip(() => teamPlanTip(row, plan)),
       (v) => Number(v || 0).toFixed(1), '补金推荐分'));
     head.appendChild(text('span', 'advice-plan-team-eq',
       `= 强度得分 ${Number(row.strengthPct).toFixed(1)} × ${ws}`
@@ -3731,7 +3813,8 @@ const renderUnits = () => {
     // **点一下**开那个详情大窗口（`advice-tip-window.js`）。
     // ⚠️ 值走 `unitRoleScore()`（= 服务端算好的三个分项加权分，用户 2026-10-13 第 2 条）；
     // 合成夹具没有它时才退回老的 `total`。
-    head.appendChild(valueBadge(unitRoleScore(unit), frontierTip(unit), packScoreText));
+    head.appendChild(valueBadge(unitRoleScore(unit),
+      lazyTip(() => frontierTip(unit), { teamSlots: teamSlotHint(unit) }), packScoreText));
     row.appendChild(head);
 
     // 这一行排在这里的**依据**：最佳证据那支队伍的档位 / 金数 / 行动值。
@@ -3988,31 +4071,48 @@ const loadStats = async () => {
   }
 };
 
+/**
+ * ⚠️ **并发的 `loadIndex()` 必须共用同一次请求**（2026-10-14 实测踩到）。
+ *
+ * 启动时会有两个调用方同时进来：顶栏图标的 `applyAppIcon()`（`app.js` 里那句
+ * `void applyAppIcon()`）与抽卡页自己的取数。两边都看到 `state.index === null`，
+ * 于是 `/api/archive`（实测 **168 KB**）被拉**两遍**，整个索引 UI 也跟着重画两遍。
+ * 用一个模块级 promise 把在途请求收口：第二个调用方直接拿同一个结果。
+ *
+ * ⚠️ `.finally` 里要清空 —— 否则失败之后这个 promise 会被永久缓存，
+ * 用户再点「重新读取」也永远读到那次失败（那一类 bug 修过一次：见 `packsCache`
+ * 「失败的**不缓存**」那条注释）。
+ */
+let indexPromise = null;
 const loadIndex = async () => {
-  state.index = null;
-  // 先清掉那一格（重读 / 同步进行中时不该留着上一份的生成时间），取到索引再画。
-  renderDataStatus();
-  el.loading.hidden = false;
-  try {
-    const index = await apiGet('/api/archive');
-    if (!index.available) {
-      showEmpty('还没有采集抽卡推荐所需的资料。', index.hint || '');
-      return;
-    }
-    state.index = index;
+  if (indexPromise) return indexPromise;
+  indexPromise = (async () => {
+    state.index = null;
+    // 先清掉那一格（重读 / 同步进行中时不该留着上一份的生成时间），取到索引再画。
     renderDataStatus();
-    renderModeOptions();
-    const mode = index.modes.find((m) => m.mode === state.mode);
-    const stage = (mode?.stages || []).find((s) => s.stage === state.stage);
-    state.season = (stage?.seasons || mode?.seasons || []).slice(-1)[0]
-      || index.latestPerMode?.[state.mode] || null;
-    renderSeasonOptions();
-    await loadStats();
-  } catch (err) {
-    showEmpty(`无法读取本地资料索引：${err.message}`);
-  } finally {
-    el.loading.hidden = true;
-  }
+    el.loading.hidden = false;
+    try {
+      const index = await apiGet('/api/archive');
+      if (!index.available) {
+        showEmpty('还没有采集抽卡推荐所需的资料。', index.hint || '');
+        return;
+      }
+      state.index = index;
+      renderDataStatus();
+      renderModeOptions();
+      const mode = index.modes.find((m) => m.mode === state.mode);
+      const stage = (mode?.stages || []).find((s) => s.stage === state.stage);
+      state.season = (stage?.seasons || mode?.seasons || []).slice(-1)[0]
+        || index.latestPerMode?.[state.mode] || null;
+      renderSeasonOptions();
+      await loadStats();
+    } catch (err) {
+      showEmpty(`无法读取本地资料索引：${err.message}`);
+    } finally {
+      el.loading.hidden = true;
+    }
+  })().finally(() => { indexPromise = null; });
+  return indexPromise;
 };
 
 // ------------------------------------------------------------------- 手动更新
