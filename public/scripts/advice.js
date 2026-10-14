@@ -5467,21 +5467,39 @@ const buildConclusionInner = (envs, options = {}) => {
      * ⚠️ `undefined` 的叠影按 1 算；**没装光锥**的整包叠影记 0（它是这条偏序的最小元，
      * 不参与给别档兜底）。
      */
-    const coneRankOf = (u) => (u.lc ? Math.max(1, Math.round(Number(u.superimp) || 1)) : 0);
     /**
-     * 「投入档位」= 星魂档 + 叠影档（0~11）。它是强度分里那 5 分的分子，
+     * 光锥那一维的**投入档位**：**只有要金的光锥**（限定 / 活动跃迁 5★）的叠影才算。
+     *
+     * ⚠️ 2026-10-14 用户报的第 4 个漏洞（原话「从纯粹强度考虑，1+1 爻光为什么不如 1+0 爻光」）：
+     * 改前这里只看 `superimp`，于是**免费 / 4★ 光锥的 S5 也被算成 5 档投入** ——
+     * 实测爻光 E1 档：`菇菇嘎嘎历险记 S5`（免费锥，整包 2 金）**95.0** 反而高于
+     * `当她决定看见 S1`（专武，整包 3 金）**93.2** —— 前者一分钱没多花却拿走了 5/11 的投入分。
+     * 用户给的成本口径是「E6S5 的**限定**角色 + **限定**光锥不算隐金应当是 12」，所以
+     * 「投入」必须按**金**算、不能按叠影次数算。4★ 锥叠影多少次都是 0 金 `coneCostOf()`。
+     */
+    const coneRankOf = (u) => (u.lc && coneCostOf(u.lc, availability) > 0
+      ? Math.max(1, Math.round(Number(u.superimp) || 1)) : 0);
+    /**
+     * 「投入档位」= 星魂档 + **要金光锥的**叠影档（0~11）。它是强度分里那 5 分的分子，
      * 与 `coneRankOf` / `eidolonTierOf` **同一个偏序** —— 这是单调性成立的关键：
      * 包络与投入项必须用同一把尺子，否则同一 (E,S) 档位会因为光锥不同而互相打架
-     * （实测抓到过 `E2S1 > E2S5`，因为 S5 那把是 4★ 锥、不计金）。
+     * （实测抓到过两回：`E2S1 > E2S5`（4★ 锥不计金）、以及上面爻光那条）。
      */
     const investRankOf = (u) => eidolonTierOf(u.eidolon) + coneRankOf(u);
     for (const unit of all) {
       // 包络在**0~1 的行动值表现**上取前缀最大（`strengthTotal` 是 0~100，先除回去）。
+      const eUnit = eidolonTierOf(unit.eidolon);
+      const cUnit = coneRankOf(unit);
       let floor = (Number(unit.strengthTotal) || 0) / 100;
       for (const other of all) {
         if (other === unit || other.name !== unit.name) continue;
-        if (eidolonTierOf(other.eidolon) > eidolonTierOf(unit.eidolon)) continue;
-        if (coneRankOf(other) > coneRankOf(unit)) continue;
+        const eOther = eidolonTierOf(other.eidolon);
+        const cOther = coneRankOf(other);
+        if (eOther > eUnit || cOther > cUnit) continue;
+        // ⚠️ 必须**至少一维严格更低**：档位完全相同（同星魂、同「要金光锥」的叠影）时互相
+        //    兜底会把「不装光锥」抬到「装了免费锥」的水平 —— 而免费锥是实打实的提升，
+        //    只是不花钱（用户 2026-10-14 报的那条要的正是「花钱的那个不该更低」）。
+        if (eOther === eUnit && cOther === cUnit) continue;
         const v = (Number(other.strengthTotal) || 0) / 100;
         if (v > floor) floor = v;
       }
