@@ -26,7 +26,46 @@
 > （§4.2Z / §4.2Y / §4.2X / §4.2AA / §4.2P~§4.2W / §4.2K / §4.2J / §4.2I / §4.2H / §4.2G / §4.2F / §4.2E / §4.2D / §4.2C / §4.2B / §4.2A / §4.2z / §4.2y / §4.2x —— **§4.2Z 是最新的那一轮**；
 > 字母走到 `z` 之后回到 `A`，越新的轮次字母越靠后）。
 
-> 最后更新：**v4.6.97**（2026-10-13，同一支 worktree）—— 用户两条：
+> 最后更新：**v4.6.99**（2026-10-14，worktree `.worktrees/bugfix-batch` / 分支 `fix/bugfix-batch`
+> —— 上一轮把桌面上的 worktree 全清掉之后又新开的一支）—— 用户给了一张**十条清单**
+> （bug + 改进），逐条都做了：
+> ① **虚拟账号预设「不符合描述」：全角色平铺缺角色/缺光锥（点名缇宝、花火）** ——
+> 根因是 `signatureConeOf` 退回 `refs.popularLightCones`（**最常用**光锥表），辅助角色
+> 共用通用锥、`Object.fromEntries` 去重后 93 个角色只剩 **72** 把锥、**21 个没光锥**。
+> 新写 `deriveSignatureCones()`：用 `archive.json` 的 `characters[].topLightCones`
+> 做「限定 5★ 角色 × 限定 5★ 光锥」按用量**互选**（57/58 命中 + 一张只写能确认的
+> `LIMITED_SIGNATURE_OVERRIDES`），4★/开拓者补**免费同命途锥**、新增 `charCones`
+> 让免费锥可以多人共用（限定锥仍独占）。⚠️ **必须过 `withSignatureCones()`**，漏了会静默退回旧表。
+> ② **随机低/中/高氪 = 大隐金 MAX + 50/100/200 限定金**（实测新增恰好 50/100/200）。
+> ③ **「添加角色 / 改星魂 / 改光锥」失效** —— 两个真 bug：
+> (a) `iconFor(maps, kind, key)` 读 `maps.char`/`maps.cone`，而调用方传的是
+> `iconTable()` 的 `{exact, loose}` → 渲染第一行就抛 `TypeError`，异常被 `.catch` 吞成
+> 一闪而过的英文 toast，屏幕上只剩**空壳窗口**（这就是「点了没反应」）；
+> (b) 服务端 `normalizeRoster` 用 `!chars[ownerKey]` 判「主人在名单里」，而 **E0 的星魂是 `0`（假值）**
+> → 「加一个角色（默认 E0）+ 配光锥」把光锥主人静默丢掉。
+> ④ **开拓者只留一行**（`rank` = 6、`id` ∈ 8001..8010）：客户端 `ownedCharacters`
+> 早就会展开全命途，**`eidolonsOf` 本轮才补上**（改前单行开拓者的 5 个命途键全是 `undefined`）。
+> 头像的 10 个 id 与「男/女 × 命途」是**实测核实**的（StarRailRes 的 `tag`：奇=playerboy、偶=playergirl）。
+> ⑤ **「新增同配置虚拟账号」**（按钮在真实账号自己的选项框内）+ **虚拟账号重命名**
+> （`POST /api/virtual-accounts/from-account` / `:id/rename`）。
+> ⑥ **改名「崩坏：星穹铁道 抽卡推荐计算器」** + 新描述 + 顶栏图标改成**角色头像**
+> （默认大黑塔、点击可换、记进 localStorage 并改写 `<link id="appIcon">`）。
+> ⑦ **修复「同步黑塔网」**：`herta-availability.mjs` 缺 `.snapref` 参考表时**硬失败**，
+> 让最慢的抓取白花（「耗时过长 + 同步不了」）；跳过判据按**档期日期**重写（旧的把
+> 「还没上线」与「同步回来 0 条」混为一谈，还恰好永久跳过两个**正在收投稿**的活跃期——
+> 实测 4.5 混沌回忆新增 8 条，旧代码永远抓不到）；抓取改有上限并发 + 超时（76.4s → 18.7s）。
+> ⑧ 角色得分详情页的**三项得分与「补金推荐分」改成点击展开来源**（默认收起，省空间）。
+> ⑨ **异相仲裁 · 绝境的默认权重 10 → 5**。
+> ⑩ **角色得分页面的权重 bug**：(a) 关卡权重那条链**没清 `packsCache`**（隐金与抽卡权重都清了）
+> → 改完权重后角色详情还在吃旧缓存分；(b) 抽卡权重那行状态仍印着已被 v4.6.97 推翻的
+> 「抽卡方案只用强度/性价比」。
+> 实测：`run-tests.mjs` **18 个套件全部通过**（`e2e` 177、`herta` 106、`virtual-accounts` **43**、
+> 新增 `herta-sync` **38**；`team-plan` 31、`utils`/`launcher` 全绿）。详见 **§4.2AC**。
+>
+> 上一版 **v4.6.98**（2026-10-13）—— 虚拟账号预设只留用户点名的 9 个 + 修掉一条静默失败的旧断言。
+> 详见 **§4.2AB**。
+>
+> 上一版 **v4.6.97**（2026-10-13，同一支 worktree）—— 用户两条：
 > 「**角色得分页面需要给出强度、性价比、泛用性的完整得分来源，如同性价比得分来源**」+
 > 「**泛用性权重也适用于补金推荐**」。
 > ① 详情窗口现在**三项都有来源**：新增**强度来源表**（关卡 / 权重 / 表现 / 跨版本发挥 /
@@ -1317,7 +1356,33 @@ CDP 那两条新判据（残留 0 个 / 每格都有卡片与行线）跑 `node 
 
 ### 4.4 约定（改代码前先读这一节）
 
-- **副本权重的默认值只有一张表**：`SCORING.envWeight`（`10/1/1/1/1`）。
+- **副本权重的默认值只有一张表**：`SCORING.envWeight`（**`5/1/1/1/1`** ——
+  2026-10-14 用户第 9 条把绝境从 **10** 改成 **5**，其余四个仍是 1）。
+- **虚拟账号的名单契约有五个字段，别只认两个**（2026-10-14 第 1、4 条起）：
+  `chars`（角色 → 星魂档）、`cones`（光锥 → 叠影，**去重的持有集合**、金数口径按它记账）、
+  **`charCones`**（角色 → 装备的光锥，**逐角色装备、权威**）、`coneOwners`（光锥 → 主人，旧形状，
+  保留兼容）、`trailblazer`（`{ id }` ∈ 8001..8010）。
+  **成本 0 的光锥允许多人共用**（4★ 没有专属锥，而平铺档要求「每个角色都有光锥」），
+  **成本 > 0 的限定锥只允许一个主人**（`normalizeRoster` 与服务端两侧都挡）。
+  ⚠️ 只回传 `coneOwners`（锥 → 单个主人）表达不了多人共用，「打开平铺档再保存」会把
+  4★ 的光锥全丢掉 —— 界面必须同时回传 `charCones`。
+- **专属光锥表必须是 `signatureLightCones`，不是 `popularLightCones`**：
+  后者是「**最常用**光锥」，辅助角色会共用通用锥（实测 10 把锥被 2~8 人共用，`Dance Dance Dance`
+  一支占 8 人），用它配平铺档 = 21 个角色没光锥（用户 2026-10-14 第 1 条报的 bug）。
+  真表由 `deriveSignatureCones()` 从 `archive.json` 的 `characters[].topLightCones` 现算，
+  服务端三条虚拟账号路由与 `tools/make-virtual-accounts.mjs` **都必须先过 `withSignatureCones(index)`**
+  —— 漏掉**不报错**，只会静默退回旧表（这就是那个 bug 当初能溜过去的原因）。
+- **开拓者在虚拟账号里只有一行**：`name` = 「开拓者」、`rank` = 6、`id` ∈ 8001..8010，
+  五个命途键**不写进快照**。「全部命途都有」由客户端展开 —— `ownedCharacters` 一直如此，
+  `eidolonsOf` 是 v4.6.99 才补的（判据 = 整个快照里开拓者行数 ≤ 1；**多行时保持逐命途**，
+  否则真实账号的 E2 会被抬成 E6、补金推荐跟着算错）。
+- **判「在不在」别用 falsy 判空**（`Number(null) === 0` 的同类坑，实测两次踩到）：
+  `normalizeRoster` 的 `!chars[ownerKey]` 把 **E0 角色**（星魂是 `0`）的光锥主人静默丢掉
+  —— 用户第 3 条「无法更改光锥」的根因之一。要写 `key in obj` 或 `!== undefined`。
+- **`charCostOf` / `coneCostOf` 对「数据集里没有的键」返回 1（保守按限定算）**：
+  所以拿**别处的名字**（例如「March 7th」这个基名）去查成本会凭空多出金数。
+  两处实测踩点：测试里的「中文名 → 英文键」反查（三月七两个命途在 `charactersById` 里同名，
+  见 `CHARACTER_ID_OVERRIDES`）、以及 `tools/herta-build.mjs` 的卡池归属兜底。
   **用户覆盖按口径分开**：`WEIGHT_SCOPES = ['plan', 'frontier']`
   （`frontier` = 界面上的**关卡权重**，管角色总榜 + 抽卡方案的强度侧；
   `plan` = 差距榜 / 星魂榜，界面从 2026-10-11 起不再画它）。
@@ -2455,6 +2520,191 @@ worktree —— 上一轮刚把桌面上的 worktree 全清掉）。
 
 **实测**：`run-tests.mjs` 全套通过（`e2e` 177 项、`herta` 106 项、`team-plan` 31 项、
 `virtual-accounts` 28 项）；CDP 那套 `通过 ✓`（切账号那条从 ✗ 变 ✓）。
+
+---
+
+### 4.2AC 本轮（v4.6.99，worktree `.worktrees/bugfix-batch` / 分支 `fix/bugfix-batch`）—— 用户十条清单：虚拟账号三项 bug + 程序改名 + 同步黑塔网 + 得分来源折叠 + 权重两处
+
+**背景**：用户 2026-10-14 一次给全**十条**（原话见本节各条），并明确要求「安排多 agent 协助」。
+
+**分工（§9.2 第 1 层：文件级 owner，同一个文件同一时刻只有一个 agent 改）**：
+
+| 谁 | 文件 | 条目 |
+| --- | --- | --- |
+| 主控 | `src/server/virtual-accounts.js`、`src/server/store.js`、`src/server/app.js`（虚拟账号路由）、`public/index.html`、`public/styles/app.css`、`package.json`、`src/version.js`、`README.md`、`bin/serve.mjs`、`tools/run-tests.mjs`、`tools/virtual-accounts-test.mjs`、`tools/herta-test.mjs`、文档 | ①②④⑤(服务端)⑥⑨ + 全部整合 |
+| agent（虚拟账号编辑器） | `public/scripts/virtual-roster.js` | ③ 的界面根因 + ④ 头像选择器 |
+| agent（黑塔网同步） | `tools/herta-*.mjs`、`src/server/archive-update.js`、新建 `tools/herta-sync-test.mjs` | ⑦ |
+| agent（抽卡页） | `public/scripts/advice-view.js`、`advice-tip-window.js`、`advice-gold-modal.js`、`public/styles/advice-tip-window.css`、`tools/check-advice-layout.mjs` | ⑧⑩ |
+| 主控 | `public/scripts/app.js`（账号卡片的两个按钮 + 顶栏图标选择器） | ⑤(界面)⑥(界面) |
+
+⚠️ **这一轮踩到的协作坑**（值得记）：本次会话**先后派了 7 个子 agent，其中 5 个「中途失败、没有收尾消息」**
+（有两个在失败前留下了完整报告与可用的工作区改动，另外三个什么都没留下）。
+落到工作区里的实际成果：`virtual-roster.js`（+299，含第 3 条的**真正根因**）、
+`advice-view.js` / `advice-tip-window.css` / `check-advice-layout.mjs`、`herta-*.mjs` / `archive-update.js`
+—— 也就是说**失败 ≠ 没干活**。教训是：派活时**先把「改哪些文件」钉死**、收工时**逐个 agent 核对工作区**
+（`git status` + `git diff --stat`），不要只看它有没有回话。
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `src/server/virtual-accounts.js` | **本轮最大的一块**（+600 行注释与实现）。新增 `TRAILBLAZER_AVATARS`（10 个头像，性别/命途实测核实）、`CHARACTER_ID_OVERRIDES`（三月七两个命途的 id，见下）、`deriveSignatureCones()` / `signatureCones()` / `withSignatureCones()`（**真专属锥表**）、`presetContext` 的 `pickConeFor` / `claimCone` / `freeConeCandidates`（免费同命途锥候选）、`dayinjinMaxRoster()`（大隐金 MAX 抽成一份定义，随机档以它为基底）、`randomRosterOf(ctx, budget, base)`（新增预算口径 + 回传 `charCones`）、`buildVirtualAccount` 的「开拓者只留一行」「宽松图标键」「逐角色装备」，`normalizeRoster` 的 `charCones`/`trailblazer` 收口 + **E0 假值判空修复** |
+| `src/server/store.js` | 新增 `renameVirtualAccount()`（账号 `nickname` / `roles[0].nickname` / 快照 `basicInfo.nickname` **三处同改**）；`setVirtualRoster()` 补存 `charCones` 与 `trailblazer`（漏存的表现是「保存成功、下次打开又变回去」） |
+| `src/server/app.js` | 虚拟账号三条路由都过 `withSignatureCones()`；预设清单补 `limitedChars` / `totalChars`；roster GET 下发 `charCones` / `trailblazer` / `trailblazerAvatars` / `signatureLightCones`；新增 `POST /api/virtual-accounts/:id/rename` 与 `POST /api/virtual-accounts/from-account`；新增 `rosterFromSnapshot()`（真实快照 → 名单原文，**只读源账号**） |
+| `public/scripts/virtual-roster.js` | **第 3 条的根因**：`iconFor(maps, kind, key)` 读 `maps.char`/`maps.cone`，而调用方传的是 `iconTable()` 的 `{exact, loose}` → 渲染第一行就抛 `TypeError`（见下）；改用 `charCones` 作为权威 + `syncCones()` 派生两个集合；`coneChoicesFor` / `defaultConeFor` 改成「**只有成本 > 0 的锥独占**」（`coneIsCostly` 是 `coneCostOf` 的**镜像**，有回归逐锥比对）；新增开拓者头像选择器与「只换头像的轻量刷新」 |
+| `public/scripts/advice.js` | ⑨ 绝境默认权重 10 → 5；④ `eidolonsOf` 支持「单行开拓者 → 全命途 E6」（多行时保持逐命途） |
+| `public/scripts/app.js` | ⑤ 账号卡片内的「**新增同配置虚拟账号**」（仅真实账号）/「重命名」（仅虚拟账号）；⑥ 顶栏品牌图标改成角色头像（默认大黑塔）+ 头像选择器 + 写 `localStorage['hsr.appIcon']` + 改写 `<link id="appIcon">` + 启动时 `applyAppIcon()` |
+| `public/index.html` | ⑥ 标题/描述改名；`<link id="appIcon">` 给 id（兜底 emoji）；`.brand-mark` 从 `<span>` 改成 `<button id="brandMark">` |
+| `public/styles/app.css` | `.brand-mark` 的按钮复位（`border/padding/font`）+ hover/focus 态；新增 `.icon-picker-*`（头像网格） |
+| `tools/virtual-accounts-test.mjs` | 28 → **43** 项：平铺「每个角色都有光锥」、缇宝/花火定点、快照 id 不撞车（三月七）、开拓者单行 + `eidolonsOf` 展开 + 多行不抬档、随机档**增量**恰好 50/100/200、`charCones` 的免费可共用/限定独占/命途校验、**E0 也能当光锥主人**、`charKeyOf` 的两级兜底 |
+| `tools/herta-test.mjs` | ⑨ 的权重断言 10 → 5（并写清是用户要求）。⚠️ **这个文件原本有一半 `checkAsync` 没 `await`**（§4.2AB 记录过），本轮尚未修 —— 仍然建议单独一轮 |
+| `tools/run-tests.mjs` | 新增 `herta-sync-test.mjs` 到套件清单 |
+| `tools/herta-update.mjs` / `herta-availability.mjs` / `herta-build.mjs` / `src/server/archive-update.js` / `tools/herta-sync-test.mjs` | ⑦ 全套，见下 |
+| `src/version.js` / `package.json` / `README.md` / `bin/serve.mjs` | ⑥ 改名（`hsr-warp-advisor`）、版本 → **4.6.99**、changelog |
+
+**① 虚拟账号预设「不符合描述」——缺角色/缺光锥（用户点名缇宝、花火）**
+
+根因两层，都在**数据源**上（不是文案）：
+* `signatureConeOf()` 的兜底是 `refs.popularLightCones` —— 一张「**最常用**光锥」表。
+  辅助角色常常共用一把通用锥，实测 **10 把锥被 2~8 个角色共用**
+  （`Dance Dance Dance` ← 花火/缇宝/阮•梅/停云/寒鸦/艾丝妲/刻律德菈/开拓者•同谐；
+  `Resolution Shines As Pearls of Sweat` ← 忘归人/桂乃芬/卢卡/佩拉/桑博；……）。
+  平铺档 `Object.fromEntries(all.map(c => signatureConeOf(c)))` **去重**后只剩 **72** 把锥，
+  **93 个角色里 21 个没有光锥** —— 缇宝与花火都在里面。
+* 修法：`deriveSignatureCones()` 用 `archive.json` 顶层 `characters[角色].topLightCones`
+  （**该角色实际装备过**的光锥）做「限定 5★ 角色 × 限定 5★ 光锥」的按用量**互选**
+  （贪心，实测 **57/58** 命中）+ 一张**只写能确认的** `LIMITED_SIGNATURE_OVERRIDES`
+  （统计把罗刹的「棺的回响」判给了更热门的灵砂 —— 灵砂真正的专武是「唯有香如故」）。
+  4★ / 开拓者本来没有专属锥 → 补**成本 0 的同命途锥**（优先有图标、`rarity >= 4`），
+  新增 `charCones` 让同一把免费锥可以被多个角色装备。
+* **实测**：平铺 0+1 / 2+1 / 6+5 的 **89 行全部有光锥**（改前 21 行没有）；
+  0+1 的金数仍是 **116**（58 个限定本体 + 58 把限定锥），**限定锥互不重复**。
+* ⚠️ **必须过 `withSignatureCones(index)`**（三条路由 + `make-virtual-accounts.mjs`）：
+  漏了**不报错**，只会静默退回旧表 —— 这正是这个 bug 当初溜过去的原因。
+
+顺手挖出来的两个数据层问题：
+
+1. **7 个角色拿不到图标与 id**：`March 7th (Hunt|Preservation)` 与 5 个 `Trailblazer (...)`
+   —— 图标表只有 `March 7th` / `{NICKNAME}` 两个键，而服务端 `iconOf()` 原来只做**精确**匹配
+   （客户端 `virtual-roster.js` 早就有 `baseFormKeyOf` / `looseKeyOf` 那套宽松回退）。
+   现在把同一套口径搬到服务端。
+2. **三月七两个命途的 `id` 撞车**：`i18n.charactersById` 把 `1001` 与 `1224` **都写成
+   「March 7th」**（没有命途），图标表又只有一条 `March 7th → 1224.png`，于是两行的
+   `data-char-id` 都是 1224（抽卡页「点角色 chip 滚过去」会滚错一张），而且
+   `charCostOf('March 7th')` 走「未知键 → 保守按限定算」让平铺**凭空多 2 金**。
+   实测依据（StarRailRes 的 `index_min/en/characters.json`）：`1001` = March 7th / **Knight**（存护）、
+   `1224` = March 7th / **Rogue**（巡猎），两张图标都请求得到（200）→ 写成 `CHARACTER_ID_OVERRIDES`。
+
+**② 随机低/中/高氪 = 大隐金 MAX + 50/100/200 限定金**
+
+用户原话：「新建的随机低/中/高氪应当在大隐金MAX基础上，增加50/100/200个限定金」。
+`dayinjinMaxRoster(ctx)` 抽成一份定义（预设与大隐金 MAX 共用），`randomRosterOf(ctx, budget, base)`
+以它为起点、**预算只算新增的部分**（基底的 16 金不算）。实测三档新增**恰好 50 / 100 / 200 金**
+（用 `virtualRoster` 的键按增量口径复核；⚠️ 复核时**别把基底已付的本体金重复计一次**——
+第一版探针就是这么多算了 12~16 金的）。
+
+**③ 「添加角色 / 改星魂 / 改光锥」失效 —— 两个真 bug，一个客户端一个服务端**
+
+* **客户端（界面完全打不开）**：`iconFor(maps, kind, key)` 取的是 `maps.char` / `maps.cone`，
+  而 `openVirtualRoster()` 传进去的是 `iconTable()` 的返回值 `{ exact, loose }` ——
+  于是 `m` 是 `undefined`，**渲染第一行**就抛
+  `TypeError: Cannot read properties of undefined (reading 'exact')`。
+  异常穿过 `paint()` 冒到 `openVirtualRoster()` 的返回值上，被 `app.js` 那句
+  `.catch((err) => toast(err.message, 'err'))` 吞成一条**一闪而过的英文提示**，
+  屏幕上只剩一个一行都没有的**空壳窗口** —— 用户看到的就是「点了没反应」。
+  修法：把两张表收成 `{ char: iconTable(...), cone: iconTable(...) }`。
+* **服务端（改了光锥却不生效）**：`normalizeRoster` 用 `!chars[ownerKey]` 判「主人在名单里」，
+  而 **E0 的星魂值是 `0`（假值）** —— 「加一个角色（默认 E0）+ 给它配光锥」这个**最常见的操作**
+  会把光锥主人**静默丢掉**（锥还在 `cones` 里、主人没了 → 快照按「找空槽」把锥挂到别人身上）。
+  这是本仓库第 N 次踩「假值判空」的坑，已写进 §4.4。
+
+**④ 开拓者只留一行**
+
+服务端快照里只写**一行**「开拓者」（`rank`/星魂 = 6、`id` ∈ 8001..8010、`path` = `null`、不带光锥），
+五个命途键**不进快照**。用户第 4 条原话：「仅包含开拓者本体（**视为所有开拓者的命途均拥有且满星魂**），
+头像随机为男/女开拓者的任意命途，且可以修改」。
+「全部命途都有」由客户端展开：`ownedCharacters` 一直有这条规则，**`eidolonsOf` 本轮才补上**
+（实测改前单行开拓者的 5 个命途键在 `eidolonsOf` 里**全是 `undefined`**，星魂被当成 0）。
+⚠️ 判据是「整个快照里开拓者行数 ≤ 1」：真实账号（米游社）会给多行、各自有各自的星魂，
+那时**必须保持逐命途**（否则 E2 会被抬成 E6，补金推荐跟着算错）。
+头像的 10 个 id 与「男/女 × 命途」的归属是**实测核实**的（StarRailRes 的 `tag` 字段：
+8001=playerboy、8002=playergirl … 奇数=男主、偶数=女主；10 个 `icon/character/<id>.png` 全 200）。
+
+**⑤ 「新增同配置虚拟账号」+ 重命名**
+
+* `POST /api/virtual-accounts/from-account`：把真实账号那份快照**反解**成虚拟账号的名单原文
+  （`rosterFromSnapshot`：中文名 → 英文键、星魂、逐角色光锥、开拓者头像），再走**同一个**
+  `buildVirtualAccount` —— 「完全一致」只有一份实现，而且新账号打开编辑器还能继续改。
+  实测：平铺 0+1 复制出来 88 角色 / 80 锥 / **83 个逐角色装备**，`skipped` 如实报出没能复制的 2 项；
+  **源账号只读不动**（`AccountStore` 的「只增不删」不变）。
+* `POST /api/virtual-accounts/:id/rename`：`renameVirtualAccount()` 三处同改
+  （账号 `nickname`、`roles[0].nickname`、快照 `basicInfo.nickname`）；只允许虚拟账号（真实账号 400）。
+* 界面按钮放在**真实账号自己的选项框**（`.account-card` 的 `.account-actions`）里，文案就叫
+  「新增同配置虚拟账号」；虚拟账号那张卡上多一个「重命名」。
+
+**⑥ 程序改名 + 图标**
+
+「崩坏：星穹铁道 抽卡推荐计算器」，描述「通过黑塔网 theherta.com 获取角色真实强度，提供抽卡推荐」
+（`<title>` / `<meta description>` / 顶栏 `<h1>` 与副标题 / `package.json` / `bin/serve.mjs` 启动横幅 / `README.md`）。
+顶栏图标从 `✦` 改成**角色头像**：默认 `The Herta`（大黑塔），点它开**角色头像选择器**（可搜索），
+选中后同改顶栏 + `<link id="appIcon">`，存 `localStorage['hsr.appIcon']`（存**英文键**，译名变了也不丢）。
+⚠️ 拿不到图标表时**保持 `index.html` 里的 emoji 兜底**，不写一个必然 404 的地址。
+
+**⑦ 同步黑塔网（三个症状各自的根因）**
+
+* **同步不了**：`tools/herta-availability.mjs` 顶部要读 `.snapref/starrailres-en-*.json`，
+  而这些文件**本机根本不存在**（`.snapref/` 被 gitignore，worktree 里连目录都没有）。
+  实测 `EXIT=1`、stderr「找不到 StarRailRes 副本…」；它在写盘**之前**就 return（
+  `unit-availability.json` sha 前后一致、没被写坏），但 `updateArchive()` 在
+  **第 ② 步**抛错 → 前面最慢的抓取全白花 → 用户重试 → 又白花。
+  修法：读不到参考表时**优雅降级**（沿用现有 `unit-availability.json` 或从 `archive.json` 的
+  `refs.availability` 复原），**退出 0** 并打印警告。
+* **旧数据不会跳过（顺带还有「最新也不刷新」）**：旧判据是 `count <= 0 || season === 全局最新版本`，
+  而 `count <= 0` 把「文件不存在」与「同步回来 0 条」混为一谈（12 个「该副本当时还没上线」的
+  永久空档每次重抓）；更严重的是取**全局**最新版本 —— 黑塔网四个副本**各用一套版本号**，
+  实测当时**真正在收投稿**的是 4.5 混沌回忆（09-28~11-02）与 4.5 虚构叙事（09-14~10-19），
+  而全局「最新」的 4.6 虚构叙事/混沌回忆**还没开始**，旧规则恰好把两个活跃期**永久跳过**。
+  新判据按「副本 × 期」各自判断：**抓 = 从未同步过 ∪ 该副本最新一期 ∪ 这一期还没结束**；
+  `expireDate` 由站点排期自带，测试把「今天」用 `HERTA_TODAY` 注入，所以判据可复现。
+  实测真跑一次：**4.5 混沌回忆 487 → 495（新增 8 条）** —— 旧代码永远抓不到这 8 条。
+* **耗时过长**：抓取全串行且 `fetch` 无超时（16 个组合实测 **76.4 s**，其中 12 个是纯浪费）。
+  现在**有上限并发（默认 4）+ 单请求超时（默认 20 s）**：6 个组合的抓取段 **17.3 s**、
+  整条 `updateArchive()` **18.7 s**。另外两处「耗时」是误诊：聚合实测只要 **1.4 s**
+  （旧文案写「这一步最慢，约 1-2 分钟」，把抓取的锅甩给了聚合，已改）；
+  availability 每次硬失败让抓取白花。
+* 顺手补上报告链路的三个洞：`runNode` 只在非 0 退出时用 stderr（退出 0 但打警告的提示全被吞）、
+  「有组合失败」时退出码 1 被静默吞掉（界面显示「完成」）、错误消息只取 stderr 第一行
+  （build 是先打标题再打堆栈，等于没说）。
+* ⚠️ **数据文件点名**：`theherta/archive.json`（提交进仓库，23,137,186 B）在真跑同步时被重写过
+  **已逐字节还原**（终态 sha 与 MAIN 一致）；`theherta/unit-availability.json` 从头到尾没被改过；
+  `theherta/raw/**` 与 `theherta/backup/**` 都被 gitignore（worktree 里的 raw 是为测试从 MAIN 复制的）。
+  真跑改出了一处**默认行为变严**：`herta-build.mjs` 的**缩水保护**（低于现有 `runCount` 的 50%
+  就拒绝覆盖 `archive.json`，`--allow-shrink` 绕过）—— 因为那是提交进仓库的成品。
+
+**⑧ 三项得分与「补金推荐分」的来源改成点击展开**（抽卡页 agent）
+
+角色得分详情大窗口里，强度 / 性价比 / 泛用性三个得分项目改成**可点击**（默认收起），
+点开才在该项下面就地展开它的来源；「补金推荐分」窗口的两块刻度表同样处理。
+数据契约不变（来源本来就在 `/conclusion` 与按需接口 `/packs` 里），
+`tools/check-advice-layout.mjs` 的断言同步改成「先点一下再量」。
+
+**⑨ 异相仲裁 · 绝境的默认权重 10 → 5**
+
+只动 `SCORING.envWeight['Anomaly Arbitration|plight']`（用户第 9 条原话「异相仲裁 · 绝境的默认权重改为5」）。
+绝境仍是最高的一档（5 : 1，其余四个都是 1）。⚠️ 改的是**默认值**：用户自己存过的覆盖不受影响，
+界面点「恢复默认」才回到 5。`tools/herta-test.mjs` 的断言与注释同步改。
+
+**⑩ 角色得分页面的权重 bug（两处）**
+
+1. **改了「关卡权重」不清 `packsCache`**：`advice-view.js` 里「隐金设置」与「抽卡权重」两条链
+   都有 `packsCache.clear()`（注释还写着「详情窗口那份『该角色的全部配队』是按总榜权重 + 隐金 +
+   抽卡权重缓存的，旋钮一变就必须作废」），**唯独关卡权重那条没有** —— 于是改完权重、总榜重算了，
+   角色得分详情/角色面板仍在吃**旧权重**的缓存分。
+2. **抽卡权重的文案过期**：那行状态仍印「；抽卡方案只用强度/性价比。」，而这条口径
+   **v4.6.97 已被用户推翻**（三项权重都进补金推荐分）。
+
+**实测**：`run-tests.mjs` **18 个套件全部通过** —— `e2e` 177、`herta` 106、
+`virtual-accounts` **43**（原 28）、新增 `herta-sync` **38**、`team-plan` 31、
+`herta-i18n-check`、`launcher` / `launcher-open`、`cache-policy` / `request-throttle` /
+`credential-vault` / `qr-*` / `devicefp` / `format-shapes` 全绿；CDP 布局套件见 §5.1。
 
 ---
 

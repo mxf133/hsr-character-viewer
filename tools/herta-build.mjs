@@ -12,12 +12,15 @@
 //
 // Usage: node tools/herta-build.mjs
 import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+// 名称归一化：投稿里的名字和 characters_config.json 有标点差异（见 limitedIfUnknown）。
+import { normalizeName } from '../src/server/archive.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
-const OUT = join(ROOT, 'theherta');
+/** 数据目录可用 HERTA_DATA_DIR 覆盖（与 herta-update.mjs / herta-fetch.mjs 一致）。 */
+const OUT = process.env.HERTA_DATA_DIR ? resolve(process.env.HERTA_DATA_DIR) : join(ROOT, 'theherta');
 const RAW = join(OUT, 'raw');
 
 const readJson = async (rel) => JSON.parse(await readFile(join(OUT, rel), 'utf8'));
@@ -87,6 +90,13 @@ const MIN_SEASON_RUNS = 20;
  * `stabilityDelta`，它按 min(n) 打折而不是二值地丢弃）。
  */
 const MIN_STABILITY_RUNS = 3;
+
+/**
+ * 覆盖 archive.json 的缩水下限：新的投稿数低于「现有 × 这个系数」就拒绝覆盖。
+ * 见写盘前的自检注释；`--allow-shrink` 可显式绕过。
+ */
+const SHRINK_FLOOR = 0.5;
+const ALLOW_SHRINK = process.argv.includes('--allow-shrink');
 
 /**
  * 档位的数值序（越大越好）。达标率画像要拿它和「该阵容的常见档位」比较，
@@ -246,14 +256,61 @@ const main = async () => {
   }
   const charAvail = availability.characters || {};
   const coneAvail = availability.lightCones || {};
-  const isLimitedChar = (name) => charAvail[name]?.limited === true;
-  const isLimitedCone = (name) => coneAvail[name]?.limited === true;
+
+  /**
+   * 「查不到这个单位的卡池归属」时按**限定**处理 —— 宁可高估成本。
+   *
+   * 为什么（2026-10-14，配合 herta-availability.mjs 的优雅降级）：
+   * unit-availability.json 是有可能**落后于数据集**的 —— 参考表 `.snapref/` 是
+   * gitignore 的本机文件，读不到时同步会沿用旧成品；新上线的角色/光锥就成了
+   * 「不在表里」。旧写法 `charAvail[name]?.limited === true` 把「不在表里」
+   * 一律当成**免费**，于是新限定 5★ 的金数被凭空抹掉，性价比被高估 —— 方向正好
+   * 与 `costOf` / `repairCostWithSiteGold` 一直坚持的「宁可高估成本」相反。
+   * 表里显式写 `limited: null`（星级没解析出来）同样按「不确定」= 限定处理，
+   * 这正是 herta-availability.mjs 注释里说的「调用方按不确定处理」。
+   *
+   * ⚠️ 但**必须先按归一化名查一次**：投稿里的名字和 characters_config.json
+   * 并不完全一致（实测全量 118,562 个位置里只有 3 个这类名字，但每一个都不能错判）：
+   *   `Trailblazer: Destruction`  vs 配置的 `Trailblazer (Destruction)`
+   *   `To Evernights Stars`       vs 配置的 `To Evernight's Stars`
+   *   `This Love Forever`         vs 配置里的标点差异
+   * 归一化名正是为此存在的（见 `src/server/archive.js` 的 normalizeName 注释）。
+   * 少了这一步，「开拓者」这种**免费**单位会被当成限定单位计 1~7 金。
+   */
+  const looseIndex = (table) => {
+    const map = new Map();
+    for (const [name, value] of Object.entries(table)) {
+      const key = normalizeName(name);
+      if (!map.has(key)) map.set(key, value);
+    }
+    return map;
+  };
+  const charLoose = looseIndex(charAvail);
+  const coneLoose = looseIndex(coneAvail);
+  const unknownUnits = new Set();
+  const limitedIfUnknown = (table, loose, name) => {
+    const entry = table[name] ?? loose.get(normalizeName(name)) ?? null;
+    if (!entry || entry.limited === null || entry.limited === undefined) {
+      unknownUnits.add(name);
+      return true;
+    }
+    return entry.limited === true;
+  };
+  const isLimitedChar = (name) => limitedIfUnknown(charAvail, charLoose, name);
+  const isLimitedCone = (name) => limitedIfUnknown(coneAvail, coneLoose, name);
 
   let files = [];
   try {
     files = (await readdir(join(RAW, 'submissions'))).filter((f) => f.endsWith('.json'));
   } catch {
     console.error('找不到 theherta/raw/submissions —— 先运行 node tools/herta-fetch.mjs');
+    process.exitCode = 1;
+    return;
+  }
+  // 空目录绝不能写出一个空的 archive.json 把成品覆盖掉。
+  if (!files.length) {
+    console.error(`theherta/raw/submissions 里一个投稿文件都没有 —— 拒绝覆盖现有 archive.json。`);
+    console.error('先运行 node tools/herta-fetch.mjs 或 node tools/herta-update.mjs 把原始数据抓回来。');
     process.exitCode = 1;
     return;
   }
@@ -845,6 +902,10 @@ const main = async () => {
       lightConePaths: lcPaths,
       popularLightCones: popularLc,
       availability: { characters: charAvail, lightCones: coneAvail },
+      // 数据集里出现、但成品表（unit-availability.json）查不到卡池归属的单位。
+      // 它们这一趟**按限定保守计成本**（见 `limitedIfUnknown`）。这个数组一旦变长，
+      // 就说明参考表 `.snapref/` 缺失导致成品表落后了，该去跑 tools/i18n-fetch-en.mjs。
+      availabilityUnknown: [...unknownUnits].sort(),
       // 角色 / 光锥**首次出现在哪个版本**（用户第 6 条「新角色缺少旧版本的数据」的判据）：
       // 总榜用「这个整包当时还不存在」来判定旧版本不参与平均，判据就是它。
       // 数据从 3.0 开始，所以 3.0 之前就有的老角色一律是 '3.0'（= 当时就存在）。
@@ -870,10 +931,41 @@ const main = async () => {
 
   await mkdir(OUT, { recursive: true });
   const text = JSON.stringify(archive);
+
+  /**
+   * 覆盖前自检：投稿数**不能比现有 archive.json 少太多**（2026-10-14 加）。
+   *
+   * 为什么需要：`archive.json`（23 MB）是**提交进仓库**的成品，而 `raw/` 是
+   * gitignore 的原始数据 —— 新克隆的机器上 `raw/` 是空的。只抓了一半就断网、
+   * 或者刚克隆完就点「同步」，这一趟聚合出的 archive 会小得可怜，
+   * 直接覆盖就把整份可用的数据集**写坏**了（用户看到的正是「同步之后反而没数据」）。
+   * 缩水超过一半一律拒绝覆盖，并在报错里说清怎么救；确认要接受就加 `--allow-shrink`。
+   */
+  const previous = await readFile(join(OUT, 'archive.json'), 'utf8')
+    .then((t) => JSON.parse(t)).catch(() => null);
+  const previousRuns = Number(previous?.runCount);
+  const shrinking = Number.isFinite(previousRuns) && previousRuns > 0
+    && runCount < previousRuns * SHRINK_FLOOR;
+  if (shrinking && !ALLOW_SHRINK) {
+    console.error(`聚合结果比现有 archive.json 少太多，已拒绝覆盖：`
+      + `新的 ${runCount} 条 vs 现有的 ${previousRuns} 条`
+      + `（raw/submissions 里只有 ${files.length} 个文件）。`);
+    console.error('这通常说明原始数据不完整：新克隆还没跑过 herta-fetch.mjs，或者这一趟只抓了一部分组合。');
+    console.error('现有 theherta/archive.json 保持不动。确认要接受缩水就加 --allow-shrink。');
+    process.exitCode = 1;
+    return;
+  }
+
   await writeFile(join(OUT, 'archive.json'), text, 'utf8');
   const mb = (Buffer.byteLength(text) / 1024 / 1024).toFixed(2);
   console.log(`已写出 theherta/archive.json  ${mb} MB`);
   console.log(`  战绩 ${runCount} 条（去重后）`);
+  if (unknownUnits.size) {
+    console.warn(`  ⚠ ${unknownUnits.size} 个单位的卡池归属查不到（已按「限定」保守计成本）：`
+      + `${[...unknownUnits].sort().slice(0, 12).join('、')}${unknownUnits.size > 12 ? ' …' : ''}`);
+    console.warn('    → 多半是 theherta/unit-availability.json 落后了，'
+      + '跑 node tools/i18n-fetch-en.mjs 补上 .snapref 参考表再同步一次。');
+  }
   console.log(`  角色 ${archive.counts.characters} 个，模式 ${archive.counts.modes} 个，版本 ${seasonModes.size} 个`);
   for (const [mode, m] of Object.entries(modes)) {
     for (const [stage, s] of Object.entries(m.stages)) {

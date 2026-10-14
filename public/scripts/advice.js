@@ -203,10 +203,50 @@ const putRank = (map, keys, rank, zhToEn, aliasTest, allNames) => {
   }
 };
 
-/** 每个角色的星魂等级（中英键都存；三月七各命途同步，见 `putRank`）。 */
+/**
+ * 每个角色的星魂等级（中英键都存；三月七各命途同步，见 `putRank`）。
+ *
+ * ⚠️ **开拓者在「只有一行」时也要摊到全部命途**（用户 2026-10-14 第 4 条：
+ * 「开拓者的角色信息仅包含开拓者本体，**视为所有开拓者的命途均拥有且满星魂**」）。
+ * 虚拟账号的快照里开拓者就是那一行（`name` = 「开拓者」、`rank` = 6、
+ * `id` ∈ 8001..8010，见 `src/server/virtual-accounts.js` 的 `TRAILBLAZER_AVATARS`）。
+ * 实测：单行开拓者时 `eidolonsOf` 对 5 个命途键**全部返回 undefined**（改成五行才都是 6），
+ * 于是「满星魂」这个前提被悄悄丢掉。
+ *
+ * ⚠️ **判据是「整个快照里开拓者的行数 ≤ 1」**，不是「这一行是开拓者」：
+ * 真实账号（米游社）会给出多个命途的行、各自有各自的星魂等级，那时**必须保持逐命途**
+ * （否则会把 E2 的命途抬成 E6，补金推荐跟着算错）。这一条与 `ownedCharacters` 的
+ * 「任一命途 = 全部命途」是同一套口径（HANDOFF §4.4）：拥有关系本来就已摊平，
+ * 只是星魂在「多行」时保留逐命途的真相。
+ */
 export const eidolonsOf = (snapshot, zhToEn = null, allNames = null) => {
   const map = new Map();
-  for (const raw of charactersOf(snapshot)) {
+  const rows = charactersOf(snapshot);
+  const trailblazerRows = rows.filter((raw) => TRAILBLAZER_NAME.test(String(raw?.name || ''))
+    || isTrailblazerId(raw?.id));
+  /**
+   * 开拓者全部命途键的写法集合。
+   *
+   * ⚠️ **不能只靠 `putRank` 的 `aliasTest` 分支**：那条分支要从 `allNames` 里按名字
+   * 匹配，而真实的调用点 `advice-view.js` 调的是 `eidolonsOf(snapshot, zhToEn)`
+   * ——**没有第三个参数**（实测：单行开拓者在那种情况下 5 个命途键全是 `undefined`）。
+   * 所以这里直接从中英映射两个方向自己收集：`zhToEn` 的**键**是中文名、**值**是数据集
+   * 英文键，两边都按 `TRAILBLAZER_NAME` 过一遍即可（`三月七` 那套仍走原来的分支）。
+   */
+  const trailblazerKeys = () => {
+    const out = new Set();
+    for (const [zh, en] of Object.entries(zhToEn || {})) {
+      if (TRAILBLAZER_NAME.test(zh)) out.add(zh);
+      if (TRAILBLAZER_NAME.test(String(en ?? ''))) out.add(String(en));
+    }
+    for (const name of allNames || []) {
+      if (TRAILBLAZER_NAME.test(String(name))) out.add(String(name));
+    }
+    return [...out];
+  };
+  const singleTrailblazer = trailblazerRows.length <= 1;
+  const tbKeys = singleTrailblazer ? trailblazerKeys() : [];
+  for (const raw of rows) {
     const name = raw?.name;
     if (typeof name !== 'string' || !name.trim()) continue;
     const trimmed = name.trim();
@@ -214,6 +254,11 @@ export const eidolonsOf = (snapshot, zhToEn = null, allNames = null) => {
     const keys = [trimmed];
     if (zhToEn?.[trimmed]) keys.push(zhToEn[trimmed]);
     putRank(map, keys, rank, zhToEn, (key) => MARCH_7TH_NAME.test(key), allNames);
+    if (singleTrailblazer
+      && (TRAILBLAZER_NAME.test(trimmed) || isTrailblazerId(raw?.id))) {
+      // 键已经自己收集好了，所以 `aliasTest` 传 null（不再走那条依赖 `allNames` 的分支）。
+      putRank(map, [...keys, ...tbKeys], rank, zhToEn, null, null);
+    }
   }
   return map;
 };
@@ -750,17 +795,22 @@ export const SCORING = {
   //
   // 2026-10 第三次调整（用户直接给定的五档，取代此前所有推导值）：
   //
-  //     异相仲裁 · 绝境 10 / 异相仲裁 1 / 末日幻影 1 / 混沌回忆 1 / 虚构叙事 1
+  //     异相仲裁 · 绝境 5 / 异相仲裁 1 / 末日幻影 1 / 混沌回忆 1 / 虚构叙事 1
   //
   // 口径也比之前更直白：**只有「绝境王棋关」是关键副本，其余四个一视同仁**。
   // 所以不要再按 1.875 / 1.75 / 1 / 0.8 / 0.5 那种「拉开间距」的写法去改——
   // 用户要的是「绝境占绝对主导，其它四个平等」，界面上的两组输入框默认就是这组数
   // （`ENV_WEIGHT_ROWS` + `envWeightDefaults()`），用户随时可以自己改。
   //
+  // ⚠️ 用户 2026-10-14 第 9 条：「**异相仲裁 · 绝境的默认权重改为 5**」——
+  // 原来是 **10**（= 其余四个之和的两倍），现在降到 5（仍是最高的那一档，但不再
+  // 压倒性地主导排序）。改的是**默认值**：用户自己存的覆盖（localStorage 的
+  // `hsr.advice.weights.frontier`）不受影响，界面上点「恢复默认」才会回到 5。
+  //
   // 这张表只是**默认值**：界面给了两套独立的覆盖（总榜 / 方案，见 WEIGHT_SCOPES），
   // 两边都不动的时候都读这里，所以「默认口径」永远只有一份。
   envWeight: {
-    'Anomaly Arbitration|plight': 10,
+    'Anomaly Arbitration|plight': 5,
     'Anomaly Arbitration|': 1,
     'Apocalyptic Shadow|': 1,
     'Memory of Chaos|': 1,

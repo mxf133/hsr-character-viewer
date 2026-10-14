@@ -36,6 +36,10 @@ const suites = [
   // 虚拟账号的预设与自定义名单（用户 2026-10-13 第 3、4 条）：直接读真实数据集，
   // 不碰 DPAPI 凭证、也不起 HTTP 服务（接口那一层由 `e2e-test.mjs` 钉）。
   ['虚拟账号预设与自定义名单', 'virtual-accounts-test.mjs'],
+  // 「同步黑塔网」的跳过判据 / 参考表降级 / 聚合缩水保护（用户 2026-10-14 第 7 条）。
+  // ⚠️ **完全不联网**：夹具在 `theherta/backup/sync-test-<pid>/`（gitignore）里自造自清，
+  // 「今天」由 `HERTA_TODAY` 注入，所以判据可复现、不会过一个月就假红。
+  ['同步黑塔网（跳过判据 / 降级 / 缩水保护）', 'herta-sync-test.mjs'],
   ['中文名称映射 (对照游戏内中文)', 'herta-i18n-check.mjs'],
   ['端到端 HTTP / 静态资源 / 会话', 'e2e-test.mjs'],
   ['启动器 start.bat 自检', 'launcher-test.mjs'],

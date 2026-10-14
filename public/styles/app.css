@@ -102,17 +102,67 @@ body {
 
 .brand { display: flex; align-items: center; gap: 14px; }
 
+/* 品牌图标 = **角色头像**（用户 2026-10-14 第 6 条：「图标默认为大黑塔的角色头像，
+   点击可以更换」）。
+   ⚠️ 它是一个 `<button>`（可点 → 开更换选择器、键盘可达），所以要把浏览器给按钮的
+   默认外观（边框 / 内边距 / 背景 / 字体）全部压掉，否则会和原来那个 `<span>` 长得不一样。
+   头像本身由 `app.js` 塞一个 `<img>` 进来（`.brand-mark-img`）；拿不到图标前显示
+   `.brand-mark-glyph` 里的 ✦。 */
 .brand-mark {
   display: grid;
   place-items: center;
   width: 42px;
   height: 42px;
+  padding: 0;
+  border: 0;
   border-radius: 12px;
+  overflow: hidden;
+  font: inherit;
   font-size: 20px;
   color: #14203a;
+  cursor: pointer;
   background: linear-gradient(140deg, var(--gold-bright), var(--gold));
   box-shadow: 0 0 22px rgba(240, 198, 116, 0.45);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
 }
+.brand-mark:hover { transform: translateY(-1px); box-shadow: 0 0 26px rgba(240, 198, 116, 0.62); }
+.brand-mark:focus-visible { outline: 2px solid var(--gold-bright); outline-offset: 2px; }
+/* 头像是 256×256 的方图，铺满整个圆角方块即可（`object-fit` 防拉伸）。 */
+.brand-mark-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* 头像选择器（顶栏图标点开的那个）：与「隐金设置」同一套浮层尺寸，里面是可搜索的
+   角色头像网格。⚠️ 单独一个 class，不要复用 `.advice-gold-*`（那是抽卡页的窗口）。 */
+.icon-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 10px;
+}
+.icon-picker-item {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 8px 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.icon-picker-item:hover { border-color: var(--gold); color: var(--text); }
+.icon-picker-item.is-active { border-color: var(--gold-bright); color: var(--gold-bright); }
+.icon-picker-item img,
+.icon-picker-item .icon-picker-fallback {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 18px;
+}
+.icon-picker-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
 
 .brand-text h1 {
   margin: 0;

@@ -1,8 +1,8 @@
 {
-  "name": "hsr-character-viewer",
-  "version": "4.6.98",
+  "name": "hsr-warp-advisor",
+  "version": "4.6.99",
   "private": true,
-  "description": "崩坏：星穹铁道 角色信息查询工具 — 米游社扫码登录 + 官方战绩接口，零第三方依赖",
+  "description": "崩坏：星穹铁道 抽卡推荐计算器 — 通过黑塔网 theherta.com 获取角色真实强度，提供抽卡推荐，零第三方依赖",
   "type": "module",
   "license": "MIT",
   "engines": {

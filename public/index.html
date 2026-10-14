@@ -3,9 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="崩坏：星穹铁道 角色信息查询工具 — 米游社扫码登录，查询开拓者总览与角色详情">
-  <title>星穹铁道 · 角色信息</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🚄</text></svg>">
+  <meta name="description" content="通过黑塔网 theherta.com 获取角色真实强度，提供抽卡推荐">
+  <title>崩坏：星穹铁道 抽卡推荐计算器</title>
+  <!-- 站点图标（用户 2026-10-14 第 6 条）：默认是**大黑塔**的角色头像，点顶栏那个图标可以换。
+       ⚠️ 这里给的是**兜底的 emoji**：真正的头像要等 `/api/archive` 拿到图标表之后由
+       `app.js` 动态改写这个 `<link>` 的 href（`id="appIcon"` 就是给它用的，别改名）。
+       初值刻意不写某个角色的 CDN 地址 —— 数据集还没采集时它必然 404，而 emoji 一定画得出来。 -->
+  <link id="appIcon" rel="icon"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🚄</text></svg>">
   <link rel="stylesheet" href="/styles/app.css">
   <!-- 性价比详情**大窗口**的尺寸与内容中和规则。⚠️ 必须在 app.css **之后**：
        `.advice-tip-card` 与 app.css 的 `.char-panel-card` 同特异度（0,1,0），
@@ -17,10 +22,16 @@
 
   <header class="topbar">
     <div class="brand">
-      <span class="brand-mark" aria-hidden="true">✦</span>
+      <!-- 品牌图标 = **角色头像**（用户 2026-10-14 第 6 条：「图标默认为大黑塔的角色头像，
+           点击可以更换」）。默认内容由 `app.js` 填（数据集里的 `The Herta` = 大黑塔），
+           这里的 ✦ 只是加载完成前的占位。做成 `<button>` 是因为它可点（开选择器），
+           键盘 Tab 也能到；`id="brandMark"` 是 `app.js` 的接线点，别改名。 -->
+      <button type="button" class="brand-mark" id="brandMark" aria-haspopup="dialog"
+        title="点击更换程序图标（默认大黑塔）"><span class="brand-mark-glyph"
+        aria-hidden="true">✦</span></button>
       <div class="brand-text">
-        <h1>崩坏：星穹铁道 <span>角色信息</span></h1>
-        <p>米游社扫码登录 · 官方战绩接口</p>
+        <h1>崩坏：星穹铁道 <span>抽卡推荐计算器</span></h1>
+        <p>通过黑塔网 theherta.com 获取角色真实强度 · 提供抽卡推荐</p>
       </div>
     </div>
     <div class="topbar-actions">

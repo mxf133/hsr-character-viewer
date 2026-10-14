@@ -1424,8 +1424,12 @@ check('副本权重与尺子：短码 / 站点全名都认，异相仲裁骑士�
   // 早先只认全名 → 5 个副本**全部**退回默认 1，权重一条都没生效
   //（「异相仲裁最关键、虚构叙事最低」是用户点名的口径，一直没落地）。
   //
-  // 2026-10 用户直接给定五档默认值：**异相仲裁 · 绝境 10，其余四个一律 1**
-  //（口径从「拉开间距」改成「绝境占绝对主导，其它四个平等」）。
+  // 2026-10 用户直接给定五档默认值，**2026-10-14 又改了绝境那一档**：
+  //   · v4.6.98 之前：异相仲裁 · 绝境 **10**，其余四个一律 1（「绝境占绝对主导」）；
+  //   · v4.6.99 起（用户 2026-10-14 第 9 条原话「异相仲裁 · 绝境的默认权重改为 5」）：
+  //     绝境 **5**，其余四个仍是 1。绝境依旧是最高的一档（5 : 1），只是不再压倒性地
+  //     主导排序 —— 所以下面「必须明显压过其它副本」那条判据也从 `>= 5` 收到 `>= 4`。
+  //   ⚠️ 改的是**默认值**：用户自己存过的权重覆盖不受影响（界面点「恢复默认」才回到 5）。
   // 这里钉住数值、相对次序与「短码 / 站点全名两种写法都认」三件事。
   assert.equal(envWeightOf('pf', ''), 1);
   assert.equal(envWeightOf('Pure Fiction', ''), 1);
@@ -1433,15 +1437,15 @@ check('副本权重与尺子：短码 / 站点全名都认，异相仲裁骑士�
   assert.equal(envWeightOf('Memory of Chaos', ''), 1);
   assert.equal(envWeightOf('as', ''), 1);
   assert.equal(envWeightOf('aa', ''), 1);
-  assert.equal(envWeightOf('aa', 'plight'), 10);
-  assert.equal(envWeightOf('Anomaly Arbitration', 'plight'), 10);
+  assert.equal(envWeightOf('aa', 'plight'), 5);
+  assert.equal(envWeightOf('Anomaly Arbitration', 'plight'), 5);
   assert.equal(envWeightOf('nope', ''), 1, '不认识的副本退回默认值');
   assert.deepEqual(
     [['aa', 'plight'], ['aa', ''], ['as', ''], ['moc', ''], ['pf', '']].map(([m, s]) => envWeightOf(m, s)),
-    [10, 1, 1, 1, 1],
+    [5, 1, 1, 1, 1],
     '绝境最高、其余四个相同',
   );
-  assert.ok(envWeightOf('aa', 'plight') / envWeightOf('as', '') >= 5,
+  assert.ok(envWeightOf('aa', 'plight') / envWeightOf('as', '') >= 4,
     '绝境王棋关的权重必须明显压过其它副本');
 
   // 尺子：异相仲裁按关卡分。骑士关的判据是轮次（和混沌回忆同一把尺子），

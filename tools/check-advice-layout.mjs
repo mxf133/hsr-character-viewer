@@ -116,6 +116,20 @@ await send('Runtime.enable');
 // 这一条以前没做，所以下面那两条「角色面板两张图」的断言在本机**长期是红的**
 // （显示「图未加载」），被当成环境问题放过了 —— 其实断言本身是对的，缺的是这一步。
 await send('Emulation.setFocusEmulationEnabled', { enabled: true });
+// ⚠️ **必须关掉 HTTP 缓存**（2026-10-13 第 8 条那一轮加的，实测踩过）：
+// `src/server/static.js` 对 `public/scripts/**` 发的是
+// `Cache-Control: public, max-age=604800, immutable` —— 那是给生产部署用的正确设置，
+// 但它意味着**同一个调试浏览器 profile 会把脚本缓存整整一周**。
+// 症状：在 worktree 里改了 `advice-view.js`、服务端（实测逐个字节相同）确实发了新文件，
+// 而页面跑的还是旧脚本 —— 表现为「新加的 DOM 结构与事件全都不存在」，
+// 看起来像**代码没生效**（本轮为此多花了一整轮：先怀疑探针、再怀疑服务端，
+// 最后比对「服务端字节 vs 本地字节」才定位到浏览器缓存）。
+// 更阴的一点：它**只影响部分断言**（只有依赖新代码的那几条红），很容易被当成「别的旧问题」。
+// `Network.setCacheDisabled: true` 让整轮回归都从磁盘现取，与 `immutable` 无关。
+// ⚠️ 它必须在**每次 `Page.navigate` 之前**生效，所以放在这里（脚本最早的一次导航之前），
+//    之后不再关闭 —— 这个调试 profile 就是用来跑回归的。
+await send('Network.enable');
+await send('Network.setCacheDisabled', { cacheDisabled: true });
 await send('Page.navigate', { url: URL_TO_OPEN });
 await sleep(3500);
 
@@ -1380,19 +1394,58 @@ if (!tipTarget) {
     const vh = document.documentElement.clientHeight;
     const sub = tip.querySelector('.advice-value-tip-sub');
     const kids = sub ? [ ...sub.children ] : [];
-    const idxOf = (sel) => kids.findIndex((k) => k.matches(sel));
-    // 贡献值来源表的取数方式与改前一致（表结构没变，只换了容器）。
-    // ⚠️ 用户 2026-10-13 第 1、2 条之后这个浮层里有**两张**表（class 都是
-    //    advice-value-tip-table）：上面那张是「角色得分 = 强度 + 性价比 + 泛用性」
-    //    （在 advice-score-split 里），下面那张才是**逐关卡来源**主表。
-    //    主表额外带 is-source，所以这里必须按它选 —— 只写类名会拿到上面那张，
+    // ⚠️ 2026-10-13 第 8 条（本轮）之后「贡献值来源表」**不再是 sub 的直接子节点**：
+    //    它被搬进了三个分项表里「性价比」那一行的就地折叠块（scoreBreakdownTable 的
+    //    tipScoreDetails → tr.advice-detail-row > td > .advice-detail-box > .advice-detail）。
+    //    只按直接子节点取的话 order.table 恒为 -1，于是 orderOk（表在「全部配队」之前、
+    //    脚注在最后）**永远红**，看起来像顺序回归。
+    //    改成按**文档顺序**在整棵 sub 子树里找 —— 次序判据要的本来就是「谁在前谁在后」，
+    //    层级深浅不是它关心的事（docs/CDP布局套件.md §5 第 5 条：别把结构当契约）。
+    //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+    const subAll = sub ? [ ...sub.querySelectorAll('*') ] : [];
+    const idxOf = (sel) => {
+      const hit = [ ...(sub?.querySelectorAll(sel) || []) ][0];
+      return hit ? subAll.indexOf(hit) : -1;
+    };
+    // 贡献值来源表的取数方式与改前一致（表结构没变，只换了容器与位置）。
+    // ⚠️ 用户 2026-10-13 第 1、2 条之后这个浮层里有**三张**表（class 都是
+    //    advice-value-tip-table）：最上面那张是「角色得分 = 强度 + 性价比 + 泛用性」
+    //    （带 is-score-scale），另外两张分别是强度来源与性价比逐关卡来源。
+    //    性价比那张额外带 is-source，所以这里必须按它选 —— 只写类名会拿到最上面那张，
     //    于是列数 / 因子 / 合计 / 第一格卡片等**十几条断言会静默量错对象**。
     //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+    //--------------------------------------------------- ① 折叠块的默认态与展开
+    // ⚠️ 2026-10-13 第 8 条（本轮）之后**取表的方式变了**：三个分项的来源（强度表 /
+    //    性价比逐关卡表 / 泛用性名单）默认**全部收在就地折叠块里**（hidden），
+    //    不再铺在窗口正文中。所以这里的次序是：
+    //      ① 先在**收起状态**下量「三个折叠块默认都是关着的」——那是用户原话
+    //         「节省界面的空间」在 DOM 上的唯一证据；
+    //      ② 再**真的点一下**每个 .advice-detail-toggle（合成 click 走的是
+    //         advice-view.js 里挂在容器上的那个委托监听器），等它们展开；
+    //      ③ 最后才按 class 选那三张表 / 名单。
+    //    改前这里直接取 .advice-value-tip-table.is-source 就拿到了 —— 折叠之后那样写会
+    //    得到 null，然后列数 / 因子 / 合计 / 第一格卡片等**十几条断言会静默量错对象**
+    //    （或者全红），看起来像布局回归。
+    //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+    const toggles = [ ...tip.querySelectorAll('.advice-detail-toggle') ];
+    const detailCollapsed = toggles.map((b) => {
+      const d = b.parentElement?.querySelector('.advice-detail');
+      return { expanded: b.getAttribute('aria-expanded'), hidden: d ? d.hidden : null,
+        // 收起时那一块在几何上必须是**零高**（hidden 生效）；只改了属性而 CSS 没压住
+        // display 的话这里会是一个正数 —— 那正是「折叠静默失效」的症状。
+        h: d ? Math.round(d.getBoundingClientRect().height) : null };
+    });
+    for (const b of toggles) b.click();
+    const detailExpanded = toggles.map((b) => ({
+      expanded: b.getAttribute('aria-expanded'),
+      hidden: b.parentElement?.querySelector('.advice-detail')?.hidden ?? null,
+    }));
+    const scoreScale = tip.querySelector('.advice-value-tip-table.is-score-scale');
     const table = tip.querySelector('.advice-value-tip-table.is-source');
-    const splitTable = tip.querySelector('.advice-score-split .advice-value-tip-table');
+    const splitTable = scoreScale;
     // 强度来源那张表（用户 2026-10-13：三项都要有「完整得分来源」）——它有自己的 class。
     const strengthTable = tip.querySelector('.advice-value-tip-table.is-strength-source');
-    const strengthTrs = [ ...(strengthTable?.querySelectorAll('tbody tr') || []) ];
+    const strengthTrs = [ ...(strengthTable?.querySelectorAll(':scope > tbody > tr') || []) ];
     // 泛用性的来源块：一份队友名单 + 一句归一换算（它**不是**表格，是名单）。
     const versBlock = [ ...tip.querySelectorAll('.advice-score-split') ]
       .find((b) => /^泛用性来源/.test(b.querySelector('.advice-score-split-title')?.textContent || ''));
@@ -1401,8 +1454,17 @@ if (!tipTarget) {
     //    用分隔符切会把一个名字切成两个（假红）。
     const versMemberCount = versBlock
       ? versBlock.querySelectorAll('.advice-vtip-member').length : 0;
-    const trs = [ ...(table?.querySelectorAll('tbody tr') || []) ];
-    const cellsOf = (tr) => [ ...tr.children ].map((td) => td.textContent);
+    // ⚠️ :scope > tbody > tr 绝对定位：性价比来源表整张嵌在分项表的 td 里，
+    //    后代选择器会把外层表的行一起数进来（下面 dataTrs 的判据全部跟着错位）。
+    const trs = [ ...(table?.querySelectorAll(':scope > tbody > tr') || []) ];
+    // ⚠️ **数据行**：必须同时排掉「合计行」与「折叠行」。
+    //    用户 2026-10-13 第 8 条给三个分项各加了一行 tr.advice-detail-row
+    //    （来源就展开在那一行里），它是 tbody 的 tr —— 不排掉的话 rows 会多出几行、
+    //    而 firstCells / firstColSeasons / seasonColOk（「行数 = 首列版本小字的个数」）
+    //    会集体错位（折叠行没有第一格关卡名），看起来像「第一列漏了版本号」。
+    //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+    const dataTrs = trs.filter((tr) => !tr.classList.contains('is-total')
+      && !tr.classList.contains('advice-detail-row'));    const cellsOf = (tr) => [ ...tr.children ].map((td) => td.textContent);
     const totalRow = trs.find((tr) => tr.classList.contains('is-total'));
     const avatars = [ ...tip.querySelectorAll('.advice-team-avatar') ];
     // ⚠️ 卡片里的光锥图标类名是 .advice-plan-team-cone（feat/team-plan 改的名，
@@ -1443,9 +1505,18 @@ if (!tipTarget) {
       // 它是这个窗口的**第一层拆解**：强度 / 性价比 / 泛用性三个分项 + 归一后的得分 +
       // 抽卡权重 + 贡献，合计行的数必须与标题上那个数**逐字相同**（同一个 packScoreText）。
       // ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
-      splitHeaders: [ ...(splitTable?.querySelectorAll('th') || []) ].map((n) => n.textContent),
+      splitHeaders: [ ...(splitTable?.querySelectorAll(':scope > thead > tr > th') || []) ]
+        .map((n) => n.textContent),
+      // ---- 折叠块（用户 2026-10-13 第 8 条）------------------------------------------
+      // 收起态在上面、**点之前**量的；展开态是点完之后量的。两串一起带出来，
+      // 这样「默认收起」与「点一下真的展开」两条判据各有自己的证据。
+      detailCollapsed,
+      detailExpanded,
       // 强度来源表（用户 2026-10-13）：列名、逐关卡行数、合计那一行。
-      strengthHeaders: [ ...(strengthTable?.querySelectorAll('th') || []) ].map((n) => n.textContent),
+      // ⚠️ 一律用 :scope > 绝对定位（与上面 splitHeaders 同一条理由）：这张表整张
+      //    嵌在分项表的 td 里，后代选择器会把外层表的 th / tr 一起数进来。
+      strengthHeaders: [ ...(strengthTable?.querySelectorAll(':scope > thead > tr > th') || []) ]
+        .map((n) => n.textContent),
       strengthRowCount: strengthTrs.filter((tr) => !tr.classList.contains('is-total')).length,
       strengthTotalRow: (() => {
         const tr = strengthTrs.find((r) => r.classList.contains('is-total'));
@@ -1460,8 +1531,17 @@ if (!tipTarget) {
         return Number((t.match(/共\\s*(\\d+)\\s*个/) || [])[1]);
       })(),
       splitTotal: String(splitTable
-        ?.querySelector('tr.is-total td:last-child')?.textContent || ''),
-      splitRowCount: splitTable ? splitTable.querySelectorAll('tbody tr').length : 0,
+        ?.querySelector(':scope > tbody > tr.is-total > td:last-child')?.textContent || ''),
+      // ⚠️ 只数**分项行 + 合计行**（= 4），必须排掉 .advice-detail-row（用户 2026-10-13
+      //    第 8 条加的那些「来源」容器行）：它们也是 tbody 里的 tr，不排掉时这一格会数出
+      //    6 而不是 4，而 splitOk 里的 splitRowCount === 4 就永远红。
+      //    ⚠️ **合计行不能一起排掉**：splitOk 数的是「3 个分项 + 1 个合计」。
+      // ⚠️ 同时必须用 :scope > 绝对定位：来源表整张嵌在分项表的 td 里，
+      //    后代选择器会把三张表的行**全部**数进来（实测 18 行）。
+      splitRowCount: [ ...(splitTable?.querySelectorAll(':scope > tbody > tr') || []) ]
+        .filter((tr) => !tr.classList.contains('advice-detail-row')).length,
+      splitDetailRows: splitTable
+        ? splitTable.querySelectorAll(':scope > tbody > tr.advice-detail-row').length : 0,
       // 逐关卡来源那张表的合计该等于什么：**性价比分项的原始分**（整包对象的 total），
       // 不再是徽标上的角色得分（用户 2026-10-13 第 2 条之后两者不是同一个数：
       // 实测合计 +1098 而徽标 +96）。整包对象由 frontierTip() 挂在节点上（tip.__unit）。
@@ -1484,7 +1564,7 @@ if (!tipTarget) {
       //     「关卡与关卡之间的线」现在就是表格的行线（第 ① 条的原话是「用已有的线」）。
       teamCaptionLeft: tip.querySelectorAll('.advice-team-caption').length,
       teamEnvLeft: tip.querySelectorAll('.advice-team-env').length,
-      firstCells: trs.filter((tr) => !tr.classList.contains('is-total')).map((tr) => {
+      firstCells: dataTrs.map((tr) => {
         const cell = tr.children[0];
         // 一格里第一段文字的**实际顶边 / 中心**（用 Range 取内容盒，不是格子的盒子）。
         const textTopOf = (node) => {
@@ -1536,7 +1616,7 @@ if (!tipTarget) {
       tipHeight: Math.round(tip.getBoundingClientRect().height),
       // ④ 第一列的版本小字：**逐行取自该行第一格**，而不是全窗口数一遍 ——
       //    要求「第一列的文本里必须出现该关卡的版本号」，落点就在这一格。
-      firstColSeasons: trs.filter((tr) => !tr.classList.contains('is-total'))
+      firstColSeasons: dataTrs
         .map((tr) => tr.children[0]?.querySelector('.tip-label-season')?.textContent || ''),
       // 用户 2026-10-11（详情页第 1 条）：「权重 / 表现 / 金数 / 跨版本发挥 / 贡献这几列的
       // 内容需要居中，并放大一点字体（**不包括**关卡列）」——这里量两列的实际字号，
@@ -1568,7 +1648,7 @@ if (!tipTarget) {
       notes: tip.querySelectorAll('.advice-value-tip-note').length,
       noteTexts: [ ...tip.querySelectorAll('.advice-value-tip-note') ].map((n) => n.textContent),
       headers: [ ...(table?.querySelectorAll('thead th') || []) ].map((th) => th.textContent),
-      rows: trs.filter((tr) => !tr.classList.contains('is-total')).map(cellsOf),
+      rows: dataTrs.map(cellsOf),
       totalRow: totalRow ? cellsOf(totalRow) : null,
       docOverflow: document.scrollingElement.scrollWidth > document.scrollingElement.clientWidth,
     };
@@ -1817,6 +1897,24 @@ if (!tipTarget) {
     && JSON.stringify(tipReport.splitHeaders) === JSON.stringify(SPLIT_HEADERS)
     && tipReport.splitRowCount === 4
     && tipReport.splitTotal === headValue;
+  // ---- 折叠块：默认收起 + 点一下真的展开（用户 2026-10-13 第 8 条）----------------------
+  //
+  // 用户原话：「强度/性价比/泛用性三个得分项目，都可以点击后显示来源，节省界面的空间，
+  // 并且方便用户查阅」。「节省界面的空间」这一半**只能**靠「默认收起」来验，所以它是一条
+  // 独立判据：三个块必须都是 `aria-expanded="false"` + `hidden === true` + **零高**
+  // （最后那一条是防「属性改了但 CSS 没压住 display」——那种折叠在视觉上等于没做，
+  //  而前两条仍然会是绿的）。
+  // 「都可以点击」那一半：探针在上面**真的点了一下**每个按钮，所以展开态也一起判。
+  // ⚠️ 条数按 3 判（三个分项各一个）：泛用性名单在某些载荷下拿不到（`slimFrontierUnit`
+  //    只给前若干条），那时它**没有折叠块**（不给点了没反应的按钮），条数会少于 3 ——
+  //    所以判据写成「至少 1 个、且**所有存在的都收起/都展开**」，并把实测条数印出来。
+  //    这样它既不会因为数据缺一项而假红，也不会放过「一个块都没做出来」。
+  const collapsed = tipReport?.detailCollapsed || [];
+  const expanded = tipReport?.detailExpanded || [];
+  const collapseOk = collapsed.length >= 1
+    && collapsed.every((d) => d.expanded === 'false' && d.hidden === true && d.h === 0);
+  const expandOk = expanded.length === collapsed.length
+    && expanded.every((d) => d.expanded === 'true' && d.hidden === false);
   // ---- 强度 / 泛用性 两项的「完整得分来源」（用户 2026-10-13）------------------------
   //
   // 上面的 `sourceOk` 只管**性价比**那一张（逐关卡 × 金数）。用户要的是**三项都给来源**，
@@ -1853,6 +1951,8 @@ if (!tipTarget) {
     && splitOk
     // 用户 2026-10-13：「三项都要有**完整得分来源**」——强度那张表 + 泛用性那块名单。
     && strengthSourceOk && versatilitySourceOk
+    // 用户 2026-10-13 第 8 条：这三个来源块**默认全部收起**、点一下就地展开。
+    && collapseOk && expandOk
     && notesTextOk && notesShortOk
     // 用户 2026-10-11（详情页第 1 条）：非关卡列居中 + 字号大一档。
     && fontOk
@@ -1994,6 +2094,19 @@ if (!tipTarget) {
       + `${tipReport.strengthTotalRow ? `，合计 ${JSON.stringify(tipReport.strengthTotalRow)}` : '，单副本无合计行'}`);
     console.log(`      ${versatilitySourceOk ? '✓' : '✗'} 泛用性来源：名单 ${tipReport.versListCount} 个`
       + `（标题写 ${tipReport.versRaw} 个）｜归一换算「${tipReport.versNote}」`);
+    // 用户 2026-10-13 第 8 条：折叠块的默认态与展开动作。探针是**先量收起、再点开**量的，
+    // 所以这两行合起来证明「默认收起 + 点击后可展开」这一对行为都在。
+    console.log(`  ${collapseOk ? '✓' : '✗'} 三个分项的来源**默认全部收起**`
+      + `（用户 2026-10-13 第 8 条「节省界面的空间」）：`
+      + `${collapsed.length} 个折叠块 `
+      + JSON.stringify(collapsed.map((d) => `aria=${d.expanded}/hidden=${d.hidden}/高=${d.h}px`))
+      + '（要求 aria=false、hidden=true、高=0）');
+    console.log(`  ${expandOk ? '✓' : '✗'} 点击后**就地展开**（同一个按钮再点收起）`
+      + `（探针真的点了每个 .advice-detail-toggle）：`
+      + JSON.stringify(expanded.map((d) => `aria=${d.expanded}/hidden=${d.hidden}`)));
+    console.log(`      ${tipReport.splitDetailRows === collapsed.length ? '✓' : '✗'}`
+      + ` 折叠行插在各自分项行的**下一行**（用户原话「在该项下方就地展开」）：`
+      + `分项表里 ${tipReport.splitDetailRows} 个 .advice-detail-row / ${collapsed.length} 个折叠块`);
     // 2026-10-11 第 2 条：三条判据各自单独打印一行，红的是哪一条一眼看得出。
     console.log(`  ${headerRenameOk ? '✓' : '✗'} 表头第一列已改名为「关卡」`
       + `（禁用「副本」）：${JSON.stringify(tipReport.headers)}`);
@@ -2633,21 +2746,47 @@ if (teamPlanProbe.missing) {
         const modal = document.querySelector('.advice-tip-modal');
         const card = modal?.querySelector('.advice-tip-card');
         if (!modal || modal.hidden || !card) return { open: false };
-        const headers = [ ...card.querySelectorAll('.advice-value-tip-table th') ].map((n) => n.textContent);
+        // ⚠️ 用户 2026-10-13 第 8 条（本轮）：这个窗口里的「分数来源」也变成了**默认收起**的
+        //    就地折叠块（advice-view.js 的 teamPlanTip() 用同一个 tipScoreDetails()）。
+        //    所以取数顺序与总榜那个窗口一样：**先量收起态 → 真的点一下 → 再量里面的东西**。
+        //    改前这里直接 card.querySelectorAll('.advice-value-tip-table th') 就取到了表头，
+        //    折叠之后那张表虽然还在 DOM 里（hidden 只是不显示），但 .advice-plan-tip-block
+        //    那两条判据、以及「分数来源表是几行」都会量错对象 —— 见下面的 is-score-scale。
+        const toggles = [ ...card.querySelectorAll('.advice-detail-toggle') ];
+        const collapsed = toggles.map((b) => {
+          const d = b.parentElement?.querySelector('.advice-detail');
+          return { expanded: b.getAttribute('aria-expanded'), hidden: d ? d.hidden : null };
+        });
+        for (const b of toggles) b.click();
+        const expandedNow = toggles.map((b) => b.getAttribute('aria-expanded'));
+        // ⚠️ 这张窗口里现在有**两张**表：上面是「分数来源」刻度表（带 is-score-scale）、
+        //    下面是它自己那份来源表（带 is-source）。按 .advice-value-tip-table tbody tr
+        //    取行会把两张表一起数进去（实测 6 行而不是 3 行），所以两张都按 class 认。
+        //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+        const scale = card.querySelector('.advice-value-tip-table.is-score-scale');
+        const headers = [ ...(scale?.querySelectorAll('th') || []) ].map((n) => n.textContent);
         const blocks = [ ...card.querySelectorAll('.advice-plan-tip-block') ].map((n) => n.textContent);
         // ⚠️ 用户 2026-10-12 第 6 条：「性价比得分、差额接近分、压金度，三者是不是过于重叠了，
-        //    我只想保留差额接近度的得分」—— 所以这张「分数来源」表**只有两行**
-        //    （强度得分 / 差额接近度），中间那层「性价比得分」与「压金度」都不许再出现。
-        const rowLabels = [ ...card.querySelectorAll('.advice-value-tip-table tbody tr') ]
+        //    我只想保留差额接近度的得分」—— 所以这张「分数来源」表**只有三行**
+        //    （强度得分 / 差额接近度 / 泛用性），中间那层「性价比得分」与「压金度」都不许再出现。
+        const rowLabels = [ ...(scale?.querySelectorAll('tbody tr') || []) ]
           .map((tr) => (tr.children[0]?.textContent || '').trim());
         return {
           open: true,
           title: card.querySelector('.advice-value-tip-head')?.textContent || '',
           headers,
           rowLabels,
+          // ⚠️ 全文用 card.textContent：折叠块里的字也在里面（hidden 不影响 textContent），
+          //    而「不许出现压金度 / 性价比得分」这条判据要的正是**整个窗口**都不出现。
           text: card.textContent || '',
           blocks,
           alts: card.querySelectorAll('.advice-plan-tip-alt').length,
+          toggles: toggles.length,
+          collapsed,
+          expandedNow,
+          // 来源那两段说明现在收在折叠块里，所以条数要按**整个窗口**数（不是 .advice-value-tip-notes）。
+          planNotes: card.querySelectorAll('.advice-value-tip-note').length,
+          scaleRows: scale ? scale.querySelectorAll('tbody tr').length : 0,
         };
       })()`);
       const tipScoreOk = Boolean(scoreTip?.open)
@@ -2657,11 +2796,18 @@ if (teamPlanProbe.missing) {
         && scoreTip.headers.includes('刻度（按候选池现算）')
         && scoreTip.blocks.some((b) => b.includes('过渡档位'))
         && scoreTip.blocks.some((b) => b.includes('次选配队'))
-        && scoreTip.alts >= 1 && scoreTip.alts <= 3;
+        && scoreTip.alts >= 1 && scoreTip.alts <= 3
+        // 用户 2026-10-13 第 8 条：分数来源默认收起、点一下展开。
+        && scoreTip.toggles >= 1
+        && scoreTip.collapsed.every((d) => d.expanded === 'false' && d.hidden === true)
+        && scoreTip.expandedNow.every((v) => v === 'true');
       if (!tipScoreOk) failures += 1;
       console.log(`  ${tipScoreOk ? '✓' : '✗'} ⑧ 点「补金推荐分」→ 详情窗口「${scoreTip?.title || ''}」`
         + `（表头 ${JSON.stringify(scoreTip?.headers || [])}，次选 ${scoreTip?.alts ?? 0} 支，`
         + `内容块 ${(scoreTip?.blocks || []).length} 段`
+        + `，分数来源折叠块 ${scoreTip?.toggles ?? 0} 个：默认 `
+        + `${JSON.stringify((scoreTip?.collapsed || []).map((d) => `${d.expanded}/${d.hidden}`))}`
+        + ` → 点击后 ${JSON.stringify(scoreTip?.expandedNow || [])}`
         + `${tipScoreOk ? '' : `：${(scoreTip?.blocks || []).map((b) => b.slice(0, 18)).join(' / ') || '（空）'}`}）`);
       // ⚠️ 用户 2026-10-12 第 6 条：分数来源**只有真实生效的那几个刻度**，
       //    且不许再出现「压金度 / 性价比得分」。2026-10-13 第 3 条（泛用性也进补金推荐）
@@ -2750,18 +2896,31 @@ if (!tierChipOk) {
         const modal = document.querySelector('.advice-tip-modal');
         const tables = [ ...(modal?.querySelectorAll('.advice-value-tip-table') || []) ];
         const heads = tables.map((t) => [ ...t.querySelectorAll('th') ].map((h) => h.textContent));
-        const hit = tables.find((t) => [ ...t.querySelectorAll('th') ]
-          .some((h) => (h.textContent || '').includes('跨版本发挥')));
+        // ⚠️ 2026-10-13 第 8 条（本轮）之后窗口里有**两张**含「跨版本发挥」的表：
+        //    强度来源表与性价比主表。而**两者现在都收在折叠块里**，所以要先**点开**
+        //    它们，再认准那张 is-source（它的合计 = unit.total）。
+        //    改前这里是「找到第一张含这一列的表」—— 折叠之后两张表都在 DOM 里、
+        //    取到的对象会因为「谁排前面」而漂移（强度表也含这一列，而它的合计不是
+        //    unit.total），于是这条「跨版本发挥恒 ≤ 1」的判据会量到别的东西上。
+        //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+        for (const b of modal?.querySelectorAll('.advice-detail-toggle') || []) b.click();
+        const hit = modal?.querySelector('.advice-value-tip-table.is-source') || null;
         const title = modal?.querySelector('.advice-value-tip-head')?.textContent || '';
         if (!hit) return { open: Boolean(modal && !modal.hidden), title, heads, cells: [] };
-        const col = [ ...hit.querySelectorAll('th') ]
+        // ⚠️ 列表头与行都必须**绝对定位**（:scope > thead > tr > th / :scope > tbody > tr）：
+        //    强度来源表整张嵌在分项表的 td 里，用后代选择器会把嵌套表自己的表头
+        //    与行一起数进来（实测 6 列变 16 列、第 5 列因此指到别的格子上，
+        //    这条「跨版本发挥恒 ≤ 1」的判据于是量到一堆不相干的文本）。
+        const col = [ ...hit.querySelectorAll(':scope > thead > tr > th') ]
           .findIndex((h) => (h.textContent || '').includes('跨版本发挥')) + 1;
         return {
           open: Boolean(modal && !modal.hidden),
           title,
           heads,
           col,
-          cells: [ ...hit.querySelectorAll('tbody tr:not(.is-total)') ]
+          cells: [ ...hit.querySelectorAll(':scope > tbody > tr') ]
+            .filter((tr) => !tr.classList.contains('is-total')
+              && !tr.classList.contains('advice-detail-row'))
             .map((tr) => (tr.children[col - 1]?.textContent || '').trim()),
         };
       })()`);

@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { charCostOf, coneCostOf } from '../public/scripts/advice.js';
 import { archiveIndex, loadI18n } from '../src/server/archive.js';
-import { VIRTUAL_PRESETS, buildVirtualAccount, presetContext, presetContextRefs } from '../src/server/virtual-accounts.js';
+import { VIRTUAL_PRESETS, buildVirtualAccount, presetContext, presetContextRefs, withSignatureCones } from '../src/server/virtual-accounts.js';
 
 const arg = (name, dflt) => {
   const hit = process.argv.find((a) => a.startsWith(`--${name}=`));
@@ -24,7 +24,11 @@ const OUT = arg('out', 'data/accounts-virtual.json');
 const LIST_ONLY = process.argv.includes('--list');
 const ONLY = arg('preset', '').split(',').map((s) => s.trim()).filter(Boolean);
 
-const index = await archiveIndex();
+// ⚠️ 必须过 `withSignatureCones()`：它把「**真正的专属光锥**表」（限定 5★，从
+// `archive.json` 的 `characters[].topLightCones` 现算）挂到 `refs` 上。少了这一步，
+// 预设会静默退回「最常用光锥」—— 正是用户 2026-10-14 第 1 条报的
+// 「全角色平铺缺光锥（缇宝 / 花火）」。服务端那三条路由同样要过它。
+const index = await withSignatureCones(await archiveIndex());
 const i18n = await loadI18n();
 const availability = index.refs?.availability || {};
 const ctx = presetContext({ availability, firstSeen: index.refs?.firstSeen?.characters,

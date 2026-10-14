@@ -14,7 +14,17 @@
 // 不随版本变化，所以写死比猜可靠；名单不对时改下面两个 Set 即可。
 // 「哪些 5★ 是免费/商店/活动」**不再只靠名单**：见 FREE_CONE_ID_PREFIXES 的 id 判据。
 //
+// ⚠️ **参考表缺失时必须优雅降级，不能硬失败**（2026-10-14 修「同步不了」）：
+// `.snapref/` 是 gitignore 掉的本机逆向参考（新克隆、打包后的机器上根本没有），
+// 而 `theherta/unit-availability.json` 是**提交进仓库**的成品。以前这里一读不到
+// 参考表就 exit 1，于是界面「同步」按钮每次都在第 ② 步整体失败——前面抓取花掉的
+// 时间全部白费，用户看到的就是「同步不了」。
+// 现在的规则：读不到参考表 → 沿用现有成品（一个字节都不动）或从 `archive.json` 的
+// `refs.availability` 复原，打印明确警告，**退出码 0**。真的既没有参考表又没有
+// 任何可复用的成品时才 exit 1（那种情况下 herta-build.mjs 本来也跑不了）。
+//
 // 用法: node tools/herta-availability.mjs
+//   HERTA_REF_DIR=<dir>  覆盖参考表目录（默认依次试 .snapref/ 与 snapref/）
 import { readFile, writeFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,8 +34,16 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 
 /** StarRailRes 副本可能的位置（英文表用词与 theherta 一致）。 */
-const CHAR_SOURCES = ['.snapref/starrailres-en-characters.json', 'snapref/starrailres-en-characters.json'];
-const CONE_SOURCES = ['.snapref/starrailres-en-lightcones.json', 'snapref/starrailres-en-lightcones.json'];
+const REF_DIRS = process.env.HERTA_REF_DIR
+  ? [process.env.HERTA_REF_DIR]
+  : ['.snapref', 'snapref'];
+const CHAR_SOURCES = REF_DIRS.map((dir) => `${dir}/starrailres-en-characters.json`);
+const CONE_SOURCES = REF_DIRS.map((dir) => `${dir}/starrailres-en-lightcones.json`);
+
+/** 成品（提交进仓库）与它的复原来源。 */
+const AVAIL_PATH = join(ROOT, 'theherta', 'unit-availability.json');
+const ARCHIVE_PATH = join(ROOT, 'theherta', 'archive.json');
+const CONFIG_PATH = join(ROOT, 'theherta', 'characters_config.json');
 
 /**
  * 常驻角色池（星轨通票可出）：这 7 位 + 开拓者各命途形态不算限定。
@@ -107,6 +125,96 @@ const readFirst = async (paths) => {
   return null;
 };
 
+/** 直接读一个绝对路径的 JSON；读不到 / 不是 JSON 都返回 null。 */
+const readJsonAbs = async (abs) => {
+  try {
+    return JSON.parse(await readFile(abs, 'utf8'));
+  } catch {
+    return null;
+  }
+};
+
+const usable = (table) => Boolean(table) && Object.keys(table).length > 0;
+
+/**
+ * 成品表是否覆盖得住当前的 characters_config.json。
+ *
+ * 降级路径（沿用旧成品 / 从 archive.json 复原）拿到的是**某个时间点的快照**：
+ * 之后新上线的角色不在表里，`limited` 就是 undefined。调用方（herta-build.mjs）
+ * 现在把「查不到」按**限定**处理（宁可高估成本），但只有这里说出来，
+ * 用户才知道该去补参考表。所以降级时必须把缺的名字打出来。
+ */
+const coverageWarnings = async (characters, lightCones) => {
+  const config = await readJsonAbs(CONFIG_PATH);
+  if (!config) return;
+  const missingChars = (config.characters || []).filter((n) => !characters[n]);
+  const missingCones = (config.lightcones || []).filter((n) => !lightCones[n]);
+  if (missingChars.length) {
+    console.log(`  ⚠ 成品表里没有这些角色（将按「限定」保守计成本）：${missingChars.join('、')}`);
+  }
+  if (missingCones.length) {
+    console.log(`  ⚠ 成品表里没有这些光锥（将按「限定」保守计成本）：${missingCones.join('、')}`);
+  }
+};
+
+/**
+ * 读不到 StarRailRes 参考表时的降级：**绝不让现有成品被写坏**。
+ *
+ * 顺序：① 现有 unit-availability.json 能读 → 原样不动；
+ *      ② 否则从 archive.json 的 refs.availability 复原一份；
+ *      ③ 都没有 → 只能失败（这时 build 也没有输入可用）。
+ * 返回退出码。
+ */
+const degradeWithoutReference = async () => {
+  console.log('⚠ 找不到 StarRailRes 参考表（.snapref/starrailres-en-characters.json 等）。');
+  console.log('  这不会中断同步 —— 星级与「是否限定」是版本无关的固定内容，可以沿用已有成品。');
+
+  const existing = await readJsonAbs(AVAIL_PATH);
+  if (usable(existing?.characters) && usable(existing?.lightCones)) {
+    console.log(`  ✓ 沿用现有 theherta/unit-availability.json（未改动，生成于 ${existing.generatedAt || '未知时间'}）`);
+    await coverageWarnings(existing.characters, existing.lightCones);
+    console.log('  想要按最新参考表重建，请先运行 node tools/i18n-fetch-en.mjs 或 tools/bundle-extract.mjs。');
+    return 0;
+  }
+
+  const archive = await readJsonAbs(ARCHIVE_PATH);
+  const restored = archive?.refs?.availability;
+  if (usable(restored?.characters) && usable(restored?.lightCones)) {
+    const characters = restored.characters;
+    const lightCones = restored.lightCones;
+    const payload = {
+      version: 2,
+      source: 'theherta/archive.json 的 refs.availability（参考表缺失时的复原）',
+      generatedAt: new Date().toISOString(),
+      counts: {
+        characters: Object.keys(characters).length,
+        lightCones: Object.keys(lightCones).length,
+        limitedCharacters: Object.values(characters).filter((v) => v?.limited).length,
+        limitedLightCones: Object.values(lightCones).filter((v) => v?.limited).length,
+        resolvedCharacters: Object.values(characters).filter((v) => v?.rarity != null).length,
+        resolvedLightCones: Object.values(lightCones).filter((v) => v?.rarity != null).length,
+      },
+      missing: { characters: [], lightCones: [] },
+      standardCharacters: [...STANDARD_CHARACTERS].sort(),
+      standardLightCones: [...STANDARD_LIGHT_CONES].sort(),
+      freeConeIdPrefixes: [...FREE_CONE_ID_PREFIXES],
+      characters,
+      lightCones,
+    };
+    await writeFile(AVAIL_PATH, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    console.log(`  ✓ 已从 theherta/archive.json 的 refs.availability 复原 theherta/unit-availability.json`
+      + `（角色 ${payload.counts.characters}、光锥 ${payload.counts.lightCones}）`);
+    await coverageWarnings(characters, lightCones);
+    return 0;
+  }
+
+  console.error('找不到 StarRailRes 副本，也没有可复用的 theherta/unit-availability.json'
+    + ' 或 theherta/archive.json 里的 refs.availability。');
+  console.error('可用 node tools/i18n-fetch-en.mjs 或 tools/bundle-extract.mjs 重新获取参考表，');
+  console.error('或者先用 node tools/herta-fetch.mjs 取回含 refs.availability 的 archive.json。');
+  return 1;
+};
+
 /** 英文名 → 星级；同名取较高的星级（开拓者等有多条记录）。 */
 const rarityIndex = (table) => {
   const exact = new Map();
@@ -170,10 +278,9 @@ const main = async () => {
     readFirst(CHAR_SOURCES),
     readFirst(CONE_SOURCES),
   ]);
+  // 参考表缺失 → 优雅降级（沿用成品 / 从 archive.json 复原），不再让整条同步链断在这里。
   if (!charTable || !coneTable) {
-    console.error('找不到 StarRailRes 副本（.snapref/starrailres-en-characters.json 等）。');
-    console.error('可用 node tools/i18n-fetch-en.mjs 或 tools/bundle-extract.mjs 重新获取。');
-    process.exitCode = 1;
+    process.exitCode = await degradeWithoutReference();
     return;
   }
   const charIndex = rarityIndex(charTable);
@@ -181,7 +288,7 @@ const main = async () => {
   const coneIds = idIndex(coneTable);
 
   const config = JSON.parse(
-    await readFile(join(ROOT, 'theherta', 'characters_config.json'), 'utf8'),
+    await readFile(CONFIG_PATH, 'utf8'),
   );
   const datasetChars = config.characters || [];
   const datasetCones = config.lightcones || [];
@@ -242,8 +349,7 @@ const main = async () => {
     characters,
     lightCones,
   };
-  await writeFile(join(ROOT, 'theherta', 'unit-availability.json'),
-    `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  await writeFile(AVAIL_PATH, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
 
   console.log('已写出 theherta/unit-availability.json');
   console.log(`  角色 ${datasetChars.length} 个（解析 ${payload.counts.resolvedCharacters}，`

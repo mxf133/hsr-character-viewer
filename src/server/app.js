@@ -24,8 +24,8 @@ import { MihoyoError } from '../mihoyo/errors.js';
 import { cachedFingerprint, fetchDeviceFingerprint } from '../mihoyo/devicefp.js';
 import { archiveExists, archiveIndex, archiveStats, enemiesForRecords, loadI18n } from './archive.js';
 import {
-  VIRTUAL_PRESETS, buildVirtualAccount, customRosterPreset, nextVirtualUid, normalizeRoster,
-  presetById, presetContext, presetContextRefs,
+  TRAILBLAZER_AVATARS, VIRTUAL_PRESETS, buildVirtualAccount, customRosterPreset, nextVirtualUid,
+  normalizeRoster, presetById, presetContext, presetContextRefs, signatureCones, withSignatureCones,
 } from './virtual-accounts.js';
 import { charCostOf, coneCostOf } from '../../public/scripts/advice.js';
 import { archiveConclusion, archiveCharacterPacks } from './conclusion.js';
@@ -44,6 +44,57 @@ const PUBLIC_DIR = resolve(here, '../../public');
 const ICONS_DIR = resolve(here, '../../theherta/icons');
 
 const MAX_BODY = 64 * 1024;
+
+/**
+ * 把**真实账号的一份快照**反解成虚拟账号的「名单原文」（用户 2026-10-14 第 5 条
+ * 「新增与用户真实账号完全一致的虚拟账号」）。
+ *
+ * 口径：
+ *   * 快照里的名字是**中文**（米游社给的），要按 `i18n` 反查数据集英文键 ——
+ *     查不到的单位**跳过并计数**（`skipped`），不猜、不硬塞；
+ *   * 星魂直接抄 `rank`/`actived_constellation_num`，**吸附到 E0/E1/E2/E6 交给
+ *     `normalizeRoster`**（同一处口径，不在这里再写一遍）；
+ *   * 光锥取 `equip`（米游社只返回**装备中**的那一把）：名字反查成英文键，
+ *     叠影抄 `equip.rank`，并登记 `charCones[角色] = 光锥`；
+ *   * 开拓者只记**头像 id**（8001..8010 合法时），命途行不进 `chars` —— 虚拟账号的
+ *     开拓者按用户第 4 条只有一行（见 `buildVirtualAccount`）。
+ */
+const rosterFromSnapshot = (snapshot, i18n) => {
+  const charByZh = new Map();
+  for (const [en, zh] of Object.entries(i18n?.characters || {})) {
+    if (zh && !charByZh.has(zh)) charByZh.set(zh, en);
+  }
+  const coneByZh = new Map();
+  for (const [en, zh] of Object.entries(i18n?.lightCones || {})) {
+    if (zh && !coneByZh.has(zh)) coneByZh.set(zh, en);
+  }
+  const chars = {};
+  const cones = {};
+  const charCones = {};
+  let trailblazer = null;
+  let skipped = 0;
+  for (const row of snapshot?.characters || []) {
+    const name = String(row?.name || '').trim();
+    if (!name) continue;
+    const id = Number(row?.id);
+    // 开拓者：名字或头像 id 命中都算；只取一个合法头像 id，命途行不进 `chars`。
+    if (/trailblazer|\{nickname\}|开拓者/i.test(name) || (id >= 8001 && id <= 8010)) {
+      if (id >= 8001 && id <= 8010) trailblazer = { id };
+      else if (!trailblazer) trailblazer = { id: 8001 };
+      continue;
+    }
+    const key = charByZh.get(name);
+    if (!key) { skipped += 1; continue; }
+    chars[key] = Number(row?.rank ?? row?.actived_constellation_num ?? 0) || 0;
+    const coneName = String(row?.equip?.name || '').trim();
+    if (!coneName) continue;
+    const coneKey = coneByZh.get(coneName);
+    if (!coneKey) { skipped += 1; continue; }
+    charCones[key] = coneKey;
+    cones[coneKey] = Math.max(1, Number(row?.equip?.rank) || 1);
+  }
+  return { chars, cones, charCones, trailblazer, skipped };
+};
 
 const json = (res, status, payload) => {
   const body = JSON.stringify(payload);
@@ -638,22 +689,29 @@ export const createApp = (options = {}) => {
       if (path === '/api/virtual-accounts/presets' && req.method === 'GET') {
         try {
           if (!(await archiveExists())) { json(res, 200, { ok: true, presets: [] }); return; }
-          const vindex = await archiveIndex();
+          const vindex = await withSignatureCones(await archiveIndex());
           const availability = vindex.refs?.availability || {};
-          // ⚠️ 必须带上 `popularLightCones` / `lightConePaths`（`presetContextRefs`）：
-          // 2026-10-13 第 4 条新增的「平铺 / 大隐金」预设要用它们配专属光锥。
-          // 漏传不会报错，只会静默退化成「没有光锥」的名单 —— 而预设清单上的
-          // 「N 限定角色 / M 专锥」计数正好是用户判断这件事的第一眼。
+          // ⚠️ 必须带上 `popularLightCones` / `lightConePaths` / `coneIcons` /
+          // `signatureLightCones`（`presetContextRefs`）：2026-10-13 第 4 条新增的
+          // 「平铺 / 大隐金」预设要用它们配专属光锥，2026-10-14 第 1 条起还要用
+          // 「专属锥表」（`withSignatureCones`）—— **漏了它就静默退回「最常用光锥」**，
+          // 也就是用户报的「平铺缺光锥（缇宝 / 花火）」。漏传不会报错，只会让名单退化。
           const ctx = presetContext({ availability, firstSeen: vindex.refs?.firstSeen?.characters,
             charCostOf, coneCostOf, ...presetContextRefs(vindex) });
           json(res, 200, {
             ok: true,
             presets: VIRTUAL_PRESETS.map((p) => {
               const s = p.spec(ctx) || {};
+              // ⚠️ `chars` 里含 4★ 与开拓者，而界面原来把它一律写成「N 限定角色」——
+              // 平铺档的 93 因此**名不副实**（用户 2026-10-14 第 1 条「不符合描述」的
+              // 其中一条）。两个数都发下去，界面照实写。
               return {
                 id: p.id, title: p.title, hint: p.hint,
                 chars: Object.keys(s.chars || {}).length,
                 cones: Object.keys(s.cones || {}).length,
+                limitedChars: Object.keys(s.chars || {})
+                  .filter((k) => charCostOf(k, availability) > 0).length,
+                totalChars: Object.keys(availability.characters || {}).length,
               };
             }),
           });
@@ -717,6 +775,18 @@ export const createApp = (options = {}) => {
             return;
           }
           if (req.method === 'GET') {
+            // 「真正的专属光锥」表（限定 5★，见 `deriveSignatureCones`）：编辑器用它给
+            // 下拉框标「（专属）」并把它排第一。**没有它**时编辑器会退回
+            // `popularLightCones`（「最常用光锥」）—— 那正是用户报的「配的不是专武」。
+            // 只有 58 条、约 2 KB，只在打开编辑器时取一次；数据集还没采集时退回空表
+            //（编辑器仍可用，只是标不出「专属」）。
+            let signatures = {};
+            try {
+              if (await archiveExists()) {
+                const vindex = await archiveIndex();
+                signatures = await signatureCones(vindex.refs?.availability || {});
+              }
+            } catch { signatures = {}; }
             json(res, 200, {
               ok: true,
               accountId: target.id,
@@ -725,7 +795,16 @@ export const createApp = (options = {}) => {
                 chars: { ...(target.virtualRoster?.chars || {}) },
                 cones: { ...(target.virtualRoster?.cones || {}) },
                 coneOwners: { ...(target.virtualRoster?.coneOwners || {}) },
+                // 逐角色装备（权威，2026-10-14 第 1 条起）：老账号没这个字段，界面按
+                // 「`coneOwners` 反推」处理（见 `virtual-roster.js` 的注释）。
+                charCones: { ...(target.virtualRoster?.charCones || {}) },
+                trailblazer: target.virtualRoster?.trailblazer
+                  ? { ...target.virtualRoster.trailblazer } : null,
               },
+              // 编辑器要按「命途 + 男/女」分组画头像选择器，而这些归属**只有服务端这张表
+              // 知道**（实测依据见 `TRAILBLAZER_AVATARS` 的注释），所以随名单一起下发。
+              trailblazerAvatars: TRAILBLAZER_AVATARS.map((a) => ({ ...a })),
+              signatureLightCones: { ...signatures },
             });
             return;
           }
@@ -738,7 +817,7 @@ export const createApp = (options = {}) => {
             return;
           }
           const body = await readBody(req);
-          const vindex = await archiveIndex();
+          const vindex = await withSignatureCones(await archiveIndex());
           const vi18n = await loadI18n();
           const availability = vindex.refs?.availability || {};
           // 收口（只认数据集里真有的键 / 星魂吸附到 E0·E1·E2·E6 / 叠影夹到 1~5 /
@@ -760,6 +839,86 @@ export const createApp = (options = {}) => {
           json(res, 200, { ok: true, account: AccountStore.toPublic(saved), roster });
         } catch (err) {
           json(res, 500, { ok: false, error: `保存角色名单失败：${err.message}` });
+        }
+        return;
+      }
+
+      // 虚拟账号**重命名**（用户 2026-10-14 第 5 条：「用户可以给已有的虚拟账号重命名」）。
+      //
+      // ⚠️ 只允许虚拟账号：真实账号的昵称来自米游社，本地改只会在下一次刷新时变回去。
+      // ⚠️ 依旧刻意不放在 `/api/accounts/...` 下（理由同上面两条）。
+      const vRenameMatch = path.match(/^\/api\/virtual-accounts\/([A-Za-z0-9-]+)\/rename$/);
+      if (vRenameMatch && req.method === 'POST') {
+        if (!requireCsrf(req)) { json(res, 403, { ok: false, error: '无效的 CSRF 令牌' }); return; }
+        try {
+          const body = await readBody(req);
+          const target = await store.getAccount(vRenameMatch[1]);
+          if (!target) { json(res, 404, { ok: false, error: '账号不存在' }); return; }
+          const saved = await store.renameVirtualAccount(vRenameMatch[1], body?.nickname);
+          json(res, 200, { ok: true, account: AccountStore.toPublic(saved) });
+        } catch (err) {
+          json(res, 400, { ok: false, error: `重命名失败：${err.message}` });
+        }
+        return;
+      }
+
+      // 「**新增同配置虚拟账号**」（用户 2026-10-14 第 5 条：「可点击按钮新增与用户真实账号
+      // 完全一致的虚拟账号，该按钮位于此用户的真实账号的选项框内」）。
+      //
+      // 做法：把真实账号那一份快照**反解**成虚拟账号的名单原文（角色 / 星魂 / 逐角色光锥 /
+      // 开拓者头像），再走 `buildVirtualAccount` —— 于是「完全一致」这件事只有一份实现，
+      // 而且新账号打开角色编辑器还能继续改（`virtualRoster` 已经写好了）。
+      // ⚠️ **绝不改动源账号**：全程只读它的快照。
+      if (path === '/api/virtual-accounts/from-account' && req.method === 'POST') {
+        if (!requireCsrf(req)) { json(res, 403, { ok: false, error: '无效的 CSRF 令牌' }); return; }
+        try {
+          const body = await readBody(req);
+          const source = await store.getAccount(String(body?.accountId || ''));
+          if (!source) { json(res, 404, { ok: false, error: '源账号不存在' }); return; }
+          const uid = String(body?.uid || (source.roles || [])[0]?.uid || '');
+          const snapshot = uid ? await store.getSnapshot(source.id, uid) : null;
+          if (!snapshot) { json(res, 400, { ok: false, error: '该账号还没有角色数据，先「刷新角色」再试' }); return; }
+          if (!(await archiveExists())) {
+            json(res, 200, {
+              ok: false,
+              error: '数据集还没采集：先在项目目录跑 node tools/herta-fetch.mjs && node tools/herta-build.mjs',
+            });
+            return;
+          }
+          const vindex = await withSignatureCones(await archiveIndex());
+          const vi18n = await loadI18n();
+          const availability = vindex.refs?.availability || {};
+          const raw = rosterFromSnapshot(snapshot, vi18n);
+          // 与自定义名单走**同一条收口**（`normalizeRoster`）：非法键丢弃、星魂吸附到
+          // E0/E1/E2/E6、光锥主人必须同命途、成本 > 0 的锥只留一个主人。
+          const roster = normalizeRoster(raw, vindex.refs || {});
+          const existing = await store.listAccounts();
+          const newUid = nextVirtualUid(existing.flatMap((a) => (a.roles || []).map((r) => r.uid)));
+          let accountId = `virtual-from-${source.id}`;
+          for (let n = 2; existing.some((a) => a.id === accountId); n += 1) {
+            accountId = `virtual-from-${source.id}-${n}`;
+          }
+          const nickname = typeof body?.nickname === 'string' && body.nickname.trim()
+            ? body.nickname.trim().slice(0, 40)
+            // ⚠️ 不加「虚拟·」前缀：虚拟账号的昵称本来就带它，加了会变成「虚拟·虚拟·…」；
+            // 真实账号的昵称（如「光明火柴」）直接接「的同配置」即可。
+            : `${source.nickname || source.id} 的同配置`;
+          const account = buildVirtualAccount({
+            preset: customRosterPreset(roster, nickname),
+            index: vindex, i18n: vi18n, availability, charCostOf, coneCostOf,
+            uid: newUid, accountId, nickname,
+          });
+          await store.addAccount(account);
+          json(res, 200, {
+            ok: true,
+            account: AccountStore.toPublic(account),
+            roster,
+            // 反解时跳过了几个单位（名字在 i18n 里查不到 / 不是数据集里的键）——
+            // 界面可以用它提示「有 N 个角色没能复制」，而不是静默少几个。
+            skipped: raw.skipped,
+          });
+        } catch (err) {
+          json(res, 500, { ok: false, error: `新增同配置虚拟账号失败：${err.message}` });
         }
         return;
       }
