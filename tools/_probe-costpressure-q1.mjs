@@ -106,7 +106,11 @@ for (const unit of units) {
   const ev = (unit.envs || []).find((e) => (e.members || []).length) || null;
   if (!ev?.members?.length) continue;
   const key = rosterKeyOf(ev.members);
-  // ⚠️ ① 就是角色总榜的整包分（`unit.total`，含金数项）：v4.6.87~v4.6.90 那个独立的
+  // ⚠️ 【旧口径】① 在 2026-10-15 之前是角色总榜的整包分（`unit.total`，含金数项）；
+//    **现在** ① = 该队成员整包在总榜上的**绝对强度分**（`strengthScore`，0~100，与角色总榜
+//    那一列同源）。本探针复刻的是**旧口径**（留着它才能做「修前复算」），别当成现行规则。
+//
+// ⚠️ ① 就是角色总榜的整包分（`unit.total`，含金数项）：v4.6.87~v4.6.90 那个独立的
   // `unit.strength`（纯强度）已按用户 2026-10-12 第 8 条删除，所以这里直接按 `total` 收敛。
   const total = Number(unit.total) || 0;
   const prev = byRoster.get(key);

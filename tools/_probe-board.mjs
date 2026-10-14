@@ -70,7 +70,7 @@ SCORING.teamPlanMaxRows = keep;
 
 console.log(`账号 ${ACC} ${role.nickname}｜隐金=${hidden ? '全勾' : '不减'}`
   + `${Object.keys(weights).length ? '｜自定义权重' : '｜默认权重'}`);
-console.log(`候选池 ${plan.pool} 支（去重 ${plan.poolAll}）· ① 刻度 ${plan.strengthLo.toFixed(1)}~${plan.strengthHi.toFixed(1)}`
+console.log(`候选池 ${plan.pool} 支（去重 ${plan.poolAll}）· ① 刻度（绝对强度分 0~100）${plan.strengthLo.toFixed(1)}~${plan.strengthHi.toFixed(1)}`
   + ` · ② 封顶 ${plan.gapMax} 金（p${Math.round(plan.gapCapPct * 100)}）`
   + ` · ② 归 0 的 ${plan.rows.filter((r) => r.gapPct === 0).length}/${plan.rows.length}\n`);
 plan.rows.forEach((r, i) => {

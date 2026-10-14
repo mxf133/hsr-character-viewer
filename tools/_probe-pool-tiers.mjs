@@ -112,10 +112,10 @@ const inNow = (key) => nowKeys.has(key);
 
 console.log(`账号 ${role.nickname}｜默认总榜权重｜隐金不减\n`);
 console.log(`【现在的池】整包 ${concl.frontierUnits.length} 条 → 队伍 ${plan.pool} 支`
-  + `（去重 ${plan.poolAll}）· ① 刻度 ${plan.strengthLo.toFixed(1)}~${plan.strengthHi.toFixed(1)}`
+  + `（去重 ${plan.poolAll}）· ① 刻度（绝对强度分 0~100）${plan.strengthLo.toFixed(1)}~${plan.strengthHi.toFixed(1)}`
   + ` · ② 封顶 ${plan.gapMax} 金`);
 console.log(`【每档各留一条】整包 ${tierUnits.length} 条 → 队伍 ${tier.rows.length} 支`
-  + ` · ① 刻度 ${tier.lo.toFixed(1)}~${tier.hi.toFixed(1)} · ② 封顶 ${tier.cap} 金`);
+  + ` · ① 刻度（旧口径复刻）${tier.lo.toFixed(1)}~${tier.hi.toFixed(1)} · ② 封顶 ${tier.cap} 金`);
 const unlocked = tier.rows.filter((r) => !inNow(r.key));
 console.log(`**因此新放进来（现在整个池都没有的）队伍：${unlocked.length} 支**`
   + `，其中补金 ≤ 2 的 ${unlocked.filter((r) => r.gap <= 2).length} 支`);

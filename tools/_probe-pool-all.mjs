@@ -121,7 +121,7 @@ for (const [label, teams, preset] of POOLS) {
   results.push({ label, r, teams });
   console.log(`${label}`);
   console.log(`  队伍 ${r.rows.length} 支（去重前 ${teams.length}）`
-    + `｜① 刻度 ${r.lo.toFixed(1)}~${r.hi.toFixed(1)}`
+    + `｜① 刻度（旧口径复刻）${r.lo.toFixed(1)}~${r.hi.toFixed(1)}`
     + `｜② 封顶 ${r.cap} 金`
     + `${r.zeroGap === null ? '' : `｜补金 0 被剔除 ${r.zeroGap} 支`}`
     + `｜② 归 0 的 ${r.rows.filter((x) => x.gapPct === 0).length} 支`);

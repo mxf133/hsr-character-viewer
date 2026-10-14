@@ -60,7 +60,7 @@ SCORING.teamPlanMaxRows = keep;
 
 console.log(`账号 ${role.nickname}｜隐金=${HIDDEN ? '全勾' : '不减'}｜默认总榜权重`);
 console.log(`总榜 ${concl.frontierUnits.length} 条 · 候选池 ${planAll.pool} 支`
-  + ` · ① 刻度 ${planAll.strengthLo.toFixed(1)}~${planAll.strengthHi.toFixed(1)}`
+  + ` · ① 刻度（绝对强度分 0~100）${planAll.strengthLo.toFixed(1)}~${planAll.strengthHi.toFixed(1)}`
   + ` · ② 封顶 ${planAll.gapMax} 金（p${Math.round(SCORING.teamPlanGapCapPct * 100)}）`);
 
 /** 找含 Phainon（白厄）的队伍。 */

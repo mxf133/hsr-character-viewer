@@ -2785,11 +2785,16 @@ if (teamPlanProbe.missing) {
         //    （强度得分 / 差额接近度 / 泛用性），中间那层「性价比得分」与「压金度」都不许再出现。
         const rowLabels = [ ...(scale?.querySelectorAll('tbody tr') || []) ]
           .map((tr) => (tr.children[0]?.textContent || '').trim());
+        // ⚠️ 2026-10-15：① 换成了**绝对强度分**，所以「刻度」那一格必须写「绝对刻度」
+        //    （不再是池内 min-max）。这里把整张表的每一格都取出来，Node 侧再判。
+        const cells = [ ...(scale?.querySelectorAll('tbody tr') || []) ]
+          .map((tr) => [ ...tr.children ].map((td) => (td.textContent || '').trim()));
         return {
           open: true,
           title: card.querySelector('.advice-value-tip-head')?.textContent || '',
           headers,
           rowLabels,
+          cells,
           // ⚠️ 全文用 card.textContent：折叠块里的字也在里面（hidden 不影响 textContent），
           //    而「不许出现压金度 / 性价比得分」这条判据要的正是**整个窗口**都不出现。
           text: card.textContent || '',
@@ -2805,9 +2810,9 @@ if (teamPlanProbe.missing) {
       })()`);
       const tipScoreOk = Boolean(scoreTip?.open)
         && /^补金推荐分 \+\d/.test(scoreTip.title)
-        // ⚠️ 表头写的是「按候选池现算」—— v4.6.81 起刻度取自全池，
-        //    改文案时这条判据要一起改（改前是「按下发这批现算」）。
-        && scoreTip.headers.includes('刻度（按候选池现算）')
+        // ⚠️ 表头从「刻度（按候选池现算）」改成「刻度」（2026-10-15）：① 是**绝对刻度**、
+        //    不再按候选池现算，只有 ②③ 的刻度取自池内 —— 池内的说明挪进了那两格的正文。
+        && scoreTip.headers.includes('刻度')
         && scoreTip.blocks.some((b) => b.includes('过渡档位'))
         && scoreTip.blocks.some((b) => b.includes('次选配队'))
         && scoreTip.alts >= 1 && scoreTip.alts <= 3
@@ -2833,6 +2838,18 @@ if (teamPlanProbe.missing) {
       if (!scoreScaleOk) failures += 1;
       console.log(`  ${scoreScaleOk ? '✓' : '✗'} 分数来源表是「强度得分 / 差额接近度 / 泛用性」三行、`
         + `全文不出现「压金度 / 性价比得分」（实际 ${JSON.stringify(scoreTip?.rowLabels || [])}）`);
+      // ⚠️ 2026-10-15 换 ① 口径时**新加**的判据：那一格的「刻度」必须写「绝对刻度」，
+      //    而取值那一格必须是**强度分**（不再是「队分」——旧口径印的是含金数项的整包分，
+      //    池内 min-max 之后第一必然 100 分，用户 2026-10-15 报的就是那个数）。
+      const strengthRow = (scoreTip?.cells || []).find((c) => (c[0] || '') === '强度得分');
+      const strengthAbsOk = Boolean(strengthRow)
+        && (strengthRow[1] || '').includes('强度分')
+        && !(strengthRow[1] || '').includes('队分')
+        && (strengthRow[2] || '').includes('绝对刻度');
+      if (!strengthAbsOk) failures += 1;
+      console.log(`  ${strengthAbsOk ? '✓' : '✗'} 「强度得分」那一行写的是绝对刻度`
+        + `（实际取值 ${JSON.stringify(strengthRow?.[1] || '')}`
+        + `，刻度 ${JSON.stringify(strengthRow?.[2] || '')}）`);
       await evaluate("document.querySelector('#adviceTipClose')?.click(); true");
       await sleep(300);
     }

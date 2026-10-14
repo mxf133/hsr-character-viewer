@@ -73,7 +73,7 @@ console.log(`账号 ${ACC}：${role.nickname}｜隐金=${HIDDEN ? '全勾' : '�
 console.log(`候选池 ${plan.pool} 支｜差额：min ${gaps[0]} / p25 ${pctOf(gaps, 0.25)}`
   + ` / p50 ${pctOf(gaps, 0.5)} / p60 ${pctOf(gaps, 0.6)} / p75 ${pctOf(gaps, 0.75)}`
   + ` / p90 ${pctOf(gaps, 0.9)} / max ${gaps[gaps.length - 1]}（金）`);
-console.log(`① 刻度（整包分）${plan.strengthLo.toFixed(1)} ~ ${plan.strengthHi.toFixed(1)}`
+console.log(`① 刻度（绝对强度分 0~100）${plan.strengthLo.toFixed(1)} ~ ${plan.strengthHi.toFixed(1)}`
   + `｜现用 ② 封顶 = ${plan.gapMax} 金\n`);
 
 /** ② 的几种写法：都返回 0~100。 */

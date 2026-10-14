@@ -147,7 +147,7 @@ legacy.scored.slice(0, 5).forEach((r, i) => {
     + `${now ? `${now.total.toFixed(1)}（①${now.strengthPct.toFixed(1)} + ②${now.gapPct.toFixed(1)}）` : '（不在前 15）'}`);
 }
 
-console.log(`\n候选池 ${plan.pool} 支（去重 ${plan.poolAll}）· ① 刻度 ${plan.strengthLo.toFixed(1)}~${plan.strengthHi.toFixed(1)}`
+console.log(`\n候选池 ${plan.pool} 支（去重 ${plan.poolAll}）· ① 刻度（绝对强度分 0~100）${plan.strengthLo.toFixed(1)}~${plan.strengthHi.toFixed(1)}`
   + ` · ② 封顶 ${plan.gapMax} 金（p${Math.round(plan.gapCapPct * 100)}）`
   + ` · ② 归 0 的 ${plan.rows.filter((r) => r.gapPct === 0).length}/${plan.rows.length}`);
 plan.rows.slice(0, 10).forEach((r, i) => {
