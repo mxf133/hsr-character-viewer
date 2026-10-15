@@ -136,74 +136,12 @@
   width: 100%;
 }
 
-/* 折叠按钮：「点击这里展开来源」。
+/* 折叠按钮：「查看来源」。
    为什么做得**低调**（弱化色、小号、无边框）：这是「补充信息」的入口，不是主操作 ——
    它有 4 个（三个分项各一个 + 补金推荐分的「分数来源」），做得跟主按钮一样抢眼会
    把那张真正的表（分数拆解）的注意力分走。
    `cursor: pointer` / `user-select: none`：它是 `<button>`，默认光标已经是手型，
-   这里显式写出来是为了与 `.advice-value-wrap`（那个徽标是 span + role=button）一致。
-
-   2026-10-15：新增内联小按钮 `.advice-detail-inline-toggle`，浮动在分项名右侧，
-   更节省界面空间。原有的独立按钮样式保留供其他场景使用。 */
-.advice-detail-inline-toggle {
-  float: right;
-  width: 16px;
-  height: 16px;
-  margin-left: 4px;
-  padding: 0;
-  border: 1px solid rgba(141, 233, 255, 0.3);
-  border-radius: 3px;
-  background: transparent;
-  color: rgba(141, 233, 255, 0.65);
-  font-size: 10px;
-  line-height: 14px;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.12s ease;
-}
-.advice-detail-inline-toggle:hover,
-.advice-detail-inline-toggle:focus-visible {
-  color: #8de9ff;
-  background: rgba(141, 233, 255, 0.12);
-  border-color: rgba(141, 233, 255, 0.5);
-  outline: none;
-}
-.advice-detail-inline-toggle[aria-expanded="true"] {
-  background: rgba(141, 233, 255, 0.18);
-  border-color: rgba(141, 233, 255, 0.6);
-}
-/* 按钮分色：与分项进度条颜色一致 */
-.advice-detail-inline-toggle.is-strength {
-  border-color: rgba(34, 211, 238, 0.3);
-  color: rgba(34, 211, 238, 0.65);
-}
-.advice-detail-inline-toggle.is-strength:hover,
-.advice-detail-inline-toggle.is-strength:focus-visible {
-  color: #22d3ee;
-  border-color: rgba(34, 211, 238, 0.5);
-  background: rgba(34, 211, 238, 0.12);
-}
-.advice-detail-inline-toggle.is-cost {
-  border-color: rgba(251, 191, 36, 0.3);
-  color: rgba(251, 191, 36, 0.65);
-}
-.advice-detail-inline-toggle.is-cost:hover,
-.advice-detail-inline-toggle.is-cost:focus-visible {
-  color: #fbbf24;
-  border-color: rgba(251, 191, 36, 0.5);
-  background: rgba(251, 191, 36, 0.12);
-}
-.advice-detail-inline-toggle.is-versatility {
-  border-color: rgba(167, 139, 250, 0.3);
-  color: rgba(167, 139, 250, 0.65);
-}
-.advice-detail-inline-toggle.is-versatility:hover,
-.advice-detail-inline-toggle.is-versatility:focus-visible {
-  color: #a78bfa;
-  border-color: rgba(167, 139, 250, 0.5);
-  background: rgba(167, 139, 250, 0.12);
-}
-
+   这里显式写出来是为了与 `.advice-value-wrap`（那个徽标是 span + role=button）一致。 */
 .advice-detail-toggle {
   display: inline-flex;
   align-items: center;
@@ -219,6 +157,68 @@
   line-height: 1.6;
   cursor: pointer;
   user-select: none;
+}
+
+/* ---- 内联版（2026-10-15）：住在分项行第一格里、与分项名**同一行** ---------------
+   用户原话：「这些查看来源需要与其他文本位于同一行（带有「查看来源」的按钮），
+   以节省界面空间」。改前按钮与它的来源块同住一个**独立 `<tr>`**，三个分项就是三行
+   （实测每行 ~24px）；现在它与分项名并排，来源仍收在下一行里且**默认 hidden**。
+
+   ⚠️ 它是 `.advice-detail-toggle` 的**修饰类**，不是另一个类名：委托监听器、
+   `[aria-expanded]` 的箭头朝向、以及 `check-advice-layout.mjs` 的探针都按那**同一个**
+   类名找它们（拆成两个类名时探针会一个都找不到，表现为「折叠判据整组静默变红」）。 */
+.advice-factor-cell {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.advice-factor-cell > .tip-stack { min-width: 0; }
+.advice-detail-toggle.is-inline {
+  flex: none;
+  margin-top: 1px;
+  padding: 1px 7px;
+  border: 1px solid rgba(141, 233, 255, 0.20);
+  border-radius: 999px;
+  background: rgba(141, 233, 255, 0.05);
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 10px;
+  line-height: 1.55;
+  white-space: nowrap;
+}
+.advice-detail-toggle.is-inline:hover,
+.advice-detail-toggle.is-inline:focus-visible {
+  color: #8de9ff;
+  border-color: rgba(141, 233, 255, 0.45);
+  background: rgba(141, 233, 255, 0.12);
+}
+.advice-detail-toggle.is-inline[aria-expanded="true"] {
+  color: #cfeeff;
+  border-color: rgba(141, 233, 255, 0.5);
+  background: rgba(141, 233, 255, 0.16);
+}
+/* 分项分色：与下面那张表的进度条 / 徽标同色，读者一眼对得上点的是哪一项。
+   （四组选择器写成「hover + 展开」共用一条，比 repair 三遍更不容易漏。） */
+.advice-detail-toggle.is-inline.is-strength:hover,
+.advice-detail-toggle.is-inline.is-strength:focus-visible,
+.advice-detail-toggle.is-inline.is-strength[aria-expanded="true"] {
+  color: #22d3ee;
+  border-color: rgba(34, 211, 238, 0.5);
+  background: rgba(34, 211, 238, 0.12);
+}
+.advice-detail-toggle.is-inline.is-cost:hover,
+.advice-detail-toggle.is-inline.is-cost:focus-visible,
+.advice-detail-toggle.is-inline.is-cost[aria-expanded="true"] {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.5);
+  background: rgba(251, 191, 36, 0.12);
+}
+.advice-detail-toggle.is-inline.is-versatility:hover,
+.advice-detail-toggle.is-inline.is-versatility:focus-visible,
+.advice-detail-toggle.is-inline.is-versatility[aria-expanded="true"] {
+  color: #a78bfa;
+  border-color: rgba(167, 139, 250, 0.5);
+  background: rgba(167, 139, 250, 0.12);
 }
 
 /* hover / 键盘聚焦都要有可见反馈：用户要的是「可点击」（原话「都可以点击后显示来源」），
@@ -280,20 +280,20 @@
    它只是一个**容器行**，底下那块的左边线由 `.advice-detail` 画。
    ⚠️ 不写这一条时 `.advice-value-tip-table td` 的 `border-bottom` 会在每个
    分项行下面再画一条线，展开后视觉上像「表格多了一行空行」。
-   2026-10-15：紧凑模式 `.advice-detail-compact` 进一步减少内边距，让内联按钮的折叠块更紧凑。 */
+   ⚠️ **收起时这一行必须是零高**（2026-10-15，本轮）：内边距**只给 `.advice-detail`**，
+   不给外层 `.advice-detail-box`。改前外层带 `padding: 0 8px 6px`，而收起时被隐藏的是
+   里面那个 `.advice-detail` —— 于是**每一条收起的分项下面都留着 6px 的空白**
+   （三个分项 ≈ 18px，正是用户说的「不省空间」）。给被隐藏的那个元素加内边距，
+   收起时就一定塌成 0。 */
 .advice-value-tip-table tr.advice-detail-row > td {
   padding: 0;
   border-bottom: 0;
 }
 .advice-value-tip-table tr.advice-detail-row > td > .advice-detail-box {
-  padding: 0 8px 6px;
+  padding: 0;
 }
-.advice-value-tip-table tr.advice-detail-row.advice-detail-compact > td > .advice-detail-box {
-  padding: 0 8px 4px;
-}
-.advice-value-tip-table tr.advice-detail-row.advice-detail-compact > td > .advice-detail-box > .advice-detail {
-  margin-top: 2px;
-}
-  padding: 0 8px 6px;
+.advice-value-tip-table tr.advice-detail-row > td > .advice-detail-box > .advice-detail {
+  margin-top: 0;
+  padding: 4px 8px 6px;
 }
 

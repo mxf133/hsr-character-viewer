@@ -609,6 +609,35 @@ p.advice-note {
   font-size: 13.5px;
   line-height: 1.85;
 }
+/*
+ * 说明文字的**分行标签**（2026-10-15）。
+ *
+ * 用户原话：「小字部分的介绍更方便用户了解程序的功能」。这几段说明原来是一整块
+ * 没有停顿的长句 —— 读者要**读完**才知道这一段在回答哪个问题，而它们又正好写在
+ * 每个分区最显眼的位置。现在每一行前面挂一个短标签（看什么 / 怎么算 / 队伍来源 …），
+ * 扫一眼标签就知道该读哪一行。
+ *
+ * 两条取舍：
+ *   - 标签是**纯文字**、不加背景色块：它只是路标。加色块之后每行都被切成
+ *     「色块 + 正文」两截，本来就不宽的行会更碎。
+ *   - `min-width` 让标签对齐成**一列**（不等宽时正文会参差不齐地缩进，
+ *     看起来像排版坏了）。宽度按最长的那几个（4 个字）给。
+ * ⚠️ `.advice-note-line` 必须是 `block`：它们是 `<span>`（`<p>` 里不能放 `<div>`），
+ *    默认 inline 的话所有标签会挤在同一行里。
+ */
+.advice-note-line {
+  display: block;
+}
+.advice-note-line + .advice-note-line {
+  margin-top: 3px;
+}
+.advice-note-tag {
+  display: inline-block;
+  min-width: 4.6em;
+  color: var(--cyan);
+  font-weight: 600;
+  opacity: 0.85;
+}
 .advice-brief > .advice-note {
   margin: 15px 0 2px;
 }
@@ -1949,7 +1978,11 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   display: block;
   margin: 2px 0 5px;
   color: var(--text-dim);
-  line-height: 1.5;
+  /* 2026-10-15：这一行是「角色得分 = …」那条**验算口诀**（含榜内归一的完整式子），
+     属于要读者**照着算**的文字，不是装饰性的注脚 —— 10px 级别的字号太小了，
+     实测在 1080p 上要凑近看。放大半档、行高给足，读数时不容易串行。 */
+  font-size: 12.5px;
+  line-height: 1.7;
 }
 /* 泛用性来源里那串队友名字（用户 2026-10-13：「给出泛用性的完整得分来源」）。
    实测一个角色能有 74 个不同队友，所以它必然是多行的一块 —— 给紧一点的行高与
@@ -2082,15 +2115,18 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   padding-top: 7px;
   border-top: 1px dashed rgba(255, 255, 255, 0.1);
   color: var(--text-dim);
-  font-size: 10.5px;
-  line-height: 1.5;
+  /* 2026-10-15：10.5px / 1.5 是这批脚注的**最小区**，实测读起来发虚（用户这一轮要的
+     就是「小字部分更方便读」）。放大半档 + 给足行高；两条都只是排版，
+     `check-advice-layout.mjs` 按 `.advice-value-tip-note` 数条数与每条字数，不受影响。 */
+  font-size: 11.5px;
+  line-height: 1.65;
   columns: 2;
   column-gap: 14px;
 }
 @media (max-width: 620px) {
   .advice-value-tip-notes { columns: 1; }
 }
-.advice-value-tip-note { display: block; break-inside: avoid; margin-top: 2px; }
+.advice-value-tip-note { display: block; break-inside: avoid; margin-top: 4px; }
 .advice-value-tip-note:first-child { margin-top: 0; }
 
 /* ---- 表格第一格里的「最佳证据的队伍」配队卡片 -------------------------------
@@ -2212,20 +2248,29 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 }
 /* ⚠️ 播放三角用**文字**而不是 SVG：字体已经在了，不必为 9px 的图形引一条 `<svg>` 构造
    （项目无依赖、也不引图标字体）。`padding-left` 把三角形的视觉重心挪回圆心。
-   2026-10-15：为 B 站和 YouTube 使用内联 SVG 平台图标（依然无依赖）。 */
+   2026-10-15（用户原话「b 站的视频按钮改为**小电视**，更美观」）：b 站 / 油管改成
+   **平台自己的记号**（小电视 / 播放键），内联 SVG、依然无依赖；第三档保持三角。 */
 .advice-team-video-glyph {
   font-size: 9px;
   line-height: 1;
   padding-left: 1px;
 }
 .advice-team-video-icon {
-  width: 12px;
-  height: 12px;
+  width: 13px;
+  height: 13px;
   display: block;
 }
-/* b 站：官方粉。油管：官方红。第三档（tiktok / douyin 等）保持默认的中性灰。 */
+/* b 站：官方粉。油管：官方红。第三档（tiktok / douyin 等）保持默认的中性灰。
+   ⚠️ 有平台记号的两档把圆形改成**圆角方块**：两个 logo 本身是方的，塞进正圆里四角
+   会顶到边（小电视的两根天线尤其明显），看着像「图形被裁掉了一块」。 */
 .advice-team-video.is-bilibili { border-color: rgba(255, 102, 153, 0.55); color: #ff9ec4; }
 .advice-team-video.is-youtube { border-color: rgba(255, 82, 82, 0.55); color: #ff8a8a; }
+.advice-team-video.is-bilibili,
+.advice-team-video.is-youtube { border-radius: 7px; }
+.advice-team-video.is-bilibili:hover,
+.advice-team-video.is-bilibili:focus-visible { background: rgba(255, 102, 153, 0.16); }
+.advice-team-video.is-youtube:hover,
+.advice-team-video.is-youtube:focus-visible { background: rgba(255, 82, 82, 0.16); }
 .advice-team-info { display: grid; gap: 2px; min-width: 0; }
 .advice-team-name { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
 .advice-team-tags {

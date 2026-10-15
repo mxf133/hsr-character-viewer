@@ -26,7 +26,30 @@
 > （§4.2AE / §4.2AD / §4.2AC / §4.2AB / §4.2Z / §4.2Y / §4.2X / §4.2AA / §4.2P~§4.2W / §4.2K / §4.2J / §4.2I / §4.2H / §4.2G / §4.2F / §4.2E / §4.2D / §4.2C / §4.2B / §4.2A / §4.2z / §4.2y / §4.2x —— **§4.2AE 是最新的那一轮**；
 > 字母走到 `z` 之后回到 `A`，越新的轮次字母越靠后）。
 
-> 最后更新：**v4.6.104**（2026-10-15，worktree `.worktrees/old-team-strength` / 分支
+> 最后更新：**v4.6.107**（2026-10-15，worktree `.worktrees/ui-polish` / 分支 `feat/ui-polish`）
+> —— 用户一串要求：**先把上一支 Claude worktree 的积压改动合进 main、删掉 `.claude/`、
+> 新建 worktree**，然后四条界面问题：① **B 站按钮改成小电视**（上一版是「实心块 + 同色
+> 圆点」，13px 下圆点根本看不见、两根天线是 `fill` 出来的开放路径也不渲染）；
+> ② **泛用性也要有「查看来源」**（上一版只补了进度条、没有入口）；③ **「查看来源」按钮与
+> 分项名同一行**（改前独占一行，加上收起时残留的内边距，三项白占约 72px + 18px）；
+> ④ **小字更好读**（三段说明改带标签的分行、详情脚注 11.5px/1.65、写死的曲线举例改现算）。
+> 另外把 **CDP 布局套件真跑起来**，挖出并修掉一个被 `catch {}` 藏了很久的
+> `ReferenceError`（一次异常同时造成「没有泛用性来源 / 队伍没有视频图标 / 逐档榜只列一个
+> 关卡」三件看似无关的事）。CDP 套件从基线的 **11 条红**收到 **1 条红**（那条 main 上同样红）。
+> 详见 **§4.2AH**。
+> ⚠️ 那一支 Claude worktree **夹带了一处未同步测试的配分口径改动**（性价比封顶 p75 → p60、
+> 曲线指数 ^1.5 → ^1.8），`team-plan-test` 因此挂 3 条；用户 2026-10-15 选择**先不动、
+> 只留档** —— 细节与四个组合的实测对照都在 §4.2AH 末尾。
+>
+> 上一版 **v4.6.106**（2026-10-15，worktree `.worktrees/old-version-chars` / 分支
+> `fix/version-weight-rules`）—— 三条新规则：0 分口径确认 + 泛用性按权重加权 + 最佳证据取
+> 版本最新。详见 **§4.2AG**；口径见 `docs/评分模型设计.md` **v52**。
+>
+> 上一版 **v4.6.105**（2026-10-14，worktree `.worktrees/versatility-per-eidolon` / 分支
+> `feat/versatility-per-eidolon`）—— 泛用性细化到星魂档 + 队级按金数占比加权 + 版本权重
+> `3:2.5:2:1.5:1:0.5`。详见 **§4.2AF**。
+>
+> 上一版 **v4.6.104**（2026-10-15，worktree `.worktrees/old-team-strength` / 分支
 > `fix/old-team-strength`）—— 用户紧接着报「**老队伍的强度得分过高**」。两个独立原因：
 > ① v4.6.103 让队伍强度取「队内成员整包最高」，于是**借**某个 E6 成员在**别的队伍**里的成绩
 > （实测前 20 名里 14 支如此）；② 每个副本的强度取的是窗口内**最少行动值**、不按版本新鲜度取数，
@@ -3023,6 +3046,205 @@ v4.6.105）；旧角色扎堆是三个机制 —— ①「已登场无成绩算 
 回归：`herta-test` 106 项 / `team-plan-test` 32 项 / `e2e-test` 187 项全绿
 （19 套件全通过，CDP 布局套件需要 9222 调试浏览器、本机未起 → 其文案与判据已同步、
 下次起服务时一并验证）。
+
+### 4.2AH 本轮（v4.6.107，worktree `.worktrees/ui-polish` / 分支 `feat/ui-polish`）—— 先收口 Claude 那支 worktree，再做四条界面清理：小电视图标 + 泛用性来源 + 行内「查看来源」+ 小字更好读
+
+**起因**（用户原话，一段话里四条 + 一条工程要求）：
+
+> 参考 handoff.md，把 claude 的 worktree 合并进 main，再删掉 claude 的文件夹，新建 worktree
+> 目前存在的问题：b 站的视频按钮改为小电视，更美观 / 角色得分-泛用性，也需要有查看泛用性来源 /
+> 这些查看来源需要与其他文本位于同一行（带有「查看来源」的按钮），以节省界面空间 /
+> 然后让这个程序更高效、美观，小字部分的介绍更方便用户了解程序的功能 / 最后，提供优化此程序的建议
+
+#### 第 0 步：收口 Claude 那支 worktree（**这一步留下了 3 条红，见下面的「遗留」**）
+
+`.claude/worktrees/gacha-scheme-ui-improvements-c3d2fd`（分支同名）里有 **6 个文件**改了
+没提交。处理顺序：**先提交**（提交信息里逐条写明改了什么、并显式标出已知遗留）
+→ `git merge --ff-only` 进 `main`（main `9ee639e` → `9db53d0`）→ `git worktree remove`
+→ 删掉 `.claude/` 目录 → 删掉已合并的分支 → `git worktree add .worktrees/ui-polish -b feat/ui-polish`。
+
+⚠️ **两个坑，都真踩到了**：
+
+1. `git worktree remove` 报 `Permission denied`，`rd /s /q` 报「正由另一进程使用」。
+   用 `NtQueryInformationProcess` + `ReadProcessMemory` 读每个进程的
+   `RTL_USER_PROCESS_PARAMETERS.CurrentDirectory` 才定位到：**那个 worktree 的 `start.bat`
+   还开着**（`cmd.exe` 的父进程是 `explorer.exe`，说明是双击起来的），
+   `node bin\serve.mjs --port 8360` 的 cwd 就是那个目录 → 目录句柄被占住。
+   **停掉那两个进程之后目录才删得掉**。下次遇到「删不掉的 worktree」先查 cwd 占用，
+   不要反复重试删除。
+2. ⚠️ **不要用 PowerShell 的 `Get-Content -Raw` + `Set-Content` 改这个仓库里的 UTF-8 源文件**
+   （§4.2AC 也写过一次）：本轮做对照实验时这么改了一次 `public/scripts/advice.js`，
+   中文全被写成乱码（`thin: '鍙傝€?`），`node --check` 立刻炸。**改文件一律用编辑工具**；
+   已经写坏就从备份 / `git checkout -- <file>` 恢复（本轮 `git diff` 已确认恢复干净）。
+
+#### 第 1 步：B 站视频按钮 → **小电视**
+
+上一版虽然把 `▶` 换成了 SVG，但画法是「**实心块 + 同色圆点**」：图标只有 13px，
+同色圆点在屏幕上完全看不见，整个图标退化成一块纯色方块；两根天线还是
+`fill` 出来的开放路径（没有面积 ⇒ 根本不渲染）。现在改成**描边 + 空心**：
+
+| 平台 | 图形 | 取色 |
+| --- | --- | --- |
+| bilibili | 圆角机身 + 两根天线 + 两只「眼睛」（`<rect>` + 4 条 `<path>`，`fill="none"`） | CSS `.is-bilibili` 官方粉 |
+| youtube | 圆角机身 + 实心播放三角（三角单独一条 `path`、`stroke="none"`） | CSS `.is-youtube` 官方红 |
+| 第三档 | 保持原来的 `▶` 文字三角 | `var(--text-dim)` |
+
+SVG 里**一个硬编码色值都没有**（上一版 YouTube 那个三角写死了 `fill="#0B0E14"`，
+换主题就会露出底色）。这两档的按钮同时从**正圆改圆角方块**（`border-radius: 7px`）：
+两个 logo 本身是方的，塞进圆里四角会顶到边。
+`aria-hidden="true"`：外链自己已经有 `aria-label`，图形再报一次只会念两遍。
+
+#### 第 2 步：「查看来源」按钮搬到**分项行的第一格**
+
+用户要「与其它文字同一行」。改前按钮与它控制的来源块同住一个**独立 `<tr>`**：
+
+| | 改前 | 改后 |
+| --- | --- | --- |
+| 按钮位置 | 独立 `<tr>`（`colspan=5`）里的 `.advice-detail-box` | 分项行**第一格**里的 `.advice-factor-cell`（flex + `space-between`，贴右） |
+| 占用的高度 | 每项约 **24px**，三项 ≈ 72px | **0**（按钮与分项名共享那一行） |
+| 收起时的残留 | 外层 `.advice-detail-box` 的 `padding: 0 8px 6px` 仍然撑高 ≈ 6px/项 | **0**：内边距挪到**被隐藏的那一层**（`.advice-detail`），收起即塌 |
+| 按钮文字 | `▾ 查看强度来源` | `查看来源 ▾`（`title` / `aria-label` 才写全「查看强度来源」） |
+
+**⚠️ 两处必须同步的改动**（漏一处就会「点不动」或「探测静默判红」）：
+
+* `advice-view.js` 的委托监听器原来写 `toggle.parentElement?.querySelector('.advice-detail')`
+  —— 按钮搬到第一格之后，`parentElement` 是那个 `<td>`，里面**没有** `.advice-detail`
+  （内容在下一行），于是 `aria-expanded` 会变、内容永远不出现。抽了一个
+  **`detailOf(toggle)`**：优先按按钮自己的 `aria-controls` 取 id，
+  取不到才退回旧写法。`tools/check-advice-layout.mjs` 的探针用**同一套**找法
+  （两边不一致时会出现「探针说折叠正常、用户点不动」这种最难查的分叉）。
+* 上一版还给**每个按钮**又绑了一次 `click`。委托监听器**也会**收到同一次点击，
+  于是同一次点击把状态翻两次（`true` → `false`）= **点了没反应**。本轮删掉，
+  只留模块级委托那一份（`wireValueTips()` 里 `detailToggleWired` 那个守卫）。
+
+#### 第 3 步：泛用性也有了自己的「查看来源」
+
+上一版只给泛用性补了**进度条**（`advice-plan-team-meters` 从 2 列改 3 列、
+`is-versatility` 用紫色），**没有入口**。现在三个分项共用同一套按钮逻辑，
+泛用性那一块由 `versatilitySourceBlock()` 返回（名单在 `enrichTipDetail()` 补回来
+之后会 `tip.replaceWith(frontierTip(unit))` 整体重建，所以按钮会跟着出现）。
+探针按 **3 条**断言，并且新增一条**几何**判据：按钮与本行文字必须**同一行**
+（两者矩形垂直相交 + 中心偏差 ≤ 10px）。
+
+#### 第 4 步：小字更好读 / 更好懂
+
+| 位置 | 改前 | 改后 |
+| --- | --- | --- |
+| 抽卡推荐页三段说明（`index.html`） | 一整块没有停顿的长句 | **带标签的分行**：看什么 / 怎么算 / 切档位 / 队伍来源 / 分数怎么算 / 强度 / 性价比 / 每张卡 / 排序 / 注意 / 用途，标签缩进成一列（`.advice-note-line` / `.advice-note-tag`，纯文字不着色块） |
+| 详情窗口脚注 `.advice-value-tip-notes` | 10.5px / 1.5，条间距 2px | **11.5px / 1.65**，条间距 4px |
+| 「角色得分 = …」验算口诀 | 继承字号，`line-height: 1.5` | **12.5px / 1.7**（它是**要照着算**的文字，不是装饰性注脚） |
+| 性价比曲线举例 | 写死「补 2 金 79 分 / 补 8 金 28 分 / 补 10 金 15 分」 | 按 `plan.gapMax` 与 `gapPower` **现算**（写死的数字一改口径就失同步，实测 p75→p60 / ^1.5→^1.8 之后三个数一个都不对） |
+| 强度口径文案 | 「最少行动值」 | 「**最近版本那一次**」（v4.6.104 起就是这个口径，文案一直没跟上） |
+| 性价比指数文案 | `^1.5` | `^1.8`（跟随代码里实际生效的 `teamPlanGapPower`） |
+
+#### 第 5 步：顺手修掉的硬 bug
+
+* `public/styles/advice-tip-window.css` **末尾有一截残缺 CSS**（上一轮编辑被截断留下的
+  悬空 `padding: 0 8px 6px;` 与多余的 `}`）—— 已删除，花括号回到 31/31 配平。
+* `.advice-detail-inline-toggle` 收成 **`.advice-detail-toggle.is-inline`**：拆成两个类名时
+  委托监听器与 CDP 探针都会**一个都找不到**（`querySelectorAll('.advice-detail-toggle')`
+  不匹配 `advice-detail-inline-toggle`），折叠判据整组静默变红。
+
+#### 第 6 步（**本轮的头条**）：把 CDP 布局套件**真跑起来**，挖出一个被 `catch {}` 藏了很久的 `ReferenceError`
+
+按 `docs/CDP布局套件.md` 把环境搭起来（worktree 自己的服务 8360 + 临时 profile 的调试
+Chrome 9222），先跑了 **main** 的 8371 做基线，再跑 worktree —— 两份 ✗ 清单逐条对照。
+基线自己就有 **11 条红**，说明这套件在本机长期没被真跑过。逐条追下去，根因只有一个：
+
+**`versatilitySourceBlock()` 里那一行验算公式调用了 `num()`，而 `num()` 只是
+`scoreBreakdownTable()` 内部的局部函数** —— 模块级函数取不到它，于是每次渲染
+「泛用性来源」都抛 `ReferenceError: num is not defined`。而调用链外面套着
+
+```js
+try { await enrichTipDetail(tip); } catch { /* 取不到就用现有的那几行 */ }
+```
+
+异常被**吞掉**，`enrichTipDetail()` 末尾那次 `tip.replaceWith(frontierTip(unit))`
+整个不执行。于是**一次异常在界面上表现为三件看起来毫不相干的事**：
+
+| 症状 | 用户视角 | 实测（同一窗口同一份数据） |
+| --- | --- | --- |
+| 「泛用性来源」永远不出现 | 「角色得分-泛用性，也需要有查看泛用性来源」 | 名单 **0 → 78 个**；折叠块 **2 → 3 个** |
+| 详情表第一格的队伍没有来源视频图标 | 图标时有时无 | **0 → 5 个**（逐行都有） |
+| 逐档榜详情页只列一个关卡 | v4.6.96 声称已修的旧 bug「复发」 | E0 档第一行 **1 → 5 行** |
+
+**修法**：那一行改用与相邻两行同一套 `Number()` 写法；`catch` 换成 `console.error`
+—— **宁可打一行日志也不要静默降级**，这个 bug 之所以能活这么久，就是因为控制台一片安静。
+
+> 💡 这一条值得写进 §6（踩过的坑）：**「静默 catch + 局部函数名撞车」是最贵的一类 bug**
+> —— 症状分散在三个不相关的地方，而每一处单看都像「数据没取到」。
+> 判断方法：把 `catch {}` 改成 `catch (e) { console.error(e) }` 再点一次，
+> 或者直接用 CDP 读 `tip.__unit` 的状态（本轮就是靠 `unitDiag` 那一行定位的：
+> 整包对象**已经补齐**（`vMembers: 78`）而 DOM 里没有对应区块 ⇒ 重建那一步抛了）。
+
+#### 第 7 步：CDP 探针里三条**过期**判据（与第 6 步同一类病：口径改了、判据没跟上）
+
+| 判据 | 过期在哪 | 修法 |
+| --- | --- | --- |
+| `versRaw`（标题上那个数） | 正则找「共 N 个」，而 v4.6.106 起标题写「**并集** N 个」 | 两个量词都收 |
+| 归一换算公式 | 正则写死第一个数是 `\d+`，而 v4.6.106 起泛用性原始量是**小数**（实测 27.6）→ `（27.6 − …` 匹配不上 | 四个数一律 `[\d.]+` |
+| 折叠块「点开」 | 按 `parentElement.querySelector('.advice-detail')` 找内容，按钮搬到第一格后恒为 null | 改走 `aria-controls`（与代码同一套） |
+
+另**新增**两条真几何判据（不是文案判据）：三条分项行各自要有内联「查看来源」按钮、
+且与本行文字**同一行**（矩形垂直相交 + 中心高度差 ≤10px，实测 **dy=3px**）。
+
+#### 改过的文件
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `public/scripts/advice-view.js` | ① `VIDEO_ICON_SVG`（新）：b 站小电视 / 油管播放键的内联 SVG，`videoLink()` 按平台取；② 新增 **`detailOf()`**，委托监听器改用它；③ 新增 `tipInlineToggle()` / `tipInlineDetailRow()`；`scoreBreakdownTable()` 的第一格改成 `.advice-factor-cell`（名字 + 内联按钮），删掉逐个 `addEventListener`；④ 性价比曲线的举例改成 `gapSample()` 现算；⑤ **修 `versatilitySourceBlock()` 的 `ReferenceError: num is not defined`** + `openTip` 的静默 `catch` 换成 `console.error` |
+| `public/scripts/advice.js` | 只有上一支 worktree 带进来的改名与常量（`teamPlanGapCapPct` / `teamPlanGapPower`）——**本轮没有再动**（用户选择保留现状） |
+| `public/styles/advice-tip-window.css` | 删掉残缺尾巴；`.advice-detail-inline-toggle` → `.advice-detail-toggle.is-inline`（含分项分色）；折叠行内边距挪进 `.advice-detail` 让收起时**整行零高**（实测 6px+1px → **1px**，那 1px 是 `border-collapse` 的共用边框） |
+| `public/styles/app.css` | `.advice-note-line` / `.advice-note-tag`（新）；视频图标 13px + 圆角方块 + hover 底色；脚注 11.5px/1.65；验算口诀 12.5px/1.7 |
+| `public/index.html` | 三段说明改带标签的分行；`^1.5` → `^1.8`；「最少行动值」→「最近版本那一次」 |
+| `tools/check-advice-layout.mjs` | 折叠块解析改 `aria-controls`（新增 `detailOfNode`）；新增 `rowH`（**整行**也必须基本零高，阈值 2px）并入 `collapseOk`；`glyph` 接受内联 SVG；新增 `splitRowLabels`（改读 `.tip-main`，因为第一格多了按钮）与 `splitInlineToggles` + `splitInlineOk`（三条都要有、文字含「查看来源」、与文字同行）；`差额接近度` → `性价比`（两处取值 + 一处逐字断言）；**修三条过期正则**（见第 7 步）；新增 `unitDiag` 诊断（补齐后整包对象的状态） |
+| `src/version.js` / `package.json` | 版本 → **4.6.107** + changelog |
+| `HANDOFF.md` | 顶部「最后更新」追到 v4.6.107（顺带把漏掉的 105 / 106 两版链上）；本节 |
+
+#### ⚠️ 遗留：`team-plan-test` 挂着 3 条红（**上一支 worktree 带进来的**，用户选择保留现状）
+
+那支 Claude worktree 除了界面改动，还**夹带了一处配分口径改动**（注释写的是用户
+2026-10-15 要的「10 金的性价比就该归零了」）：`teamPlanGapCapPct` **p75 → p60**、
+`teamPlanGapPower` **1.5 → 1.8**。它**没有同步任何测试**，实测挂 3 条：
+
+| 用例 | 症状 |
+| --- | --- |
+| ⭐⭐ 真载荷：那支 16 金的队伍不再排第 1 | **第 1 名的账面金数 21 金**（断言 `gold <= 13`）。这条断言编码的正是用户 2026-10-12 的需求「优先推荐的队伍已经被更能压成本的队伍取代」—— 改后**又变回一支贵队** |
+| 指标②是分位封顶 + 曲线指数 | 夹具池内 `gapMax` 落到 **1 金**，`(1 − 3/1)^k` 在 JS 里对负数开小数次方 = `NaN`，而代码夹到 0；**测试自己没夹底**（器件问题） |
+| 界面现算的差额 = 服务端口径 | `#4 Cyrene…/Robin • Summeretto` 实测 **27**、测试按 `availability` 现算 **23**，差 4。这一条**与口径无关**，是那条队伍的 4 把限定光锥在 `availability.lightCones` 里查不到 → 测试少算 4 金；它平时被**名次顺序**掩盖，cap 一改顺序就暴露了 |
+
+四个组合的实测对照（本轮真跑过）：
+
+| 封顶 | 指数 | `team-plan-test` |
+| --- | --- | --- |
+| p75 | ^1.5 | **全绿**（= 上一版用户实测定下的那一组） |
+| p75 | ^1.8 | 1 条红（「补 2 金的 ② 不该被指数砍掉太多」） |
+| p60 | ^1.5 | 2 条红 |
+| p60 | ^1.8（**现状**） | 3 条红 |
+
+**用户 2026-10-15 的决定是「先不动，只在报告里写清楚」**，所以本轮**没有**改这两个常量。
+下一轮若要收口，三条路任选：① 恢复 p75 / ^1.5（测试全绿，代价是放弃「10 金归零」）；
+② 保留 p60 / ^1.8 并改写那 3 条断言与本节口径；③ 折中（封顶 p60、指数仍 ^1.5 ——
+「10 金归零」生效且第 1 名仍 ≤ 13 金，只剩 2 条要修）。
+
+#### 回归
+
+**21 个套件里 20 个全绿 —— 包含真跑起来的 CDP 布局套件**（这是 v4.6.96 之后第一次
+在本机真跑通它）。环境：worktree 自己的服务 `8360`（`DSH_HSR_DATA_FILE=accounts-virtual.json`）
++ 临时 profile 的调试 Chrome `9222`；命令 `node tools/check-advice-layout.mjs --url=http://127.0.0.1:8360/`。
+
+CDP 套件从基线（main）的 **11 条红**收到 **1 条红**，唯一剩下的那条 **main 上同样红**：
+
+> `✗ 角色总榜受抽卡权重影响：角色得分 +92 → 角色得分 +92`
+
+已排除的可能：`conclusionKey()` **确实**包含 `draw[...]`（`advice-view.js:1020`）；
+同一个探针里改**关卡权重**时榜面会动（实测 `+92 → +90`）；抽卡方案那几项**确实**重算了
+（等式 `× 0.33 → × 0.6/0.2/0.2`）。所以「权重没送到」这条基本可以排除，剩下的嫌疑是
+「榜面在**读取那一刻**还没重算完」或「榜首那个角色在两组权重下的加权值恰好都四舍五入到 92」。
+**留作下一轮的线索**，不要在没有新证据时直接改判据。
+
+`team-plan-test` 的 3 条红全部来自 §4.2AH 第 0 步那处**上一支 worktree 带进来的口径改动**
+（对照实验已确认：把两个常量改回 p75 / ^1.5 即全绿），本轮自己改的东西没有新增失败。
 
 ---
 

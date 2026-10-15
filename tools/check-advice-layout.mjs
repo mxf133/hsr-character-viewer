@@ -1433,17 +1433,31 @@ if (!tipTarget) {
     //    （或者全红），看起来像布局回归。
     //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
     const toggles = [ ...tip.querySelectorAll('.advice-detail-toggle') ];
+    // ⚠️ 「按钮控制哪一块」必须与 advice-view.js 的 detailOf() 用**同一套**找法：
+    //    优先按按钮自己的 aria-controls 取，取不到才退回「同一个容器里找」。
+    //    2026-10-15 起三个分项的按钮住在**分项行的第一格**（与分项名同一行）、内容在
+    //    **下一行**，两者不在同一棵子树里 —— 只看 parentElement 会恒拿到 null，
+    //    于是这一组折叠判据全部静默变红，看起来像「折叠功能坏了」。
+    //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+    const detailOfNode = (b) => document.getElementById(b.getAttribute('aria-controls') || '')
+      || b.parentElement?.querySelector('.advice-detail') || null;
     const detailCollapsed = toggles.map((b) => {
-      const d = b.parentElement?.querySelector('.advice-detail');
+      const d = detailOfNode(b);
+      const tr = d ? d.closest('tr') : null;
       return { expanded: b.getAttribute('aria-expanded'), hidden: d ? d.hidden : null,
         // 收起时那一块在几何上必须是**零高**（hidden 生效）；只改了属性而 CSS 没压住
         // display 的话这里会是一个正数 —— 那正是「折叠静默失效」的症状。
-        h: d ? Math.round(d.getBoundingClientRect().height) : null };
+        h: d ? Math.round(d.getBoundingClientRect().height) : null,
+        // ⚠️ 2026-10-15 新增：**装它的那一整行**也必须是零高。只量 .advice-detail
+        //    查不出另一种很难看的回归 —— 内容确实 hidden 了，但外层容器还留着内边距，
+        //    于是三条收起的分项下面各留一截空白（改前实测每行 6px、合计 ~18px，
+        //    正是用户说的「不省空间」）。非表格里的折叠块没有 tr，退回量它自己。
+        rowH: d ? Math.round((tr || d).getBoundingClientRect().height) : null };
     });
     for (const b of toggles) b.click();
     const detailExpanded = toggles.map((b) => ({
       expanded: b.getAttribute('aria-expanded'),
-      hidden: b.parentElement?.querySelector('.advice-detail')?.hidden ?? null,
+      hidden: detailOfNode(b)?.hidden ?? null,
     }));
     const scoreScale = tip.querySelector('.advice-value-tip-table.is-score-scale');
     const table = tip.querySelector('.advice-value-tip-table.is-source');
@@ -1524,7 +1538,13 @@ if (!tipTarget) {
         rel: a.getAttribute('rel') || '',
         platform: [ ...a.classList ].find((c) => c.startsWith('is-')) || '',
         inSlot: Boolean(a.closest('.advice-plan-team-slot')),
-        glyph: (a.querySelector('.advice-team-video-glyph')?.textContent || '').trim(),
+        // ⚠️ 2026-10-15：b 站 / 油管的记号换成了**内联 SVG**（用户：「b 站的视频按钮改为
+        //    小电视，更美观」），那种节点的 textContent **恒为空** —— 只认文字三角的话
+        //    这条判据会把「图标更好看了」判成「图标没了」。所以两条都收：有文字用文字，
+        //    是 SVG 就记一个标记，判据仍然只要求「有一个看得见的图形」。
+        //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF 6.1 第 16 条）。
+        glyph: (a.querySelector('.advice-team-video-glyph')?.textContent
+          || (a.querySelector('svg.advice-team-video-icon') ? '[svg]' : '') || '').trim(),
       })),
       teamSlots: [ ...tip.querySelectorAll('.advice-plan-team-slot') ]
         .filter((s) => s.querySelector('.advice-team')).length,
@@ -1542,6 +1562,34 @@ if (!tipTarget) {
       // ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
       splitHeaders: [ ...(splitTable?.querySelectorAll(':scope > thead > tr > th') || []) ]
         .map((n) => n.textContent),
+      // 三个分项行的**列名**（第一格里的 .tip-main）。
+      // ⚠️ 2026-10-15：那一格里现在多了一个「查看来源」按钮（用户要求与文字同一行），
+      //    所以**不能**再读 tr.children[0].textContent —— 那会读出
+      //    「强度各副本…查看来源▾」，把列名判等整组判红。
+      //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+      splitRowLabels: [ ...(splitTable?.querySelectorAll(':scope > tbody > tr') || []) ]
+        .filter((tr) => !tr.classList.contains('is-total')
+          && !tr.classList.contains('advice-detail-row'))
+        .map((tr) => (tr.querySelector('.tip-main')?.textContent || '').trim()),
+      // 内联「查看来源」按钮：用户 2026-10-15 原话「这些查看来源需要与其他文本位于同一行
+      //（带有「查看来源」的按钮），以节省界面空间」。逐行量三件事：
+      //   ① 按钮在不在这一行里；② 文字里有没有「查看来源」；③ 它与本行文字是不是**同一行**
+      //   —— 用两者矩形在垂直方向**相交**判断，再给出中心偏差 dy 作诊断
+      //   （space-between + 单行 flex 时实测 dy 是个位数）。
+      //   ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+      splitInlineToggles: [ ...(splitTable?.querySelectorAll(':scope > tbody > tr') || []) ]
+        .filter((tr) => !tr.classList.contains('is-total')
+          && !tr.classList.contains('advice-detail-row'))
+        .map((tr) => {
+          const btn = tr.querySelector('.advice-detail-toggle.is-inline');
+          const label = tr.querySelector('.advice-factor-cell .tip-stack');
+          if (!btn || !label) return { text: '', dy: null, sameRow: false };
+          const b = btn.getBoundingClientRect();
+          const l = label.getBoundingClientRect();
+          return { text: (btn.textContent || '').trim(),
+            dy: Math.round(Math.abs((b.top + b.bottom) / 2 - (l.top + l.bottom) / 2)),
+            sameRow: b.height > 0 && l.height > 0 && b.top < l.bottom && l.top < b.bottom };
+        }),
       // ---- 折叠块（用户 2026-10-13 第 8 条）------------------------------------------
       // 收起态在上面、**点之前**量的；展开态是点完之后量的。两串一起带出来，
       // 这样「默认收起」与「点一下真的展开」两条判据各有自己的证据。
@@ -1560,10 +1608,33 @@ if (!tipTarget) {
       // 泛用性来源块：名单文本 + 它下面的归一换算那句。
       versMembers,
       versListCount: versMemberCount,
+      // ⚠️ 2026-10-15 加的**诊断**：泛用性名单与「详情表第一格的队伍视频」都靠
+      //    enrichTipDetail() 在开窗之前按需补齐（/api/archive/packs）。
+      //    那一步静默失败时，界面上只表现为「泛用性来源是空的」+「队伍没有视频图标」，
+      //    看不出是哪一环断的。这里把整包对象在**补齐之后**的状态一并取出来：
+      //      vMembers / vTier  = 第二步（泛用性名单）有没有落地；
+      //      envVideos / envs  = 第三步（来源视频合并）有没有落地。
+      //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+      unitDiag: (() => {
+        const u = tip.__unit || {};
+        return {
+          name: u.name || null,
+          vMembers: Array.isArray(u.versatilityMembers) ? u.versatilityMembers.length : null,
+          vTier: u.versatilityByTier ? Object.keys(u.versatilityByTier).join('/') : null,
+          envs: Array.isArray(u.envs) ? u.envs.length : null,
+          envCount: u.envCount == null ? null : u.envCount,
+          envVideos: Array.isArray(u.envs) ? u.envs.filter((e) => e.video).length : null,
+        };
+      })(),
       versNote: versBlock?.querySelector('.advice-source-note')?.textContent || '',
       versRaw: (() => {
         const t = versBlock?.querySelector('.advice-score-split-title')?.textContent || '';
-        return Number((t.match(/共\\s*(\\d+)\\s*个/) || [])[1]);
+        // ⚠️ 2026-10-15：标题里的量词从「共 N 个」改成了「**并集** N 个」
+        //    （v4.6.106 起名单是**并集**、原始量是**加权**值，两个量纲必须分开说，
+        //    见 versatilitySourceBlock() 的注释）。两个词都收，免得下次再改措辞
+        //    又把这条判据判红 —— 它要钉的是「标题上那个数 = 名单里数出来的个数」。
+        //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+        return Number((t.match(/(?:共|并集)\\s*(\\d+)\\s*个/) || [])[1]);
       })(),
       splitTotal: String(splitTable
         ?.querySelector(':scope > tbody > tr.is-total > td:last-child')?.textContent || ''),
@@ -1933,10 +2004,24 @@ if (!tipTarget) {
   // 这条恒等式是整块改动的锚点：权重接错层、归一化取样集合写错、或者某天有人把
   // 角色得分又改回「含金数项总分」，这一格立刻与标题对不上。
   const SPLIT_HEADERS = ['分项', '原始量', '得分', '权重', '贡献'];
+  // ⚠️ 探针写死三行的列名（与表头 SPLIT_HEADERS 同一条约定）：第一列的**分项名**必须
+  //    逐字是这三个，且顺序固定。2026-10-15 改成读 `.tip-main`（那一格里多了按钮）。
+  const SPLIT_LABELS = ['强度', '性价比', '泛用性'];
   const splitOk = Boolean(tipReport)
     && JSON.stringify(tipReport.splitHeaders) === JSON.stringify(SPLIT_HEADERS)
+    && JSON.stringify(tipReport.splitRowLabels) === JSON.stringify(SPLIT_LABELS)
     && tipReport.splitRowCount === 4
     && tipReport.splitTotal === headValue;
+  // ---- 内联「查看来源」按钮（用户 2026-10-15）------------------------------------------
+  // 三条分项行必须**各自**有一个内联按钮（含泛用性 —— 用户点名「角色得分-泛用性，也需要有
+  // 查看泛用性来源」），文字是「查看来源」，且与分项名处在**同一行**。
+  // ⚠️ 条数按 3 判：窗口是走正常路径打开的（`enrichTipDetail()` 会把泛用性名单补齐并重建
+  //    内容），而下面那条 `versatilitySourceOk` 本来就已经要求泛用性名单非空 ——
+  //    这里按 3 判不会比它更严。
+  const splitInlineOk = Boolean(tipReport)
+    && tipReport.splitInlineToggles.length === SPLIT_LABELS.length
+    && tipReport.splitInlineToggles.every((t) => t.text.includes('查看来源')
+      && t.sameRow && t.dy !== null && t.dy <= 10);
   // ---- 折叠块：默认收起 + 点一下真的展开（用户 2026-10-13 第 8 条）----------------------
   //
   // 用户原话：「强度/性价比/泛用性三个得分项目，都可以点击后显示来源，节省界面的空间，
@@ -1952,7 +2037,12 @@ if (!tipTarget) {
   const collapsed = tipReport?.detailCollapsed || [];
   const expanded = tipReport?.detailExpanded || [];
   const collapseOk = collapsed.length >= 1
-    && collapsed.every((d) => d.expanded === 'false' && d.hidden === true && d.h === 0);
+    && collapsed.every((d) => d.expanded === 'false' && d.hidden === true && d.h === 0
+      // 2026-10-15：整行也必须**基本**零高。阈值给 2px 而不是 0：`border-collapse: collapse`
+      // 下相邻两行的边框是**共用**的，`tr` 的 `getBoundingClientRect()` 会把那条共用的
+      // 1px 算进来（实测每行 1px）。真正要挡的是「被隐藏的外层还留着内边距」那种
+      // 6~7px 的残留 —— 改前实测就是 6px + 1px。
+      && d.rowH !== null && d.rowH <= 2);
   const expandOk = expanded.length === collapsed.length
     && expanded.every((d) => d.expanded === 'true' && d.hidden === false);
   // ---- 强度 / 泛用性 两项的「完整得分来源」（用户 2026-10-13）------------------------
@@ -1982,7 +2072,11 @@ if (!tipTarget) {
   const versatilitySourceOk = Boolean(tipReport)
     && tipReport.versListCount > 0
     && tipReport.versListCount === tipReport.versRaw
-    && /得分 = 100 ×（\d+ − [\d.]+）\/（[\d.]+ − [\d.]+）/.test(tipReport.versNote);
+    // ⚠️ 2026-10-15：**第一个数也要允许小数**。v4.6.106 起泛用性原始量从「整数并集」
+    //    变成「按关卡与版本双重加权的队友数」（实测 27.6），而这条正则原来写死 `\d+`，
+    //    于是「（27.6 − …」一个都匹配不上 —— 判据红，但界面上的公式其实是对的
+    //    （`\d+` 只吃到 `27` 就要求下一个字符是空格，实际是 `.`）。四个数一律用 [\d.]+。
+    && /得分 = 100 ×（[\d.]+ − [\d.]+）\/（[\d.]+ − [\d.]+）/.test(tipReport.versNote);
   /**
    * **来源视频图标**（用户 2026-10-14 第 6 条：「界面上每个显示的队伍都要有一个图标，
    * 点击在新界面打开对应的 b 站/油管页面，类似黑塔网（不需要内嵌播放器）」）。
@@ -2033,7 +2127,8 @@ if (!tipTarget) {
     && tipReport.cones.length > 0 && tipReport.cones.every((w) => w > 0)
     && titleOk && renameOk && orderOk && sourceOk
     // 用户 2026-10-13 第 1、2 条：三个分项那张表（列名 / 三行 + 合计 / 合计 = 标题上的数）。
-    && splitOk
+    // 2026-10-15 追加：三行各自要有**与文字同一行**的「查看来源」按钮。
+    && splitOk && splitInlineOk
     // 用户 2026-10-13：「三项都要有**完整得分来源**」——强度那张表 + 泛用性那块名单。
     && strengthSourceOk && versatilitySourceOk
     // 用户 2026-10-14 第 6 条：每支显示的队伍一个来源视频外链（在新标签页打开）。
@@ -2167,7 +2262,12 @@ if (!tipTarget) {
     // 三个分项那张表（用户 2026-10-13 第 1、2 条）：合计必须与标题上那个数逐字相同。
     console.log(`      ${splitOk ? '✓' : '✗'} 角色得分三分项表：列 ${JSON.stringify(tipReport.splitHeaders)}`
       + `，${tipReport.splitRowCount} 行（3 个分项 + 合计）`
-      + `，合计 ${JSON.stringify(tipReport.splitTotal)}（标题上的数是 ${headValue}）`);
+      + `，合计 ${JSON.stringify(tipReport.splitTotal)}（标题上的数是 ${headValue}）`
+      + `，分项名 ${JSON.stringify(tipReport.splitRowLabels)}`);
+    // 用户 2026-10-15：「查看来源」按钮必须与分项名**同一行**（含泛用性那一项）。
+    console.log(`      ${splitInlineOk ? '✓' : '✗'} 三个「查看来源」按钮都在分项行的**第一格**里`
+      + `（与文字同行）：`
+      + `${JSON.stringify((tipReport.splitInlineToggles || []).map((t) => `${t.text || '（无）'}/${t.sameRow ? '同行' : '换行了'} dy=${t.dy}`))}`);
     console.log(`      ${sourceOk ? '✓' : '✗'} 贡献值来源表：列 ${JSON.stringify(tipReport.headers)}`
       + `，逐副本 ${tipReport.rows.length} 行`
       + `${tipReport.rows[0] ? `（首行 ${JSON.stringify(tipReport.rows[0])}）` : ''}`
@@ -2181,6 +2281,10 @@ if (!tipTarget) {
       + `${tipReport.strengthTotalRow ? `，合计 ${JSON.stringify(tipReport.strengthTotalRow)}` : '，单副本无合计行'}`);
     console.log(`      ${versatilitySourceOk ? '✓' : '✗'} 泛用性来源：名单 ${tipReport.versListCount} 个`
       + `（标题写 ${tipReport.versRaw} 个）｜归一换算「${tipReport.versNote}」`);
+    // 2026-10-15 加的诊断：泛用性名单与「详情表第一格的队伍视频」都靠
+    // `enrichTipDetail()` 在开窗之前按需补齐（`/api/archive/packs`）。那一步静默失败时
+    // 界面只表现为「来源是空的」，看不出断在哪一环 —— 这一行把整包对象补齐后的状态印出来。
+    console.log(`      · 整包补齐状态：${JSON.stringify(tipReport.unitDiag || {})}`);
     // 用户 2026-10-14 第 6 条：每支显示的队伍一个来源视频外链。
     console.log(`      ${teamVideoOk ? '✓' : '✗'} 队伍来源视频图标（详情表第一格的队伍行）：`
       + `${tipReport.teamVideos.length} 个 / 队伍槽 ${tipReport.teamSlots} 个`
@@ -2197,8 +2301,8 @@ if (!tipTarget) {
     console.log(`  ${collapseOk ? '✓' : '✗'} 三个分项的来源**默认全部收起**`
       + `（用户 2026-10-13 第 8 条「节省界面的空间」）：`
       + `${collapsed.length} 个折叠块 `
-      + JSON.stringify(collapsed.map((d) => `aria=${d.expanded}/hidden=${d.hidden}/高=${d.h}px`))
-      + '（要求 aria=false、hidden=true、高=0）');
+      + JSON.stringify(collapsed.map((d) => `aria=${d.expanded}/hidden=${d.hidden}/高=${d.h}px/整行=${d.rowH}px`))
+      + '（要求 aria=false、hidden=true、高=0、整行=0）');
     console.log(`  ${expandOk ? '✓' : '✗'} 点击后**就地展开**（同一个按钮再点收起）`
       + `（探针真的点了每个 .advice-detail-toggle）：`
       + JSON.stringify(expanded.map((d) => `aria=${d.expanded}/hidden=${d.hidden}`)));
@@ -2670,10 +2774,10 @@ const teamPlanProbe = await evaluate(`(() => {
     // ⚠️ 第二项在 2026-10-12 第 6 条**回到**「差额接近度」：v4.6.87 一度叫「性价比得分」
     //    （差额接近度 与 压金度 合成），用户说这三者重叠、只要差额接近度，于是删掉中间层。
     //    标签不跟着改，numAfter 会取到 NaN（这条断言就是这么被绊到的）。
-    const parts = [numAfter('强度得分'), numAfter('差额接近度'), numAfter('泛用性')];
+    const parts = [numAfter('强度得分'), numAfter('性价比'), numAfter('泛用性')];
     // ⚠️ 第三项「泛用性」是用户 2026-10-13 第 3 条（「泛用性权重也适用于补金推荐」）
     //    加进来的 —— 等式里现在是**三个**分项与三个系数，v4.6.95/96 时只有两个。
-    const coefs = [coefAfter('强度得分'), coefAfter('差额接近度'), coefAfter('泛用性')];
+    const coefs = [coefAfter('强度得分'), coefAfter('性价比'), coefAfter('泛用性')];
     const fills = [ ...card.querySelectorAll('.advice-plan-team-fill .advice-fill-item') ];
     // 一笔补金可能是**多金**（例：遐蝶 E0→E2 一笔 2 金），所以条数 ≠ 补金金数 ——
     // 正确的判据是「各条的金数之和 = 补金金数」。每条的 .advice-fill-cost 以「N 金」开头。
@@ -2761,7 +2865,7 @@ if (teamPlanProbe.missing) {
       && Math.abs(r.coefs[0] * r.parts[0] + r.coefs[1] * r.parts[1]
         + r.coefs[2] * r.parts[2] - r.badge) < 1.51);
     if (!eqOk) failures += 1;
-    console.log(`  ${eqOk ? '✓' : '✗'} 每张卡的总分 = 强度得分×系数 + 差额接近度×系数 + 泛用性×系数`
+    console.log(`  ${eqOk ? '✓' : '✗'} 每张卡的总分 = 强度得分×系数 + 性价比×系数 + 泛用性×系数`
       + `（系数由抽卡权重决定、印在卡上，三个系数之和必须是 1）`);
     const shapeOk = teamPlanProbe.rows.every((r) => r.hasRank && r.slots === 4
       // ⚠️ `fills >= 1` 曾被写成硬条件，与用户第 6 条**自相矛盾**：隐金设置开着时
@@ -2944,11 +3048,11 @@ if (teamPlanProbe.missing) {
       //    且不许再出现「压金度 / 性价比得分」。2026-10-13 第 3 条（泛用性也进补金推荐）
       //    之后是**三行** —— v4.6.95/96 时这里钉的是两行。
       const scoreScaleOk = JSON.stringify(scoreTip?.rowLabels)
-        === JSON.stringify(['强度得分', '差额接近度', '泛用性'])
+        === JSON.stringify(['强度得分', '性价比', '泛用性'])
         && !scoreTip.text.includes('压金度')
         && !scoreTip.text.includes('性价比得分');
       if (!scoreScaleOk) failures += 1;
-      console.log(`  ${scoreScaleOk ? '✓' : '✗'} 分数来源表是「强度得分 / 差额接近度 / 泛用性」三行、`
+      console.log(`  ${scoreScaleOk ? '✓' : '✗'} 分数来源表是「强度得分 / 性价比 / 泛用性」三行、`
         + `全文不出现「压金度 / 性价比得分」（实际 ${JSON.stringify(scoreTip?.rowLabels || [])}）`);
       // ⚠️ 2026-10-15 换 ① 口径时**新加**的判据：那一格的「刻度」必须写「绝对刻度」，
       //    而取值那一格必须是**强度分**（不再是「队分」——旧口径印的是含金数项的整包分，

@@ -2197,7 +2197,16 @@ const wireValueTips = (container) => {
     // ⚠️ 补明细必须在**开窗之前**：窗口正文是固定尺寸、内容在里面滚，
     // 先开窗再换内容会让用户看到「一个关卡 → 五个关卡」跳一下。
     if (tip.__unit) {
-      try { await enrichTipDetail(tip); } catch { /* 取不到就用现有的那几行 */ }
+      try { await enrichTipDetail(tip); } catch (err) {
+        // ⚠️ **不要把这个异常悄悄吞掉**（2026-10-15 改）：这一段是「开窗前的按需补齐」
+        //    （补全部关卡 / 补泛用性来源名单 / 补来源视频），它一抛，`enrichTipDetail()`
+        //    末尾那次 `tip.replaceWith(frontierTip(unit))` 就整个不执行 ——
+        //    界面上只表现为「有几个区块是空的」，看不出是这一步失败的。
+        //    实测就是这么藏了一个 `ReferenceError: num is not defined`（见
+        //    `versatilitySourceBlock()` 里那段注释）：窗口少列 4 个关卡、没有泛用性来源、
+        //    队伍没有视频图标，而控制台**一片安静**。宁可打一行日志也不要静默降级。
+        console.error('[advice] 补明细失败，窗口只显示已缓存的那部分：', err);
+      }
       tip = wrap.querySelector('.advice-value-tip');
       if (!tip) return;
     }
@@ -2294,13 +2303,20 @@ const wireValueTips = (container) => {
    * Enter/空格，都会派发一个 `click` —— 所以**不需要再写一份 keydown**。
    * （⚠️ 这一段与上面那条 `keydown` 互不影响：那条只认 `.advice-value-wrap`，
    *  折叠块是它的兄弟节点，不在徽标里。）
+   *
+   * ⚠️ **内容怎么找：走 `detailOf()`，不再直接 `parentElement.querySelector`**
+   *   （2026-10-15）。用户要求「查看来源按钮与其它文字**同一行**」之后，分项表那三个
+   *   按钮搬进了**分项行的第一格**，而它控制的内容仍在**下面那一行**里 —— 两者不再是
+   *   父子关系（`parentElement.querySelector('.advice-detail')` 恒为 `null`，实测表现为
+   *   「`aria-expanded` 变了、内容永远不出现」）。`detailOf()` 优先按按钮自己的
+   *   `aria-controls` id 去找，找不到才退回旧写法；两处判断用的是**同一份**依据。
    */
   if (!detailToggleWired) {
     detailToggleWired = true;
     document.addEventListener('click', (event) => {
       const toggle = event.target?.closest?.('.advice-detail-toggle');
       if (!toggle || !toggle.isConnected) return;
-      const detail = toggle.parentElement?.querySelector('.advice-detail') || null;
+      const detail = detailOf(toggle);
       const open = toggle.getAttribute('aria-expanded') === 'true';
       toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
       if (detail) detail.hidden = open;
@@ -2620,8 +2636,38 @@ const videoPlatformOf = (url) => {
  * 浏览器按用户点的是链接来处理（中键新标签页、右键复制地址、状态栏显示目标地址），
  * 而 `window.open()` 会被弹窗拦截器当成脚本开窗。
  *
- * 2026-10-15：为 B 站和 YouTube 使用平台专属的简洁 SVG 图标，替代通用播放三角。
+ * 2026-10-15（用户原话：「b 站的视频按钮改为**小电视**，更美观」）：改前所有平台都是
+ * 同一个 `▶` 三角，认不出点开的是哪个站。现在按平台给图形：
+ *   * **bilibili** → 小电视（圆角机身 + 两根天线 + 两只「眼睛」）；
+ *   * **youtube** → 圆角机身里一个实心播放三角；
+ *   * 第三档（tiktok / douyin 等）保持原来的 `▶` —— 那两家的地址已被 `videoUrlOf()`
+ *     当伪串挡掉，实际几乎不会落到这一档。
+ *
+ * ⚠️ **一律「描边 + 空心」而不是「实心块 + 同色圆点」**：图标只有 13px，实心块里的
+ *    同色圆点在屏幕上是**看不见**的，整个图标会退化成一块纯色方块（上一版就是这样）。
+ *    颜色**只由 CSS 的 `color` 给**（`.is-bilibili` 官方粉 / `.is-youtube` 官方红），
+ *    SVG 里一个硬编码色值都没有 —— 换主题时不必改图形。
+ *
+ * `aria-hidden="true"`：外链自己已经有 `aria-label`（「来源视频 · bilibili（在新标签页
+ * 打开）」），图形再报一次只会让读屏软件念重复的两遍。
  */
+const VIDEO_ICON_SVG = {
+  bilibili: '<svg viewBox="0 0 16 16" class="advice-team-video-icon" aria-hidden="true"'
+    + ' fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"'
+    + ' stroke-linejoin="round">'
+    // 机身：圆角矩形。天线两根从机身顶边往**外上方**张开（b 站官方记号就是这个形状）。
+    + '<rect x="1.9" y="4.7" width="12.2" height="8.3" rx="2.1"/>'
+    + '<path d="M6.1 4.5 4.2 1.9"/><path d="M9.9 4.5 11.8 1.9"/>'
+    // 两只「眼睛」：两条短竖线。
+    + '<path d="M6.2 7.4v2"/><path d="M9.8 7.4v2"/>'
+    + '</svg>',
+  youtube: '<svg viewBox="0 0 16 16" class="advice-team-video-icon" aria-hidden="true"'
+    + ' fill="none" stroke="currentColor" stroke-width="1.35">'
+    + '<rect x="1.9" y="3.6" width="12.2" height="8.8" rx="2.6"/>'
+    + '<path d="M6.7 6.2 10.2 8l-3.5 1.8z" fill="currentColor" stroke="none"/>'
+    + '</svg>',
+};
+
 const videoLink = (url) => {
   const platform = videoPlatformOf(url);
   if (!platform) return null;
@@ -2634,25 +2680,12 @@ const videoLink = (url) => {
   a.title = title;
   a.setAttribute('aria-label', title);
 
-  // 平台专属图标（内联 SVG，无依赖）
-  if (platform === 'bilibili') {
-    // B 站标志性的「小电视」简化图标
-    a.innerHTML = `<svg viewBox="0 0 16 16" class="advice-team-video-icon">
-      <path fill="currentColor" d="M4 3.5a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 .5.5v8a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-8z"/>
-      <circle fill="currentColor" cx="6" cy="6.5" r="1"/>
-      <circle fill="currentColor" cx="10" cy="6.5" r="1"/>
-      <path fill="currentColor" d="M3 2.5L5 1M13 2.5L11 1"/>
-    </svg>`;
-  } else if (platform === 'youtube') {
-    // YouTube 标志性的播放按钮
-    a.innerHTML = `<svg viewBox="0 0 16 16" class="advice-team-video-icon">
-      <path fill="currentColor" d="M15.2 4c-.2-.8-.8-1.4-1.6-1.6C12.2 2 8 2 8 2s-4.2 0-5.6.4c-.8.2-1.4.8-1.6 1.6C.4 5.4.4 8 .4 8s0 2.6.4 4c.2.8.8 1.4 1.6 1.6C3.8 14 8 14 8 14s4.2 0 5.6-.4c.8-.2 1.4-.8 1.6-1.6.4-1.4.4-4 .4-4s0-2.6-.4-4z"/>
-      <path fill="#0B0E14" d="M6.5 10.5l4-2.5-4-2.5v5z"/>
-    </svg>`;
-  } else {
-    // 其他平台保持通用播放三角
-    a.appendChild(text('span', 'advice-team-video-glyph', '▶'));
-  }
+  const icon = VIDEO_ICON_SVG[platform];
+  // ⚠️ 走 `innerHTML` 时浏览器会把 `<svg>` 放进 **SVG 命名空间**（HTML 解析器对
+  //    `svg` 这个标签名有特例），所以不必自己写 createElementNS —— 纯静态字符串，
+  //    没有任何用户数据进来，不存在注入面。
+  if (icon) a.innerHTML = icon;
+  else a.appendChild(text('span', 'advice-team-video-glyph', '▶'));
 
   return a;
 };
@@ -2744,6 +2777,28 @@ const frontierExtentsNow = () => state.conclusion?.frontierExtents
   || state.packsFrontierExtents || null;
 
 /**
+ * 由一个「查看来源」按钮找到**它控制的那一块**。
+ *
+ * 2026-10-15 新增。用户要求按钮与分项名**同一行**，于是分项表里的三个按钮搬进了
+ * 分项行的第一格，而它控制的内容仍在**下一行**（`colspan="5"` 那一行）——
+ * 两者不在同一棵子树里，`parentElement.querySelector('.advice-detail')` 恒为 `null`。
+ *
+ * 所以判断依据只有一个：按钮自己的 **`aria-controls`**（那本来就是「我控制谁」的
+ * 无障碍契约，读屏软件也读它）。只有老结构 / 临时节点没有那个属性时才退回「同一个容器
+ * 里找 `.advice-detail`」的旧写法。
+ *
+ * ⚠️ `advice-view.js` 的委托监听器与 `tools/check-advice-layout.mjs` 的探针必须用
+ *    **同一套**找法：探针用 `parentElement` 而代码用 `aria-controls` 时，会出现
+ *    「探针说折叠正常、用户点不动」这种最难查的分叉。
+ */
+const detailOf = (toggle) => {
+  const id = toggle?.getAttribute?.('aria-controls');
+  const byId = id ? document.getElementById(id) : null;
+  if (byId) return byId;
+  return toggle?.parentElement?.querySelector?.('.advice-detail') || null;
+};
+
+/**
  * **来源折叠块**的接线（用户 2026-10-13 第 8 条：「强度/性价比/泛用性三个得分项目，都可以
  * 点击后显示来源，节省界面的空间……补金推荐分的详情页也需要类似的显示效果」）。
  *
@@ -2791,6 +2846,69 @@ const tipScoreDetails = ({ id, label, node, extraClass }) => {
   return box;
 };
 
+/**
+ * **内联版**「查看来源」按钮（用户 2026-10-15：「这些查看来源需要与其他文本位于同一行
+ * （带有『查看来源』的按钮），以节省界面空间」）。
+ *
+ * 与 `tipScoreDetails()` 的区别只有**按钮住在哪里**：
+ *   * `tipScoreDetails()` —— 按钮和内容同在一个 `.advice-detail-box` 里，按钮自己独占
+ *     一行（「补金推荐分」那个窗口用它）。
+ *   * 本函数 —— 按钮**返回给调用方**，由调用方塞进分项行的第一格（与分项名同一行）；
+ *     内容仍由 `tipInlineDetailRow()` 挂到**下一行**（`colspan` 撑满整表，否则那张
+ *     五六列的来源表会被第一列的宽度挤成一团）。
+ *
+ * 两者共用同一个委托监听器与 `detailOf()` 的找法，所以交互、键盘可达性、
+ * `aria-expanded` / `aria-controls` 语义完全一致 —— 探针也只认这一套。
+ *
+ * @param {object} options
+ * @param {string} options.id 这一块的唯一 id（按钮 `${id}-toggle` / 内容 `${id}-detail`）。
+ * @param {string} options.title `title` 与 `aria-label`（三项都叫「查看来源」时，
+ *   读屏软件与悬停提示得说清是哪一项 —— 光看那四个字分不出强度还是泛用性）。
+ * @param {string} [options.extraClass] 给按钮补的类（按分项分色，见 .css）。
+ * @returns {HTMLButtonElement}
+ */
+const tipInlineToggle = ({ id, title, extraClass }) => {
+  const btn = text('button',
+    `advice-detail-toggle is-inline${extraClass ? ` ${extraClass}` : ''}`);
+  // ⚠️ `type="button"`：不写的话按钮在 `<form>` 里的默认类型是 `submit`（同 `tipScoreDetails`）。
+  btn.type = 'button';
+  btn.id = `${id}-toggle`;
+  btn.title = title;
+  btn.setAttribute('aria-label', title);
+  btn.setAttribute('aria-expanded', 'false');
+  btn.setAttribute('aria-controls', `${id}-detail`);
+  // 文字在前、插入符在后 —— 用 `▾` 一个字符而不是图标字体（项目无依赖）。
+  // 朝向由 CSS 按 `[aria-expanded]` 旋转，这里不存第二份状态。
+  btn.appendChild(text('span', 'advice-detail-inline-label', '查看来源'));
+  btn.appendChild(text('span', 'advice-detail-caret', '▾'));
+  return btn;
+};
+
+/**
+ * 内联版折叠块的**内容行**：`<tr class="advice-detail-row"><td colspan="N">…</td></tr>`。
+ *
+ * ⚠️ 默认 **`hidden`**（用户第 8 条的第一句就是「节省界面的空间」），且**内容必须包在
+ *    `.advice-detail-box > .advice-detail` 里**：`.advice-detail` 是那个被开关的元素
+ *    （`aria-controls` 指的就是它），而 `.advice-detail-box` 是它的外层容器 ——
+ *    `check-advice-layout.mjs` 与 `.css` 都按这个结构认（少一层就会「探针说没折叠块、
+ *    CSS 的 padding 落空」）。
+ */
+const tipInlineDetailRow = ({ id, node, colSpan }) => {
+  const row = document.createElement('tr');
+  row.className = 'advice-detail-row';
+  const cell = document.createElement('td');
+  cell.colSpan = colSpan;
+  const box = text('span', 'advice-detail-box');
+  const detail = text('div', 'advice-detail');
+  detail.id = `${id}-detail`;
+  detail.hidden = true;
+  detail.appendChild(node);
+  box.appendChild(detail);
+  cell.appendChild(box);
+  row.appendChild(cell);
+  return row;
+};
+
 const scoreBreakdownTable = (unit) => {
   const w = normalizeDrawWeights(state.conclusion?.drawWeights ?? state.drawWeights ?? {});
   if (!Number.isFinite(Number(unit.strengthScore))
@@ -2810,6 +2928,8 @@ const scoreBreakdownTable = (unit) => {
    * 角色名在同一个窗口里是唯一的，所以用它做作用域；老载荷没有 `name` 时退回下标 `unit`。
    */
   const idScope = String(unit?.name || 'unit').replace(/[^\w-]/g, '-');
+  /** 三个分项各自那一套 id（按钮 `${id}-toggle` / 内容 `${id}-detail`）。 */
+  const detailIdOf = (key) => `adviceScoreDetail-${idScope}-${key}`;
   /**
    * 三个分项的**榜内归一上下限**（用户 2026-10-13：「需要给出强度、性价比、泛用性的
    * **完整得分来源**」）。
@@ -2879,20 +2999,21 @@ const scoreBreakdownTable = (unit) => {
     const isAbsolute = key === 'strength';
     const source = partSources.find((p) => p.key === key);
     const row = [
-      // ⚠️ 第一格是 `tipFactor()` 造出来的 `.tip-stack`（两个 span）。
-      //    探针按 `tr.children[0]` 的文本与列名判等，所以按钮必须保持文本纯净。
-      //    2026-10-15：将「查看来源」按钮改为行内小图标，浮动到右侧，不破坏文本内容。
+      // ⚠️ 第一格仍然是 `tipFactor()` 造出来的 `.tip-stack`（两个 span），
+      //    外面多包一层 `.advice-factor-cell` 只是为了把「查看来源」按钮摆到**同一行**的
+      //    最右边（`justify-content: space-between`）。探针按 `.tip-main` 取分项名
+      //    （见 `check-advice-layout.mjs` 的 `splitRowLabels`）—— 写死 `textContent`
+      //    判等会连按钮上的「查看来源」一起读进去，改这里要同步那边。
       (() => {
-        const cell = tipFactor(name, why);
-        // 有来源才给按钮：数据缺的那一项既没有块、也没有按钮。
+        const cell = text('span', 'advice-factor-cell');
+        cell.appendChild(tipFactor(name, why));
+        // 有来源才给按钮：数据缺的那一项既没有块、也没有按钮（按钮点了没反应是最坏的一种）。
         if (source?.block) {
-          const btn = text('button', `advice-detail-inline-toggle is-${key}`);
-          btn.type = 'button';
-          btn.textContent = '↓';
-          btn.title = `查看${source.title}`;
-          btn.setAttribute('aria-label', `查看${source.title}`);
-          btn.dataset.key = key; // 用于后续绑定展开事件
-          cell.appendChild(btn);
+          cell.appendChild(tipInlineToggle({
+            id: detailIdOf(key),
+            title: `查看${source.title}`,
+            extraClass: `is-${key}`,
+          }));
         }
         return cell;
       })(),
@@ -2905,11 +3026,12 @@ const scoreBreakdownTable = (unit) => {
       one(num(weight) * num(score)),
     ];
     rows.push(row);
-    // 记录该行的折叠块（如果有来源的话）
-    if (source?.block) {
-      const detailId = `adviceScoreDetail-${idScope}-${key}`;
-      details.push({ row, key, detailId, block: source.block });
-    }
+    // ⚠️ 这里只记**这一行本身**与它的折叠块，**不记下标**：`tipTable()` 会在这些数据行
+    //    之间插进 `is-total`，而下面的插入循环又是从后往前插的 —— 用下标回查
+    //    （`body.children[row]`）一旦遇上「`<tr>` 里被塞了嵌套表格」这类结构，层级会整个
+    //    错位（实测：三张来源表全被插进上一张来源表所在的那一行里，分项表因此长成
+    //    21 行、外壳列名变成 16 个）。持有节点引用就与插入顺序无关。
+    if (source?.block) details.push({ row, key, id: detailIdOf(key), block: source.block });
   }
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
@@ -2935,47 +3057,28 @@ const scoreBreakdownTable = (unit) => {
     'is-score-scale',
   );
   /**
-   * 把三个来源块**插到各自那个分项行的下一行**，并绑定内联按钮的展开事件。
+   * 把三个来源块**插到各自那个分项行的下一行**（用户 2026-10-13 第 8 条，原话是
+   * 「点击后在**该项下方**就地展开」）。
    *
-   * 2026-10-15 改进：按钮改为行内小图标，浮动在分项名右侧，节省界面空间。
-   * 折叠块仍插入下一行，但样式更紧凑（见 CSS 的 `.advice-detail-compact`）。
+   * 2026-10-15（本轮）：按钮从「独占一行」改成「住在分项行第一格里、与分项名同一行」，
+   * 所以这里**只**负责内容行 —— 按钮已经由上面那一格建好了，事件由模块级的委托监听器管，
+   * 这里不再逐个 `addEventListener`。
+   * ⚠️ 上一版在这里给每个按钮又绑了一次 `click`：委托监听器**也会**收到同一次点击，
+   *    于是同一次点击把状态翻两次（`aria-expanded` 写成 `true` 又立刻写回 `false`），
+   *    实测表现为「按钮点了没反应」。**只留委托那一份。**
    *
-   * ⚠️ 折叠行**也是** `tbody tr`，所以探针数行数时必须排掉 `.advice-detail-row`
+   * ⚠️ 内容行**也是** `tbody tr`，所以探针数行数时必须排掉 `.advice-detail-row`
    *    （见 `check-advice-layout.mjs` 的 `dataTrs`，**改这里要同步改它**）。
    *
-   * ⚠️ 插入用 **`tr.after(detailRow)` 且从后往前**：
+   * ⚠️ 插入用 **`tr.after(detailRow)` 且从后往前**（`details` 是 `[…].reverse()`）：
    *    从前往后插的话，插进第一名后面的那一行会让**后面几个分项行整体下移**，
    *    于是按先前记下的位置再插就落到了别人的行里。用节点引用 + 倒序插入与位置无关。
    */
-  for (const { row, key, detailId, block } of [...details].reverse()) {
+  for (const { row, id, block } of [...details].reverse()) {
     const tr = table.querySelectorAll('tbody tr')[rows.indexOf(row)] || null;
     if (!tr) continue;
-
-    // 创建折叠内容行
-    const detailRow = document.createElement('tr');
-    detailRow.className = 'advice-detail-row advice-detail-compact';
-    detailRow.id = `${detailId}-detail`;
-    detailRow.hidden = true; // 默认折叠
-
-    const cell = document.createElement('td');
-    cell.colSpan = 5;
-    cell.appendChild(block);
-    detailRow.appendChild(cell);
-    tr.after(detailRow);
-
-    // 绑定按钮点击事件
-    const btn = tr.querySelector(`.advice-detail-inline-toggle.is-${key}`);
-    if (btn) {
-      btn.id = `${detailId}-toggle`;
-      btn.setAttribute('aria-expanded', 'false');
-      btn.setAttribute('aria-controls', `${detailId}-detail`);
-      btn.addEventListener('click', () => {
-        const isExpanded = btn.getAttribute('aria-expanded') === 'true';
-        btn.setAttribute('aria-expanded', String(!isExpanded));
-        btn.textContent = isExpanded ? '↓' : '↑';
-        detailRow.hidden = isExpanded;
-      });
-    }
+    // ⚠️ 5 列 = 上面那张表的列数；写成别的数会让折叠行自己撑宽表格。
+    tr.after(tipInlineDetailRow({ id, node: block, colSpan: 5 }));
   }
   box.appendChild(table);
   return box;
@@ -3135,7 +3238,15 @@ const versatilitySourceBlock = (unit) => {
       //    表示除以」，而 `check-advice-layout.mjs` 有一条**全窗口**断言禁止出现 `÷`
       //    （改前写 `÷` 实测把那条判据判红了 —— 它对全窗口生效，不分哪一格）。
       // ⚠️ 验算用的是**这个整包自己**的加权原始量（见上面的注释），不是档里最大的那个。
-      ? `得分 = 100 ×（${num(unit.versatilityRaw).toFixed(1)} − ${Number(e.lo)}）/（${Number(e.hi)} − ${Number(e.lo)}）`
+      // ⚠️ **这里不能用 `num()`**（2026-10-15 修的线上级 bug）：`num()` 只是
+      //    `scoreBreakdownTable()` **内部的局部函数**，本函数是模块级函数、取不到它 ——
+      //    于是这一行抛 `ReferenceError: num is not defined`。而调用它的那条链
+      //    （`enrichTipDetail()` → `tip.replaceWith(frontierTip(unit))`）外面套着
+      //    `catch {}`，异常被吞掉，**整次重建被放弃**：界面上只看到「泛用性来源没有」
+      //    「来源视频没有」「逐档榜只有一个关卡」这三件看似无关的事，
+      //    而真正的原因（这一行抛异常）在任何地方都不会被印出来。改用与相邻两行同一套
+      //    `Number()` 写法，并给那个 `catch` 加上日志（见 `openTip` 里那一处）。
+      ? `得分 = 100 ×（${(Number(unit.versatilityRaw) || 0).toFixed(1)} − ${Number(e.lo)}）/（${Number(e.hi)} − ${Number(e.lo)}）`
         + ` = ${(Number(unit.versatilityScore) || 0).toFixed(1)}`
         + '（榜内最小 ~ 最大就是这一项的全部刻度）'
       : '（本次载荷没带榜内区间，所以只能看上面的原始量。）'));
@@ -3923,6 +4034,18 @@ const renderTeamPlan = (conclusion) => {
   const capPct = Math.round((Number(plan.gapCapPct) || 0.75) * 100);
   // ② 那条曲线的指数（用户 2026-10-12 第 9 条）：脚注必须写出来，否则读者按线性算会对不上。
   const gapPower = Math.max(1, Number(plan.gapPower) || 1);
+  /**
+   * ② 那条曲线上的**取样点**：给两个「补 N 金能拿几分」的实例，读者才量得出这条曲线有多陡。
+   *
+   * ⚠️ **必须按当前的封顶值与指数现算，不能写死数字**（2026-10-15 修）：改前这里写的是
+   *    「补 2 金 79 分、补 8 金 28 分、补 10 金 15 分」——那三个数是对着**旧的**
+   *    封顶（池内 p75 ≈ 14 金）与**旧的**指数（^1.5）算出来的。封顶改成 p60、指数改成
+   *    ^1.8 之后三个数**一个都不对**，而界面照样印出来 —— 这正是仓库里反复出现的
+   *    「口径改了、文案没跟着改，于是界面上写着假话」。现算之后这类改动再也不会失同步。
+   */
+  const gapSample = (g) => (100 * Math.max(0, 1 - g / Math.max(1, plan.gapMax)) ** gapPower)
+    .toFixed(0);
+  const gapHalf = Math.max(1, Math.round(Number(plan.gapMax) / 2));
   const capped = plan.rows.filter((r) => r.gap >= plan.gapMax).length;
   const drawFoot = plan.drawWeights || normalizeDrawWeights(state.drawWeights || {});
   el.teamPlanBody.appendChild(text('p', 'muted small advice-plan-team-foot',
@@ -3943,8 +4066,9 @@ const renderTeamPlan = (conclusion) => {
     //    别再写成「差额 × a + 压金 × b」：那层合成已删（它等于同一个数的两种名字）。
     + `性价比 = (1 − 补金 ÷ ${plan.gapMax} 金)^${gapPower}`
     + `（**候选池**差额的 ${capPct} 分位当封顶值，达到或超过就 0 分；`
-    + `指数 ${gapPower} 是「给要补大量金的队伍少给点分」那条曲线 —— 补 2 金 79 分、`
-    + `补 8 金 28 分、补 10 金 15 分，`
+    + `指数 ${gapPower} 是「给要补大量金的队伍少给点分」那条曲线 —— 补 2 金 `
+    + `${gapSample(2)} 分、补 ${gapHalf} 金 ${gapSample(gapHalf)} 分、`
+    + `补到 ${plan.gapMax} 金 0 分，`
     + `下面这批有 ${capped} 支落在这一档`
     + `${Number(plan.gapRealMax) > Number(plan.gapMax)
       ? `、补金最多的是 ${plan.gapRealMax} 金` : ''}）；`
