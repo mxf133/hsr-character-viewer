@@ -410,7 +410,8 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null, withVideo = false) =>
   versatilityScore: unit.versatilityScore ?? null,
   // 两个**原始量**（浮层要写清「那 100 分是怎么归一出来的」，就得给原始值）：
   //   * `strengthTotal` —— 强度分项的原始累计（100 × 表现 × 版本加权 × 副本权重，**不含金数项**）；
-  //   * `versatilityRaw` —— 泛用性原始分 = 这个角色投稿的能通关队伍里出现过的**不同队友个数**。
+  //   * `versatilityRaw` —— 泛用性原始分（2026-10-15 起为**双重加权**的「加权队友数」：
+  //     每副本按版本权重、跨副本按关卡权重；不再是整数并集，名单走按需接口）。
   strengthTotal: unit.strengthTotal ?? null,
   // 「投入越高强度不可能更低」的**单调兜底值**（0~100，用户 2026-10-14 的不变式）：
   // 该角色在「星魂 ≤、叠影 ≤」范围内达到过的最好行动值表现。强度分 = 95% × 它 + 5% × 投入。
@@ -721,12 +722,14 @@ export const archiveCharacterPacks = async (name, options = {}) => {
       const byTier = {};
       for (const unit of hit) {
         const tier = String(eidolonTierOf(unit.eidolon));
-        // 同一个档在一个角色上可能有多条配装（不同光锥），它们共享同一份名单与同一个
-        // 原始量 —— 所以先到先得，别让后面的覆盖（`versatilityRaw` 只由「角色 + 档」决定）。
-        if (byTier[tier]) continue;
+        // 同一个档在一个角色上可能有多条配装（不同光锥）。⚠️ 2026-10-15 起原始量按
+        // 版本/关卡双重加权、随整包自己的证据走，同档不同配装不再共享同一个数 ——
+        // 取**最大**的那条（这一档攒下的最宽关系网），与 teamPlan 的档位表同一规则。
+        const raw = Number(unit.versatilityRaw);
+        if (byTier[tier] && !(raw > byTier[tier].raw)) continue;
         const members = unit.versatilityMembers;
         if (!Array.isArray(members)) continue;
-        byTier[tier] = { raw: Number(unit.versatilityRaw) || members.length, members };
+        byTier[tier] = { raw: Number.isFinite(raw) ? raw : members.length, members };
       }
       return Object.keys(byTier).length ? byTier : null;
     })(),

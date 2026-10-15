@@ -1848,7 +1848,9 @@ if (!tipTarget) {
     // v4.6.78：池改成「全部成绩」之后，估算机器删掉，那句「非前沿投稿按质量梯度估算」
     // 也一并去掉；这里**逐字钉住**新的算式说明，免得下一轮又悄悄改口径而不改文案。
     // ⚠️ 除号同样写成 `/`（浮层正文里不许出现 ÷）。
-    '跨版本发挥 = 各版本加权平均 / 最好的那一版，恒 ≤ 1。',
+    // ⚠️ 2026-10-15：分母改成「**最新版那次成绩**」（与最佳证据的新口径一致），且不再
+    //    恒 ≤ 1 —— `> 1` = 旧版抬分、`< 1` = 缺投稿摊薄，两种形态都要写进脚注。
+    '跨版本发挥 = 各版本加权平均 / 最新版那次成绩；小于 1 被摊薄，大于 1 是旧版抬分。',
   ];
   // 三条**跟着数据走**的：① 里的整包金数、⑤ 里的版本窗口「7」（出了新版本自己往前滚）、
   // 以及上面那条「表现」（判据线来自数据集）。
@@ -3030,7 +3032,9 @@ if (!tierChipOk) {
     //    数据**，而面板当时少发 `seasonMinCost` → 金数项退回全窗口最小值 →「跨版本发挥」
     //    算出 **> 1**（实测 39% 的行、最大 ×5.76，用户报的就是这个）。
     //    所以判据必须落在**补齐之后**那一列上，而且**按表头认表**（窗口里不止一张表）。
-    //    判据：每一格都必须是 ×N，且 N ≤ 1（显示只到两位小数，给 1.005 容差）。
+    //    判据：每一格都必须是 ×N，且 N > 0（有限正数）。⚠️ 2026-10-15 起「跨版本发挥」
+    //    不再恒 ≤ 1：分母改成「最新版那次成绩」，`> 1` = 旧版抬分、`< 1` = 缺投稿摊薄，
+    //    都是合法形态 —— 这里只钉「格式是 ×N 且 N 是有限正数」。
     let tierFactorTable = null;
     for (let i = 0; i < 30; i += 1) {
       tierFactorTable = await evaluate(`(() => {
@@ -3072,9 +3076,9 @@ if (!tierChipOk) {
     const tierFactors = (tierFactorTable?.cells || []).map((t) => Number(String(t).replace(/[^0-9.]/g, '')));
     const tierFactorOk = Boolean(tierFactorTable?.cells?.length > 1)
       && tierFactorTable.cells.every((t) => t.startsWith('×'))
-      && tierFactors.every((n) => Number.isFinite(n) && n <= 1.005);
+      && tierFactors.every((n) => Number.isFinite(n) && n > 0);
     if (!tierFactorOk) failures += 1;
-    console.log(`  ${tierFactorOk ? '✓' : '✗'} 补齐明细后的「跨版本发挥」恒 ≤ 1：`
+    console.log(`  ${tierFactorOk ? '✓' : '✗'} 补齐明细后的「跨版本发挥」都是 ×N 有限正数（2026-10-15 起不再恒 ≤ 1）：`
       + `${JSON.stringify(tierFactorTable?.cells || null)}`);
     if (!tierFactorOk) {
       console.log(`      ⚠️ 窗口「${tierFactorTable?.title || '?'}」的表头：`
