@@ -246,21 +246,28 @@
             <span class="muted small">角色 / 星魂 / 光锥混排 · 只看黑塔网投稿数据</span>
           </h4>
           <p class="muted small advice-note" id="adviceUnitNote">
-            这个榜<strong>完全不看你的角色池</strong>：每个副本先只保留<strong>判据最好的一档与次好的一档</strong>
-            （混沌回忆/虚构叙事是 <strong>0T</strong> / <strong>≤2T</strong>、末日幻影是 <strong>积分 4000</strong> /
-            <strong>≥3700</strong>、异相仲裁·绝境王棋关是<strong>行动值 &lt;300</strong> / <strong>&lt;500</strong>），
-            这批投稿<strong>全部进池</strong>（v4.6.78 起不再只圈最便宜的 25%），
-            最后看每个单位在这批里出现的<strong>占比</strong>——
-            占比越高说明它越常在能出分的阵容里出现。
+            <span class="advice-note-line"><span class="advice-note-tag">看什么</span>
+              这个榜<strong>完全不看你的角色池</strong>：它只统计黑塔网上别人投稿的配队，
+              你抽到没抽到都不影响名次。</span>
+            <span class="advice-note-line"><span class="advice-note-tag">怎么算</span>
+              每个副本先只保留<strong>判据最好的一档与次好的一档</strong>
+              （混沌回忆/虚构叙事是 <strong>0T</strong> / <strong>≤2T</strong>、末日幻影是 <strong>积分 4000</strong> /
+              <strong>≥3700</strong>、异相仲裁·绝境王棋关是<strong>行动值 &lt;300</strong> / <strong>&lt;500</strong>），
+              这批投稿<strong>全部进池</strong>（v4.6.78 起不再只圈最便宜的 25%），
+              最后看每个单位在这批里出现的<strong>占比</strong>——
+              占比越高说明它越常在能出分的阵容里出现。</span>
           </p>
           <!-- 星魂档筛选的口径（用户 2026-10-11 报的缺陷：切到 E0/E1/E2/E6 只剩
                「最佳成绩就在这一档」的角色）。说明只写在这一处，筛选器上的 title
                写同一件事的短版。 -->
           <p class="muted small advice-note">
-            下面的 <strong>E0 / E1 / E2 / E6</strong> 是把这一份榜拆成四个<strong>星魂档</strong>：
-            每一档<strong>各自比较</strong>，一个角色在每个档位都可能有自己的一行
-            （取它抽到这一档时最强的那个整包）。所以「最佳成绩在 E2」的角色，
-            切到 <strong>E0</strong> 也能看到它 E0 档的分数与名次 —— 不会因为别的档位分更高就消失。
+            <span class="advice-note-line"><span class="advice-note-tag">切档位</span>
+              下面的 <strong>E0 / E1 / E2 / E6</strong> 是把这一份榜拆成四个<strong>星魂档</strong>：
+              每一档<strong>各自比较</strong>，一个角色在每个档位都可能有自己的一行
+              （取它抽到这一档时最强的那个整包）。</span>
+            <span class="advice-note-line"><span class="advice-note-tag">不会消失</span>
+              所以「最佳成绩在 E2」的角色，切到 <strong>E0</strong> 也能看到它 E0 档的分数与名次 ——
+              不会因为别的档位分更高就不见了。</span>
           </p>
           <div class="advice-weights is-compact" id="adviceFrontierWeights">
             <span class="advice-weights-title">权重</span>
@@ -311,20 +318,25 @@
             </h4>
           </div>
           <p class="muted small advice-note" id="adviceTeamPlanNote">
-            这里给你的是<strong>可以照着走的补金路线</strong>：先看你已有几位核心角色，
-            再看<strong>下一步最适合补什么</strong>。候选来自<strong>角色总榜里的真实队伍</strong>，
-            同一支队伍只留一条；补金推荐分 = <strong>强度得分 × 抽卡权重</strong>
-            + <strong>性价比 × 抽卡权重</strong>，
-            「强度」那一档看的是<strong>角色总榜那一列的强度分</strong>（绝对 0~100，与总榜同一个数）——
-            每个副本取<strong>最少行动值</strong>那一次成绩、按关卡权重加权，再按投入档位补分，
-            所以<strong>行动值越低越高、投入越高越高</strong>（E6S5 &gt; E6S1 &gt; E2S1 &gt; E0S0），
-            <strong>与金数无关</strong>；
-            「性价比」那一档看的是<strong>你自己还要补几金</strong>
-            （性价比 = (1 − 补金 ÷ 候选池封顶值)^1.5 —— 指数让<strong>要补十几金的队伍掉得更快</strong>，
-            补 1~2 金的几乎不受影响）。
-            两档一个是「这支队打得多好」、一个是「你要补几金」，各管一头。
-            每张卡都带角色 / 光锥图片、补金顺序与过渡档位，
-            点分数还能展开刻度来源和相近的次选配队。
+            <span class="advice-note-line"><span class="advice-note-tag">是什么</span>
+              一条<strong>可以照着走的补金路线</strong>：先看你已有几位核心角色，
+              再看<strong>下一步最适合补什么</strong>。</span>
+            <span class="advice-note-line"><span class="advice-note-tag">队伍来源</span>
+              候选来自<strong>角色总榜里的真实队伍</strong>，同一支队伍只留一条。</span>
+            <span class="advice-note-line"><span class="advice-note-tag">分数怎么算</span>
+              补金推荐分 = <strong>强度得分 × 抽卡权重</strong> + <strong>性价比 × 抽卡权重</strong>，
+              两档一个是「这支队打得多好」、一个是「你还要补几金」，各管一头。</span>
+            <span class="advice-note-line"><span class="advice-note-tag">强度</span>
+              取<strong>角色总榜那一列的强度分</strong>（绝对 0~100，与总榜同一个数）——
+              每个副本取<strong>最近版本那一次</strong>成绩的行动值、按关卡权重加权，再按投入档位补分，
+              所以<strong>行动值越低越高、投入越高越高</strong>（E6S5 &gt; E6S1 &gt; E2S1 &gt; E0S0），
+              <strong>与金数无关</strong>。</span>
+            <span class="advice-note-line"><span class="advice-note-tag">性价比</span>
+              只看<strong>你自己还要补几金</strong>
+              （性价比 = (1 − 补金 ÷ 候选池封顶值)^1.8 —— 指数让<strong>要补十几金的队伍掉得更快</strong>，
+              补 1~2 金的几乎不受影响）。</span>
+            <span class="advice-note-line"><span class="advice-note-tag">每张卡</span>
+              都带角色 / 光锥图片、补金顺序与过渡档位，点分数还能展开刻度来源和相近的次选配队。</span>
           </p>
           <div id="adviceTeamPlanBody" class="advice-team-plan"></div>
         </div>
@@ -348,9 +360,12 @@
           </div>
         </div>
         <p class="muted small advice-note" id="adviceCharNote">
-          按「通过该副本的投稿中出现次数」排序。<b>这只说明玩的人多，不代表强</b>，
-          所以上面的榜不按它排；列在这里是为了看清当前环境围绕哪些角色，以及各自的
-          星魂普及度。
+          <span class="advice-note-line"><span class="advice-note-tag">排的是</span>
+            按「通过该副本的投稿中出现次数」排序。</span>
+          <span class="advice-note-line"><span class="advice-note-tag">注意</span>
+            <b>这只说明玩的人多，不代表强</b>，所以上面的榜不按它排。</span>
+          <span class="advice-note-line"><span class="advice-note-tag">用途</span>
+            看清当前环境围绕哪些角色，以及各自的星魂普及度。</span>
         </p>
         <div id="adviceChars" class="advice-chars"></div>
       </div>
