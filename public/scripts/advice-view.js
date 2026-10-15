@@ -2619,6 +2619,8 @@ const videoPlatformOf = (url) => {
  * 用真 `<a target="_blank" rel="noopener noreferrer">` 而不是 `window.open()`：
  * 浏览器按用户点的是链接来处理（中键新标签页、右键复制地址、状态栏显示目标地址），
  * 而 `window.open()` 会被弹窗拦截器当成脚本开窗。
+ *
+ * 2026-10-15：为 B 站和 YouTube 使用平台专属的简洁 SVG 图标，替代通用播放三角。
  */
 const videoLink = (url) => {
   const platform = videoPlatformOf(url);
@@ -2631,8 +2633,27 @@ const videoLink = (url) => {
   const title = `来源视频 · ${VIDEO_PLATFORM_LABEL[platform]}（在新标签页打开）`;
   a.title = title;
   a.setAttribute('aria-label', title);
-  // 一个纯 CSS 画的播放三角（`▶`）：不引第三方图标字体，也不必内联 SVG。
-  a.appendChild(text('span', 'advice-team-video-glyph', '▶'));
+
+  // 平台专属图标（内联 SVG，无依赖）
+  if (platform === 'bilibili') {
+    // B 站标志性的「小电视」简化图标
+    a.innerHTML = `<svg viewBox="0 0 16 16" class="advice-team-video-icon">
+      <path fill="currentColor" d="M4 3.5a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 .5.5v8a.5.5 0 0 1-.5.5h-7a.5.5 0 0 1-.5-.5v-8z"/>
+      <circle fill="currentColor" cx="6" cy="6.5" r="1"/>
+      <circle fill="currentColor" cx="10" cy="6.5" r="1"/>
+      <path fill="currentColor" d="M3 2.5L5 1M13 2.5L11 1"/>
+    </svg>`;
+  } else if (platform === 'youtube') {
+    // YouTube 标志性的播放按钮
+    a.innerHTML = `<svg viewBox="0 0 16 16" class="advice-team-video-icon">
+      <path fill="currentColor" d="M15.2 4c-.2-.8-.8-1.4-1.6-1.6C12.2 2 8 2 8 2s-4.2 0-5.6.4c-.8.2-1.4.8-1.6 1.6C.4 5.4.4 8 .4 8s0 2.6.4 4c.2.8.8 1.4 1.6 1.6C3.8 14 8 14 8 14s4.2 0 5.6-.4c.8-.2 1.4-.8 1.6-1.6.4-1.4.4-4 .4-4s0-2.6-.4-4z"/>
+      <path fill="#0B0E14" d="M6.5 10.5l4-2.5-4-2.5v5z"/>
+    </svg>`;
+  } else {
+    // 其他平台保持通用播放三角
+    a.appendChild(text('span', 'advice-team-video-glyph', '▶'));
+  }
+
   return a;
 };
 
@@ -2858,11 +2879,23 @@ const scoreBreakdownTable = (unit) => {
     const isAbsolute = key === 'strength';
     const source = partSources.find((p) => p.key === key);
     const row = [
-      // ⚠️ 第一格必须**正好**是 `tipFactor()` 造出来的 `.tip-stack`（两个 span）：
-      //    探针（`check-advice-layout.mjs`）按 `tr.children[0]` 的文本与列名判等，
-      //    里面多包一层「点击展开来源」的提示文字会把 `强度` 判成 `强度点击展开来源`。
-      //    所以开关**不做在这一格里**，而是在下面单独开一行。
-      tipFactor(name, why),
+      // ⚠️ 第一格是 `tipFactor()` 造出来的 `.tip-stack`（两个 span）。
+      //    探针按 `tr.children[0]` 的文本与列名判等，所以按钮必须保持文本纯净。
+      //    2026-10-15：将「查看来源」按钮改为行内小图标，浮动到右侧，不破坏文本内容。
+      (() => {
+        const cell = tipFactor(name, why);
+        // 有来源才给按钮：数据缺的那一项既没有块、也没有按钮。
+        if (source?.block) {
+          const btn = text('button', `advice-detail-inline-toggle is-${key}`);
+          btn.type = 'button';
+          btn.textContent = '↓';
+          btn.title = `查看${source.title}`;
+          btn.setAttribute('aria-label', `查看${source.title}`);
+          btn.dataset.key = key; // 用于后续绑定展开事件
+          cell.appendChild(btn);
+        }
+        return cell;
+      })(),
       // 原始量那一格带出榜内区间（见上面 `extents` 的注释）；强度那行写绝对刻度。
       tipFactor(rawText(raw, integer),
         isAbsolute ? '（绝对刻度 0~100）'
@@ -2872,22 +2905,11 @@ const scoreBreakdownTable = (unit) => {
       one(num(weight) * num(score)),
     ];
     rows.push(row);
-    // 有来源才给折叠：数据缺的那一项既没有块、也没有按钮（按钮点了没反应是最坏的一种）。
-    if (!source?.block) continue;
-    const box = tipScoreDetails({
-      // ⚠️ `key` 已经天然唯一（三个分项各一个），而**同一个角色的窗口可能同时开着两份**
-      //（总榜一个、抽卡方案每张卡一个），所以 id 还要带上角色名 —— 见下面的 `idScope`。
-      id: `adviceScoreDetail-${idScope}-${key}`,
-      label: `查看${source.title}`,
-      node: source.block,
-      extraClass: `is-${key}`,
-    });
-    // ⚠️ 这里只记**这一行本身**与它的折叠块，**不记下标**：`tipTable()` 会在这些数据行
-    //    之间插进 `is-total`，而下面的插入循环又是从后往前插的 —— 用下标回查
-    //    （`body.children[row]`）一旦遇上「`<tr>` 里被塞了嵌套表格」这类结构，
-    //    层级会整个错位（实测：三张来源表全被插进上一张来源表所在的那一行里，
-    //    分项表因此长成 21 行、外壳列名变成 16 个）。持有节点引用就与插入顺序无关。
-    details.push({ row, box });
+    // 记录该行的折叠块（如果有来源的话）
+    if (source?.block) {
+      const detailId = `adviceScoreDetail-${idScope}-${key}`;
+      details.push({ row, key, detailId, block: source.block });
+    }
   }
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
@@ -2913,30 +2935,47 @@ const scoreBreakdownTable = (unit) => {
     'is-score-scale',
   );
   /**
-   * 把三个来源块**插到各自那个分项行的下一行**（用户 2026-10-13 第 8 条，原话是
-   * 「点击后在**该项下方**就地展开」）。
+   * 把三个来源块**插到各自那个分项行的下一行**，并绑定内联按钮的展开事件。
    *
-   * 为什么是**另起一行**而不是把按钮放进那个 `tr`：5 列的表格里没有地方安放一个
-   * 会改行的控件（见上面第一格的注释 —— 它多一个字都会让探针的列名判等红）；
-   * 而 `<tbody>` 里再插一行是表格本来就支持的写法（`colspan="5"` 让这一格横跨整表）。
+   * 2026-10-15 改进：按钮改为行内小图标，浮动在分项名右侧，节省界面空间。
+   * 折叠块仍插入下一行，但样式更紧凑（见 CSS 的 `.advice-detail-compact`）。
+   *
    * ⚠️ 折叠行**也是** `tbody tr`，所以探针数行数时必须排掉 `.advice-detail-row`
    *    （见 `check-advice-layout.mjs` 的 `dataTrs`，**改这里要同步改它**）。
    *
-   * ⚠️ 插入用 **`tr.after(detailRow)` 且从后往前**（`details` 是 `[…].reverse()`）：
+   * ⚠️ 插入用 **`tr.after(detailRow)` 且从后往前**：
    *    从前往后插的话，插进第一名后面的那一行会让**后面几个分项行整体下移**，
    *    于是按先前记下的位置再插就落到了别人的行里。用节点引用 + 倒序插入与位置无关。
    */
-  for (const { row, box: detailBox } of [...details].reverse()) {
+  for (const { row, key, detailId, block } of [...details].reverse()) {
     const tr = table.querySelectorAll('tbody tr')[rows.indexOf(row)] || null;
     if (!tr) continue;
+
+    // 创建折叠内容行
     const detailRow = document.createElement('tr');
-    detailRow.className = 'advice-detail-row';
-    // ⚠️ 5 列 = 上面那张表的列数；写成别的数会让折叠行自己撑宽表格。
+    detailRow.className = 'advice-detail-row advice-detail-compact';
+    detailRow.id = `${detailId}-detail`;
+    detailRow.hidden = true; // 默认折叠
+
     const cell = document.createElement('td');
     cell.colSpan = 5;
-    cell.appendChild(detailBox);
+    cell.appendChild(block);
     detailRow.appendChild(cell);
     tr.after(detailRow);
+
+    // 绑定按钮点击事件
+    const btn = tr.querySelector(`.advice-detail-inline-toggle.is-${key}`);
+    if (btn) {
+      btn.id = `${detailId}-toggle`;
+      btn.setAttribute('aria-expanded', 'false');
+      btn.setAttribute('aria-controls', `${detailId}-detail`);
+      btn.addEventListener('click', () => {
+        const isExpanded = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', String(!isExpanded));
+        btn.textContent = isExpanded ? '↓' : '↑';
+        detailRow.hidden = isExpanded;
+      });
+    }
   }
   box.appendChild(table);
   return box;
@@ -3420,13 +3459,13 @@ const planTipTeam = (members, className = '') => {
  * 「补金推荐分」的详情（用户 2026-10-11 第 8 条原话：「点击补金推荐分按钮可以查看
  * 补金推荐分的来源，以及**其他类似的次选的配队**（至多 3 个）」）。
  *
- * 内容 = **两个刻度与折算**（强度得分、差额接近度 —— 这就是「分数的来源」）
+ * 内容 = **两个刻度与折算**（强度得分、性价比 —— 这就是「分数的来源」）
  * + 过渡档位 + 次选配队。
  * 度量口径全部来自 `plan`（`teamPlan()` 的返回值），界面不重算任何一个数。
  *
  * ⚠️ 用户 2026-10-12 第 6 条（「性价比得分、差额接近分、压金度，三者是不是过于重叠了，
- * 我只想保留差额接近度的得分」）之后，这里**只剩两行**：中间那层「性价比得分」已删除
- * （它曾 = 差额接近度 与 压金度 各半）。别再把它加回来 —— 同一个数套两个名字正是
+ * 我只想保留性价比的得分」）之后，这里**只剩两行**：中间那层「性价比得分」已删除
+ * （它曾 = 性价比 与 压金度 各半）。别再把它加回来 —— 同一个数套两个名字正是
  * 用户说的「重叠」。
  */
 const teamPlanTip = (row, plan) => {
@@ -3501,7 +3540,7 @@ const teamPlanTip = (row, plan) => {
       // 被用户否掉的「压金度」）。
       // ⚠️ 刻度那一格必须写出**曲线指数**（用户 2026-10-12 第 9 条「削减一点」）：
       //    否则读者按线性去算会与右边的折算对不上（补 10 金时 28.6 → 15.3）。
-      ['差额接近度', `补金 ${row.gap} 金｜账面 ${row.gold} 金`,
+      ['性价比', `补金 ${row.gap} 金｜账面 ${row.gold} 金`,
         `(1 − 补金 ÷ ${plan.gapMax} 金)^${gapPower}（池内 p75）`,
         `${num(row.gapPct)} × ${wc}`],
       // ③ 泛用性（用户 2026-10-13 第 3 条 + **2026-10-14 第 1 条改口径**）：队内成员
@@ -3519,7 +3558,7 @@ const teamPlanTip = (row, plan) => {
     // —— 实测会数出 6 行（3 + 3）而不是 3 行，判据变成测别的东西。
     'is-score-scale',
   );
-  // 与来源无关的脚注（留在窗口里）：刻度口径、候选池、以及「性价比 = 差额接近度」那句。
+  // 与来源无关的脚注（留在窗口里）：刻度口径、候选池、以及「性价比 = 性价比」那句。
   // ⚠️ 顺序与改前**完全一致**：折叠块只搬走属于「来源」的两段，其余原位保留 ——
   //    这样「窗口里先看结论、要看来源再点开」的读法不变。
   const scoreNotes = [
@@ -3546,9 +3585,9 @@ const teamPlanTip = (row, plan) => {
   ];
   const tip = tipBox({
     head: `补金推荐分 +${num(row.total)}`,
-    // ⚠️ 第二项写成**差额接近度**（不是「性价比得分」）：v4.6.89 起它俩就是同一个数，
+    // ⚠️ 第二项写成**性价比**（不是「性价比得分」）：v4.6.89 起它俩就是同一个数，
     // 印两个名字会让读者以为还有别的成分（用户第 6 条要的就是去掉这一层）。
-    eq: `= 强度得分 ${num(row.strengthPct)} × ${ws} + 差额接近度 ${num(row.gapPct)} × ${wc}`
+    eq: `= 强度得分 ${num(row.strengthPct)} × ${ws} + 性价比 ${num(row.gapPct)} × ${wc}`
       + ` + 泛用性 ${num(row.versatilityPct)} × ${wv}`,
     // ⚠️ 表头 / 行 / 脚注都在**折叠块里**（见上面 `scoreTable`）——这里不再直接传
     // `headers` / `rows` / `notes`：`tipBox` 只在 `headers && rows` 时才建表，
@@ -3575,9 +3614,9 @@ const teamPlanTip = (row, plan) => {
       // ②③ 仍取**整个候选池**（v4.6.81 修的就是「刻度取自要下发的那批」那个 bug ——
       // 那会让「展示条数」变成分数的隐藏输入）。
       '强度得分是**绝对刻度**（0~100，与角色总榜那一列同一个数，换账号 / 换数据都不变）；'
-      + '差额接近度与泛用性的刻度按**候选池**现算（不是按下面这几条），这两个换账号后不可直接比较。',
-      // ⚠️ 用户 2026-10-12 第 6 条：性价比这一侧**只有**差额接近度。
-      `性价比 = 差额接近度（1 − 补金 ÷ ${plan.gapMax} 金）：它量的是**你还要补几金**`
+      + '性价比与泛用性的刻度按**候选池**现算（不是按下面这几条），这两个换账号后不可直接比较。',
+      // ⚠️ 用户 2026-10-12 第 6 条：性价比这一侧**只有**性价比。
+      `性价比（1 − 补金 ÷ ${plan.gapMax} 金）：它量的是**你还要补几金**`
       + '（与上面那一档不同：那一档量的是这支队**打得多好**，与你有多少钱无关）；'
       + '「这支队总共要几金」（账面金数）只写在每张卡的明面上，**不进分数**。',
       // ⚠️ 候选池在 v4.6.83 从「角色总榜」放宽到「逐档榜 ∪ 总榜」
@@ -3662,7 +3701,7 @@ const planRecommendation = (row) => {
  * 口径全部在 `advice.js` 的 `teamPlan()` 里（候选池、两个指标、归一化上下限、补金顺序），
  * 界面**不重算**任何一个数 —— 这里只负责画：
  *
- *   #名次  补金推荐分 xx.x = 强度得分 xx.x × ws + 差额接近度 xx.x × wc
+ *   #名次  补金推荐分 xx.x = 强度得分 xx.x × ws + 性价比 xx.x × wc
  *   队伍 4 个位置（角色 E档 + 光锥 S档，带图标，标出「已有 / 缺」）
  *   账面 N 金｜补金 M 金｜最佳证据：<副本> <金> 金 · <行动值> 行动值
  *   补金顺序（有序列表）：1. 名字 目标状态（N 金）
@@ -3671,8 +3710,8 @@ const planRecommendation = (row) => {
  * 一行只留「名字 + 目标状态 + 几金」；「总分 / 性价比」两个词改成
  * **「补金推荐分 / 强度得分」**；条数上限 40 → **15**。
  * ⚠️ 2026-10-12 第 3、4、6 条之后：两个系数 `ws / wc` 来自界面上的**抽卡权重**，
- * 第二项就写它本来的名字**差额接近度** —— 中间那层「性价比得分」在 v4.6.89 删掉了
- * （它只等于差额接近度 与 压金度 的合成），等式结构与文案位置都没变。
+ * 第二项就写它本来的名字**性价比** —— 中间那层「性价比得分」在 v4.6.89 删掉了
+ * （它只等于性价比 与 压金度 的合成），等式结构与文案位置都没变。
  */
 const renderTeamPlan = (conclusion) => {
   if (!el.teamPlanBody) return;
@@ -3736,9 +3775,9 @@ const renderTeamPlan = (conclusion) => {
     const head = text('div', 'advice-plan-team-head');
     head.appendChild(text('span', 'advice-unit-rank', `#${i + 1}`));
     // 用户 2026-10-11（抽卡方案第 2 条）：「改为：补金推荐分 + 75.7 = 强度得分 68.0 × 0.5
-    // + 差额接近度 83.3 × 0.5，注意空格不要离得太远」——所以徽标的标签改成「补金推荐分」、
+    // + 性价比 83.3 × 0.5，注意空格不要离得太远」——所以徽标的标签改成「补金推荐分」、
     // 后面那句用普通空格（改前是 `　+　` 全角空格，实测两处各多出 ~8px）。
-    // ⚠️ 2026-10-12 第 3、4、6 条之后第二项叫**差额接近度**（它本来就是那句原话里的名字）：
+    // ⚠️ 2026-10-12 第 3、4、6 条之后第二项叫**性价比**（它本来就是那句原话里的名字）：
     // v4.6.87 一度改成合成的「性价比得分」，v4.6.89 按用户要求收回成单一刻度 ——
     // 所以这里印的是 `gapPct`，不是中间量。
     // ⚠️ 同样**懒构建**（`lazyTip()`）：抽卡方案有 15 张卡，改前 15 套详情也一起建进 DOM。
@@ -3747,7 +3786,7 @@ const renderTeamPlan = (conclusion) => {
       (v) => Number(v || 0).toFixed(1), '补金推荐分'));
     head.appendChild(text('span', 'advice-plan-team-eq',
       `= 强度得分 ${Number(row.strengthPct).toFixed(1)} × ${ws}`
-      + ` + 差额接近度 ${Number(row.gapPct).toFixed(1)} × ${wc}`
+      + ` + 性价比 ${Number(row.gapPct).toFixed(1)} × ${wc}`
       + ` + 泛用性 ${Number(row.versatilityPct).toFixed(1)} × ${wv}`));
     card.appendChild(head);
 
@@ -3818,9 +3857,11 @@ const renderTeamPlan = (conclusion) => {
     for (const [label, value, tone] of [
       // ① = 角色总榜那一列的强度分（绝对 0~100，2026-10-14 第 10 条口径），条宽与徽标同源。
       ['强度', row.strengthPct, 'strength'],
-      // ② 就是徽标里那一项本身（用户第 6 条：只要差额接近度），条宽同一套数 ——
+      // ② 就是徽标里那一项本身（用户第 6 条：只要性价比），条宽同一套数 ——
       // 否则「条比徽标长」会让人以为界面算错了。
-      ['差额接近度', row.gapPct, 'gap'],
+      ['性价比', row.gapPct, 'gap'],
+      // ③ 泛用性（用户 2026-10-15）：队内成员按成本占比加权的泛用性得分。
+      ['泛用性', row.versatilityPct, 'versatility'],
     ]) {
       const meter = text('div', 'advice-plan-team-meter');
       const meterHead = text('div', 'advice-plan-team-meter-head');
@@ -3898,9 +3939,9 @@ const renderTeamPlan = (conclusion) => {
     + `每副本取**最近版本**那一次成绩的行动值、按关卡权重加权、再按投入档位补 5 分 —— `
     + `所以**行动值越低越高、投入越高越高**，E6S5 > E6S1 > E2S1 > E0S0），`
     + '**与金数无关**（「这支队打得多好」与「你要补几金」是两件事）；'
-    // ⚠️ 用户 2026-10-12 第 6 条之后这里**只有一个刻度**（差额接近度）——
+    // ⚠️ 用户 2026-10-12 第 6 条之后这里**只有一个刻度**（性价比）——
     //    别再写成「差额 × a + 压金 × b」：那层合成已删（它等于同一个数的两种名字）。
-    + `性价比（差额接近度）= (1 − 补金 ÷ ${plan.gapMax} 金)^${gapPower}`
+    + `性价比 = (1 − 补金 ÷ ${plan.gapMax} 金)^${gapPower}`
     + `（**候选池**差额的 ${capPct} 分位当封顶值，达到或超过就 0 分；`
     + `指数 ${gapPower} 是「给要补大量金的队伍少给点分」那条曲线 —— 补 2 金 79 分、`
     + `补 8 金 28 分、补 10 金 15 分，`
@@ -3909,7 +3950,7 @@ const renderTeamPlan = (conclusion) => {
       ? `、补金最多的是 ${plan.gapRealMax} 金` : ''}）；`
     + '「这支队总共几金」（卡片上的账面金数）只作参考，**不进分数**；'
     + `补金推荐分 = 强度得分 × ${formatShare(drawFoot.strength)}`
-    + ` + 差额接近度 × ${formatShare(drawFoot.cost)}（抽卡权重，上面可调）；`
+    + ` + 性价比 × ${formatShare(drawFoot.cost)}（抽卡权重，上面可调）；`
     + '补金顺序按每抽收益（性价比 ÷ 期望抽数）从高到低，光锥一定排在它自己的角色之后。'
     + '① 是绝对刻度（换账号不变）；②③ 的上下限随账号与数据现算，这两个换账号后不可直接比较。'));
 };

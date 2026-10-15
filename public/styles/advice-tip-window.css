@@ -141,7 +141,69 @@
    它有 4 个（三个分项各一个 + 补金推荐分的「分数来源」），做得跟主按钮一样抢眼会
    把那张真正的表（分数拆解）的注意力分走。
    `cursor: pointer` / `user-select: none`：它是 `<button>`，默认光标已经是手型，
-   这里显式写出来是为了与 `.advice-value-wrap`（那个徽标是 span + role=button）一致。 */
+   这里显式写出来是为了与 `.advice-value-wrap`（那个徽标是 span + role=button）一致。
+
+   2026-10-15：新增内联小按钮 `.advice-detail-inline-toggle`，浮动在分项名右侧，
+   更节省界面空间。原有的独立按钮样式保留供其他场景使用。 */
+.advice-detail-inline-toggle {
+  float: right;
+  width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  padding: 0;
+  border: 1px solid rgba(141, 233, 255, 0.3);
+  border-radius: 3px;
+  background: transparent;
+  color: rgba(141, 233, 255, 0.65);
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.advice-detail-inline-toggle:hover,
+.advice-detail-inline-toggle:focus-visible {
+  color: #8de9ff;
+  background: rgba(141, 233, 255, 0.12);
+  border-color: rgba(141, 233, 255, 0.5);
+  outline: none;
+}
+.advice-detail-inline-toggle[aria-expanded="true"] {
+  background: rgba(141, 233, 255, 0.18);
+  border-color: rgba(141, 233, 255, 0.6);
+}
+/* 按钮分色：与分项进度条颜色一致 */
+.advice-detail-inline-toggle.is-strength {
+  border-color: rgba(34, 211, 238, 0.3);
+  color: rgba(34, 211, 238, 0.65);
+}
+.advice-detail-inline-toggle.is-strength:hover,
+.advice-detail-inline-toggle.is-strength:focus-visible {
+  color: #22d3ee;
+  border-color: rgba(34, 211, 238, 0.5);
+  background: rgba(34, 211, 238, 0.12);
+}
+.advice-detail-inline-toggle.is-cost {
+  border-color: rgba(251, 191, 36, 0.3);
+  color: rgba(251, 191, 36, 0.65);
+}
+.advice-detail-inline-toggle.is-cost:hover,
+.advice-detail-inline-toggle.is-cost:focus-visible {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.5);
+  background: rgba(251, 191, 36, 0.12);
+}
+.advice-detail-inline-toggle.is-versatility {
+  border-color: rgba(167, 139, 250, 0.3);
+  color: rgba(167, 139, 250, 0.65);
+}
+.advice-detail-inline-toggle.is-versatility:hover,
+.advice-detail-inline-toggle.is-versatility:focus-visible {
+  color: #a78bfa;
+  border-color: rgba(167, 139, 250, 0.5);
+  background: rgba(167, 139, 250, 0.12);
+}
+
 .advice-detail-toggle {
   display: inline-flex;
   align-items: center;
@@ -217,12 +279,21 @@
 /* 折叠行（三个分项表里「来源」占的那一行）：去掉它自己的边框与内边距 ——
    它只是一个**容器行**，底下那块的左边线由 `.advice-detail` 画。
    ⚠️ 不写这一条时 `.advice-value-tip-table td` 的 `border-bottom` 会在每个
-   分项行下面再画一条线，展开后视觉上像「表格多了一行空行」。 */
+   分项行下面再画一条线，展开后视觉上像「表格多了一行空行」。
+   2026-10-15：紧凑模式 `.advice-detail-compact` 进一步减少内边距，让内联按钮的折叠块更紧凑。 */
 .advice-value-tip-table tr.advice-detail-row > td {
   padding: 0;
   border-bottom: 0;
 }
 .advice-value-tip-table tr.advice-detail-row > td > .advice-detail-box {
+  padding: 0 8px 6px;
+}
+.advice-value-tip-table tr.advice-detail-row.advice-detail-compact > td > .advice-detail-box {
+  padding: 0 8px 4px;
+}
+.advice-value-tip-table tr.advice-detail-row.advice-detail-compact > td > .advice-detail-box > .advice-detail {
+  margin-top: 2px;
+}
   padding: 0 8px 6px;
 }
 

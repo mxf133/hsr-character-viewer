@@ -2211,11 +2211,17 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   color: var(--text);
 }
 /* ⚠️ 播放三角用**文字**而不是 SVG：字体已经在了，不必为 9px 的图形引一条 `<svg>` 构造
-   （项目无依赖、也不引图标字体）。`padding-left` 把三角形的视觉重心挪回圆心。 */
+   （项目无依赖、也不引图标字体）。`padding-left` 把三角形的视觉重心挪回圆心。
+   2026-10-15：为 B 站和 YouTube 使用内联 SVG 平台图标（依然无依赖）。 */
 .advice-team-video-glyph {
   font-size: 9px;
   line-height: 1;
   padding-left: 1px;
+}
+.advice-team-video-icon {
+  width: 12px;
+  height: 12px;
+  display: block;
 }
 /* b 站：官方粉。油管：官方红。第三档（tiktok / douyin 等）保持默认的中性灰。 */
 .advice-team-video.is-bilibili { border-color: rgba(255, 102, 153, 0.55); color: #ff9ec4; }
@@ -2534,7 +2540,7 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 .advice-plan-team-recommendation-body { color: var(--text-muted); font-size: 11.5px; line-height: 1.45; }
 .advice-plan-team-meters {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 .advice-plan-team-meter { display: grid; gap: 4px; min-width: 0; }
@@ -2560,6 +2566,7 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   background: var(--cyan);
 }
 .advice-plan-team-meter-fill.is-gap { background: var(--gold); }
+.advice-plan-team-meter-fill.is-versatility { background: var(--violet); }
 /* 补金顺序：用户点名要的那一项，所以给成有序列表、每笔一行。 */
 .advice-plan-team-fill {
   list-style: none;
