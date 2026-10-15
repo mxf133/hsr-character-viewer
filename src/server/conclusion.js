@@ -10,7 +10,7 @@
 // 「按副本把数据取齐 + 把中文名补上」。
 import { archiveFrontierAll, archiveIndex, archiveTeams, loadI18n, zhName } from './archive.js';
 import {
-  buildConclusion, normalizeDrawWeights, normalizeHiddenCosts, VERSION_WINDOW,
+  buildConclusion, eidolonTierOf, normalizeDrawWeights, normalizeHiddenCosts, VERSION_WINDOW,
 } from '../../public/scripts/advice.js';
 
 /** 结论覆盖的副本顺序（按游戏解锁顺序）。 */
@@ -373,7 +373,14 @@ const resolveIcon = (maps, kind, name) => {
     || null;
 };
 
-const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
+/**
+ * @param {any} unit
+ * @param {number} index  它在所属榜单里的名次（只有前 `FRONTIER_DETAIL_ROWS` 条带逐副本明细）。
+ * @param {number|null} maxEnvs  逐副本明细的条数上限。
+ * @param {boolean} withVideo  是否给头条那一支带上**来源视频**（见 env 投影里那段注释：
+ *   只有逐档榜需要它，总榜那条路的队伍卡片走按需的 `/api/archive/packs`）。
+ */
+const slimFrontierUnit = (unit, index = 0, maxEnvs = null, withVideo = false) => ({
   key: unit.key,
   kind: 'pack',
   name: unit.name,
@@ -441,7 +448,7 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
   // `.slice(0, maxEnvs)`：`Array.map(slimFrontierUnit)` 会把**第三个参数（整个数组）**
   // 传进来，`slice(0, 数组)` 得到的是空数组 —— 实测总榜 84 条的逐副本明细会被整片抹掉。
   envs: index < FRONTIER_DETAIL_ROWS
-    ? (unit.envs || []).slice(0, Number.isFinite(maxEnvs) ? maxEnvs : undefined).map((env) => ({
+    ? (unit.envs || []).slice(0, Number.isFinite(maxEnvs) ? maxEnvs : undefined).map((env, envIndex) => ({
       id: env.id,
       envLabel: env.envLabel ?? null,
       // 该整包在这一副本里的贡献（Σ = total）。`score` = value ÷ 副本权重，界面自己算。
@@ -485,6 +492,18 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null) => ({
       members: (env.members || []).map((m) => ({
         char: m.char, eidolon: m.eidolon, lc: m.lc || null, superimp: m.superimp,
       })),
+      // **来源视频**（用户 2026-10-14 第 6 条）：这一行的队伍对应的 b 站 / 油管投稿地址。
+      // 界面在队伍卡片上画一个外链图标，点击 `target="_blank"` 打开（不内嵌播放器）。
+      //
+      // ⚠️ **只有逐档榜（`frontierTiers`）带它，而且只给头条那一支（`envIndex === 0`）**。
+      //    原因是 `/conclusion` 那道 **600 KB 硬上限只剩 ~18 KB 余量**（见上面那段注释：
+      //    强度那几个原始字段就是为此挪去 `/api/archive/packs` 的）。逐条带 504 个 env 的
+      //    地址实测把载荷顶到 **622 KB**；只给头条、只给逐档榜的 242 个整包是 **13 KB**。
+      //    为什么「只给逐档榜」就够：抽卡方案的候选池 = `teamPoolUnits()` = 逐档榜 ∪ 总榜，
+      //    实测**总榜那 77 条全部已被逐档榜覆盖**（并集就是那 242 条），所以方案卡片要用的
+      //    代表整包一定在这份里。总榜自己的队伍卡片走**按需**的 `/api/archive/packs`
+      //    （`enrichTipDetail` 会把视频合并回现有 envs，见 `advice-view.js`）。
+      ...(withVideo && envIndex === 0 ? { video: env.video ?? null } : {}),
     }))
     : [],
 });
@@ -588,6 +607,12 @@ const slimCharacterPack = (unit, i18n, maps) => ({
       lcIcon: m.lc ? resolveIcon(maps, 'cone', m.lc) : null,
       superimp: Number(m.superimp) || 1,
     })),
+    // **来源视频**（用户 2026-10-14 第 6 条）：这条按需链**逐关卡全给** —— 它是按需取
+    // 一个角色（最多 59 条配装），没有 `/conclusion` 那道 600 KB 硬上限；而逐档榜那份
+    // 载荷只给头条那一支，其余关卡的来源视频就靠这里带回去（`enrichTipDetail` 合并）。
+    // 只有 URL，没有作者昵称：界面那个图标只需要「点开就能看」，平台由 host 现判
+    // （`bilibili` / `YouTube`），多存一个昵称只是让两个接口的文案各说一套。
+    video: env.video ?? null,
   })),
 });
 
@@ -678,11 +703,33 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     packs: hit.map((unit) => slimCharacterPack(unit, i18n, maps)),
     // 泛用性的**来源名单**（用户 2026-10-13：「给出泛用性**完整得分来源**」里唯一那个
     // 集合型来源：这个角色能通关的队伍里出现过的不同队友）。
-    // ⚠️ 放在**顶层**而不是每个整包里：它是**角色级**的（同一个角色的几十条配装共用一份），
+    // ⚠️ 放在**顶层**而不是每个整包里：一个角色的几十条配装共用同一批名单，
     //    逐包带就是同一份名单重复最多 59 次。
     // ⚠️ 也**不上 `/conclusion` 的载荷**：那条路上一个角色会出现 5 次（总榜 + 四个星魂档），
-    //    逐条带实测 117 KB，会把 600 KB 的硬上限打穿 —— 所以界面点开详情时按需来取这里。
+    //    逐条带实测 117 KB，会把载荷硬上限打穿 —— 所以界面点开详情时按需来取这里。
+    //
+    // ⚠️ **2026-10-14 起它按「星魂档」分份**（用户第 1 条：「泛用性需要关联到具体的星魂，
+    //    一个角色的 E0 的泛用性和 E6 的泛用性其实关系不大」）：一个角色最多 4 份名单，
+    //    按目标档索引。界面拿**当前那个整包自己的档**去取（`versatilitySourceBlock`），
+    //    否则 E6 的窗口里会列出 E0 的队友。
+    //
+    // `versatilityMembers`（老字段）**保留**，取 `hit[0]` 那一档的名单 —— 它是这条接口
+    // 从 v4.6.97 起的公开形状，`tools/e2e-test.mjs` 与老前端都在读它；语义退化成
+    // 「最佳那条配装所属档位的名单」，而新前端一律走 `versatilityByTier`。
     versatilityMembers: hit[0]?.versatilityMembers ?? null,
+    versatilityByTier: (() => {
+      const byTier = {};
+      for (const unit of hit) {
+        const tier = String(eidolonTierOf(unit.eidolon));
+        // 同一个档在一个角色上可能有多条配装（不同光锥），它们共享同一份名单与同一个
+        // 原始量 —— 所以先到先得，别让后面的覆盖（`versatilityRaw` 只由「角色 + 档」决定）。
+        if (byTier[tier]) continue;
+        const members = unit.versatilityMembers;
+        if (!Array.isArray(members)) continue;
+        byTier[tier] = { raw: Number(unit.versatilityRaw) || members.length, members };
+      }
+      return Object.keys(byTier).length ? byTier : null;
+    })(),
     // 三个分项的归一上下限：面板浮层也要写「得分 = 100 ×（原始量 − 最小）÷（最大 − 最小）」，
     // 而面板这条路上界面**可能根本没有加载过结论**（用户直接在「角色信息」页点开的）。
     // 它只有一个对象（~110 字节），随包带一份最省事，也省掉「结论没加载就没有刻度」的缺口。
@@ -867,8 +914,10 @@ const projectConclusion = (result) => ({
   // 这一刀 —— 池改成「全部成绩」之后四档合计 266 条，每条都带 5 个关卡的明细会让
   // `/conclusion` 冲到 **872 KB**、顶穿 e2e 的 600 KB 硬上限；只留最好一关之后回到
   // ~410 KB。`envCount` 仍照发，界面照旧写「等 N 个副本」。
+  // ⚠️ **四个参数都要给全**：`withVideo = true` 是这份榜单**独有**的（抽卡方案的候选池
+  // 就是它，方案的队伍卡片需要来源视频图标；总榜那条路走按需的 `/api/archive/packs`）。
   frontierTiers: Object.fromEntries(Object.entries(result.frontierTiers || {})
-    .map(([tier, rows]) => [tier, (rows || []).map((unit, i) => slimFrontierUnit(unit, i, 1))])),
+    .map(([tier, rows]) => [tier, (rows || []).map((unit, i) => slimFrontierUnit(unit, i, 1, true))])),
   // 三个分项的**归一上下限**（用户 2026-10-13：「给出强度、性价比、泛用性的完整得分来源」）。
   // ⚠️ 它是**整榜一份**的对象（~110 字节），必须放在这里 —— 逐条挂到整包上会重复 319 次、
   //    白花 33 KB（实测能把载荷顶到 598 KB，硬上限是 600 KB）。界面从

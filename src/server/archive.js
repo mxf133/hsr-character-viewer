@@ -11,8 +11,9 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
-  VERSION_WEIGHTS, VERSION_WINDOW, envWeightOf, versionWeightOf,
+  VERSION_WEIGHTS, VERSION_WINDOW, envWeightOf, versionWeightOf, videoUrlOf,
 } from '../../public/scripts/advice.js';
+import { applyCharacterIdOverrides } from './character-icon-ids.js';
 
 const DEFAULT_DIR = resolve(process.cwd(), 'theherta');
 
@@ -165,7 +166,7 @@ export const LOCAL_ICON_BASE = '/icons';
  * @param {string} base 表里的 CDN 前缀（`icons.base`）
  */
 const localizeIconUrls = (data, base) => {
-  if (!data?.icons || typeof data !== 'object' || !base) return data;
+  if (!data?.icons || typeof data !== 'object') return data;
   const rewrite = (table) => {
     if (!table || typeof table !== 'object') return table;
     for (const [key, url] of Object.entries(table)) {
@@ -175,10 +176,27 @@ const localizeIconUrls = (data, base) => {
     }
     return table;
   };
-  for (const sub of ['characters', 'lightCones']) rewrite(data.icons[sub]);
-  for (const sub of ['characters', 'lightCones']) rewrite(data.icons.previews?.[sub]);
-  for (const sub of ['characters', 'lightCones']) rewrite(data.icons.portraits?.[sub]);
-  data.icons.base = LOCAL_ICON_BASE;
+  if (base) {
+    for (const sub of ['characters', 'lightCones']) rewrite(data.icons[sub]);
+    for (const sub of ['characters', 'lightCones']) rewrite(data.icons.previews?.[sub]);
+    for (const sub of ['characters', 'lightCones']) rewrite(data.icons.portraits?.[sub]);
+    data.icons.base = LOCAL_ICON_BASE;
+  }
+  /**
+   * 补上数据集**自己分不出来**的多形态角色头像（用户 2026-10-14：「选择程序图标的
+   * 三月七（存护）的图标错了」）。
+   *
+   * 表里本来只有 `March 7th → 1224.png`（巡猎那张），而 `refs.characters` 用的是
+   * `March 7th (Preservation)` / `March 7th (Hunt)` 两个带命途的键 —— 所有「掉括号
+   * 回退」的兜底于是把两行都指到 1224。在这里补出显式键，四条消费方（图标选择器 /
+   * 虚拟账号角色编辑器 / 抽卡推荐页 / 服务端 `resolveIcon`）**一次全对**。
+   *
+   * ⚠️ 放在 `rewrite` **之后**：补出来的地址直接就是「本地优先 + CDN 兜底」的形式
+   * （`iconWithId` 会把 `fallback` 里那份 id 一起换掉，理由见 `character-icon-ids.js`）。
+   * ⚠️ 只补**头像**（`icons.characters`）。立绘 / 半身像（`previews` / `portraits`）
+   * 的 1001 版本没有实测过是否存在于 StarRailRes，凭空改写会换来一张 404 —— 本轮不动。
+   */
+  applyCharacterIdOverrides(data.icons.characters);
   return data;
 };
 
@@ -512,7 +530,7 @@ export const archiveFrontier = async (mode, options = {}) => {
   const idx = seasons.indexOf(wanted);
   const recent = seasons.slice(Math.max(0, idx - windowSize + 1), idx + 1);
   const recentDesc = [...recent].reverse();
-  // 版本权重 = 按下标查表（下标 0 = 该副本最新的版本，权重 2）。见 VERSION_WEIGHTS。
+  // 版本权重 = 按下标查表（下标 0 = 该副本最新的版本，权重 3）。见 VERSION_WEIGHTS。
   const weightOf = (s) => versionWeightOf(recentDesc.indexOf(s));
 
   // 旧的差距/星魂强度口径仍然只看满分；目标档只进入新的性价比总榜。
@@ -524,7 +542,7 @@ export const archiveFrontier = async (mode, options = {}) => {
     }
   }
   // 版本权重（用户第 7 条）：客户端算总榜的「按版本加权」时**必须**用这一份，
-  // 不要自己再写一遍 2:2:2:1:1:1:1 —— 版本一更新（黑塔网加了新版本），
+  // 不要自己再写一遍 `3:2.5:2:1.5:1:0.5` —— 版本一更新（黑塔网加了新版本），
   // 这张表整体前移，客户端抄一份就会对不上。
   const seasonWeights = Object.fromEntries(recentDesc.map((s, i) => [s, versionWeightOf(i)]));
   const empty = {
@@ -562,14 +580,28 @@ export const archiveFrontier = async (mode, options = {}) => {
   // 把同一条前沿记录的完整配装一并传给综合榜。综合榜**只**使用这里记录的行
   // （v4.6.78 起 = 窗口内全部达标/满分行），不再回头从原始投稿里挑，避免挑出一条
   // 偶然极端配置。这个字段只在服务端内部流转，不计投稿数量。
-  const frontierRows = front.map((r) => ({
-    cost: Number(r.c) || 0,
-    actionValue: r.a === null || r.a === undefined || r.a === ''
-      ? null : Number(r.a),
-    tier: Number(r.t) === 2 ? 'target' : 'perfect',
-    season: r.season,
-    seasonWeight: Number(r.w) || 1,
-    members: (r.m || []).map((packed) => {
+  //
+  // ---- 来源视频（用户 2026-10-14 第 6 条）----------------------------------------
+  //
+  // 建库侧的前沿行（`r`）只存了 `{c, a, t, m}` —— **没有**投稿 id、作者或视频地址
+  // （实测 `JSON.stringify(frontier)` 里 `video`/`http` 全为 false）。而每期每套阵容的
+  // `teams[]` 上都有 `sample.video`（实测 11992/11992 全覆盖）。所以按
+  // **`版本|阵容`** 回查一次：阵容 = 成员角色名排序后拼接，与 `teams[].roster` 同一口径。
+  //
+  // ⚠️ 回查到的 `sample` 是「该期该阵容里成绩最好的那一条」，**不一定**就是榜上这一行
+  //    的来源。所以界面文案写「来源视频」，不写「这条成绩的视频」——用户要的也只是
+  //    「点开能看到这套阵容的投稿」（用户原话：「点击在新界面打开对应的 b 站/油管页面」）。
+  // ⚠️ 查不到的**如实留空**（`null`），不猜、也不用别的版本的样本顶替：界面据此不画图标。
+  const sampleByRoster = new Map();
+  for (const s of recent) {
+    for (const team of stageData.seasons[s]?.teams || []) {
+      if (!team?.sample?.video) continue;
+      const roster = (team.roster || []).map((n) => String(n)).sort().join(' + ');
+      if (roster) sampleByRoster.set(`${s}|${roster}`, team.sample);
+    }
+  }
+  const frontierRows = front.map((r) => {
+    const members = (r.m || []).map((packed) => {
       const [char, eidolon, lc, superimp] = String(packed).split('|');
       return {
         char,
@@ -578,8 +610,25 @@ export const archiveFrontier = async (mode, options = {}) => {
         // 站点用「叠影 0」表示这一位没装光锥（见 superimpOf 的注释）；缺失才是未知。
         superimp: superimpOf(superimp),
       };
-    }).filter((member) => member.char),
-  }));
+    }).filter((member) => member.char);
+    const sample = sampleByRoster.get(
+      `${r.season}|${members.map((m) => m.char).sort().join(' + ')}`,
+    ) || null;
+    return {
+      cost: Number(r.c) || 0,
+      actionValue: r.a === null || r.a === undefined || r.a === ''
+        ? null : Number(r.a),
+      tier: Number(r.t) === 2 ? 'target' : 'perfect',
+      season: r.season,
+      seasonWeight: Number(r.w) || 1,
+      members,
+      // `videoUrlOf` 把 `douyin:<id>` / `tiktok:<id>` 那 31 条伪串挡在外面（见它的注释）。
+      video: videoUrlOf(sample?.video),
+      // 投稿 run id：也留着 —— 它是这条证据**唯一**的稳定标识（`sample.id` 全局不重复），
+      // 探针与回归测试靠它对账「这条视频确实是这条阵容的投稿」。不下发浏览器。
+      runId: sample?.id || null,
+    };
+  });
 
   return {
     ok: true,
@@ -1242,8 +1291,8 @@ export const archiveStats = async (mode, season, options = {}) => {
     seasons,
     recentSeasons: recent,
     windowSize,
-    // 版本权重表（用户 2026-10 第 7 条）：2:2:2:1:1:1:1，按下标查表。
-    // 旧字段名 `halfLife` 已撤掉 —— 它描述的是被取代的指数半衰期。
+    // 版本权重表（用户 2026-10 第 7 条 + 2026-10-14 重新定表）：`3:2.5:2:1.5:1:0.5`，
+    // 按下标查表（下标 0 = 该副本最新版本）。表本身在 `public/scripts/advice.js`。
     versionWeights: VERSION_WEIGHTS_OF_SCOPE,
     minSeasonRuns: data.minSeasonRuns ?? 20,
     totalTeams: wantedSeason.totalTeams || 0,

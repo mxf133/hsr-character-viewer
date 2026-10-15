@@ -1118,7 +1118,8 @@ export const SCORING = {
    *     **不含金数项** —— 「省金」是性价比那一侧的事；
    *   * **性价比** 越高 → 越推荐**你还要补得越少**的队伍
    *     （这一档的刻度是「差额接近度 = 1 − 补金 ÷ 候选池封顶值」）；
-   *   * **泛用性** 越高 → 越推荐**成员百搭**的队伍（队内平均「不同队友数」，池内归一）。
+   *   * **泛用性** 越高 → 越推荐**成员百搭**的队伍（队内成员各自那个数按**成本占比**
+   *     加权，池内归一；2026-10-14 第 1 条起每人的数是**他自己那一档星魂**的数）。
    *
    * ⚠️ ① 的口径改过三轮，**2026-10-15 这一轮是最终的**：
    *   * v4.6.87 换成**纯强度**（`100 × 表现`，不含金数项，载荷为此多带 `strength` 字段），
@@ -1488,35 +1489,33 @@ const lineWeightOf = (weights, key, fallback, hardDefault) => {
 };
 
 /**
- * **版本权重表**（用户 2026-10 第 7 条的原话 + 2026-10-12 第 5 条的收窗）：
+ * **版本权重表**（用户 2026-10 第 7 条 + 2026-10-12 第 5 条收窗 + **2026-10-14 重新定表**）。
  *
- *   「近 1-3 版本等权重，近 4-7 版本等权重，权重比例为 2:2:2:1:1:1:1，
- *     黑塔网投稿的版本更新后仍然能确保程序更新权重」
+ * 用户 2026-10-14 的原话：「版本权重改为 **3:2.5:2:1.5:1:0.5**」。
  *
- * ⚠️ **2026-10-12 第 5 条把这扇窗从 7 个版本收到 3 个**：原话是「把角色总榜的版本
- * 窗口收到 3 版」。原因是实测出来的 —— 用户点名那支（遐蝶E2S1/风堇E2/昔涟E2S1/长夜月E2）
- * 的分数有 **32.1% 来自权重 1 的那四个旧版本**（它的最佳证据甚至停在 4.1），
- * 而它那四个人一起上场在 **4.6 根本没有投稿**（最新满分证据是 4.5）；收窗之后它的纯强度
- * 1390.8 → 1378.5、总分 85.7 → 85.1，直接让出第 1。
- * 「近 4-7 版本各 1 分」那一档因此从表里消失（`VERSION_WEIGHTS` 变回三档等权 2:2:2）。
+ * 这张表是**按下标查**的：下标 0 = 该副本最新的版本，往后依次 3 / 2.5 / 2 / 1.5 / 1 / 0.5。
+ * 也就是**窗口 6 个版本、权重线性递减**（3 → 0.5，每档 -0.5）。与改前的 `2:2:2` 相比：
+ *   * 窗口从 **3 版回到 6 版** —— 旧证据重新参与，但**权重大幅让位给新版本**
+ *     （最新版 3 分，第 6 版只有 0.5 分 = 最新的 1/6）；
+ *   * 不再有「窗口外一律 0 分」那道硬台阶，第 4~6 版各自按 1.5 / 1 / 0.5 计权。
  *
- * 台阶：最新 3 个版本各 2 分，**第 4 个版本起 0 分**（0 = 不进窗口，不是「权重很小」）。
- * 窗口因此就是 3 个版本（`VERSION_WINDOW`）。
+ * ⚠️ **按下标查表，不按版本号写死**：黑塔网每加一个新版本，整套权重必须整体前移一档
+ * —— 用户第 7 条后半句要的就是这件事自动发生。下标 = 「距该副本最新版本几个版本」，
+ * 由数据现算，所以 4.7 上线之后 4.6 / 4.5 / 4.4 / 4.3 / 4.2 / 4.1 自动进入窗口。
  *
- * ⚠️ **按下标查表，不按版本号写死**：黑塔网每加一个新版本，整套权重必须整体前移
- * 一档 —— 用户第 7 条后半句要的就是这件事自动发生。下标 = 「距该副本最新版本几个
- * 版本」，由数据现算，所以 4.7 上线之后 4.6 / 4.5 / 4.4 自动进入窗口。
- *
- * 历史：这里以前是 `2 ** (-idx / 3)` 的指数半衰期（连续衰减、永不归零，由
- * `options.halfLife` 调）。用户给了明确的三档台阶之后它就不再是调参旋钮了，
- * 留着只会让代码里的「2:2:2」对不上，所以换成查表。
+ * 历史（别再走回头路）：
+ *   * v4.6.46 定为 `2:2:2:1:1:1:1`（近 1-3 版本 2 分、近 4-7 版本 1 分，窗口 7）；
+ *   * v4.6.53 收到 **3 版等权 `2:2:2`**（用户第 5 条：「把角色总榜的版本窗口收到 3 版」）
+ *     —— 当时是因为用户点名那支队伍的 **32.1% 分数来自权重 1 的旧版本**；
+ *   * v4.6.105（本轮）按用户新给的 `3:2.5:2:1.5:1:0.5` 重开 6 版窗口：旧版本又算数了，
+ *     但它们加起来只有 3 分（1.5+1+0.5），**不到最新版一个人的分**。
  *
  * 放在这个文件（而不是 `src/server/archive.js`）：本文件是浏览器与服务端**共用**
  * 的那一份，总榜在客户端按版本加权时读的就是这张表，服务端只是 import 它。
  */
-export const VERSION_WEIGHTS = [2, 2, 2];
+export const VERSION_WEIGHTS = [3, 2.5, 2, 1.5, 1, 0.5];
 
-/** 版本窗口 = 权重表的长度（3 个版本）。 */
+/** 版本窗口 = 权重表的长度（6 个版本）。 */
 export const VERSION_WINDOW = VERSION_WEIGHTS.length;
 
 /** 距最新版本第 `index` 个（0 = 最新）的版本权重；超出表长给 0（不进窗口）。 */
@@ -2366,20 +2365,27 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   const cones = account?.cones instanceof Map ? account.cones : new Map();
   const units = teamPoolUnits(conclusion);
   /**
-   * 角色 → 泛用性原始量（「能通关的队伍里出现过的不同队友数」，角色级）。
+   * `角色|E星魂档` → 泛用性原始量（「能通关的队伍里出现过的不同队友数」）。
    *
-   * 用户 2026-10-13 第 3 条：「**泛用性权重也适用于补金推荐**」。角色级那个数算在
-   * `frontierBoard` 上（`unit.versatilityRaw`），同一角色的各星魂档共用同一个值
-   * （「它和谁能一起打」是角色属性，与这一包带几魂无关），所以这里随便取一条即可。
+   * 用户 2026-10-13 第 3 条：「**泛用性权重也适用于补金推荐**」；2026-10-14 第 1 条又把
+   * 那个数改成**按星魂档各算各的**，所以这里的键也从「角色」细到「角色 + 星魂档」。
+   * 队伍成员的星魂要从**成员自己**身上取（`m.eidolon`），不能拿代表整包的档去顶 ——
+   * 一支队里四个人的档通常各不相同。
+   *
+   * ⚠️ 同一个 `角色|E档` 在池里可能出现多条（不同光锥），而 `versatilityRaw` 只由
+   *    「角色 + 星魂档」决定（与光锥无关，见 `buildConclusionInner` 的 `versatilityKeyOf`），
+   *    所以取第一条即可；下面仍按「先到先得」而不是覆盖，避免最后一条把值改掉。
+   * ⚠️ 键用 `unit.name`（= 角色英文键），**不是** `unit.char`：这条链拿到的是
+   *    `projectConclusion` 投影过的整包（`slimFrontierUnit` 把角色键写在 `name` 上），
+   *    夹具也是同一个形状。用错了不会报错 —— 只会让表里只剩一个 `undefined` 键，
+   *    于是每支队的泛用性都算成 0、③ 整列退化（实测踩过）。
    */
-  const versatilityOfChar = new Map();
+  const versatilityOfTier = new Map();
+  const versatilityKeyOfMember = (name, eidolon) => `${name}|E${eidolonTierOf(eidolon)}`;
   for (const unit of units) {
-    // ⚠️ 键用 `unit.name`（= 角色英文键），**不是** `unit.char`：这条链拿到的是
-    //    `projectConclusion` 投影过的整包（`slimFrontierUnit` 把角色键写在 `name` 上），
-    //    夹具也是同一个形状。用错了不会报错 —— 只会让表里只剩一个 `undefined` 键，
-    //    于是每支队的泛用性都算成 0、③ 整列退化（实测踩过）。
-    if (!versatilityOfChar.has(unit.name)) {
-      versatilityOfChar.set(unit.name, Number(unit.versatilityRaw) || 0);
+    const key = versatilityKeyOfMember(unit.name, unit.eidolon);
+    if (!versatilityOfTier.has(key)) {
+      versatilityOfTier.set(key, Number(unit.versatilityRaw) || 0);
     }
   }
   // 抽卡权重（用户 2026-10-12 第 3、4 条 + 2026-10-13 第 3 条）：只认**相对大小**，
@@ -2487,17 +2493,35 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     const hiddenCut = hiddenReductionOf(team.members, availability,
       conclusion?.hiddenCosts, 'dataset').team;
     /**
-     * 这支队的 **③ 泛用性原始量** = 队内成员**各自**泛用性的**平均**（用户 2026-10-13
-     * 第 3 条，口径由用户本人在两个候选里选定）。
+     * 这支队的 **③ 泛用性原始量** = 队内成员**各自**泛用性按**成本占比**加权（用户
+     * 2026-10-14 第 1 条后半句原话：「整个队伍的泛用性根据不同角色的成本占整个队伍的
+     * 成本权重而定」）。
      *
-     * 「一支队的成员越百搭，这支队越好抄、越好换人」—— 与角色级那个数同源，只是取平均。
-     * ⚠️ 分母固定是**成员数**（不是「查到几个」）：查不到的角色按 0 分参与平均，
-     * 否则一个冷门角色会把整队的泛用性**抬高**（少算几个 0 反而更有利），方向是反的。
+     * 「一支队的成员越百搭，这支队越好抄、越好换人」—— 与榜上那个数同源（同一个
+     * `角色|E档` 取法），差别只在**怎么合成队级的一个数**：
+     *   * 改前（v4.6.97）是**简单平均**，四个成员一人四分之一；
+     *   * 现在按**各自的金数 ÷ 队伍总金数**加权 —— 一支 11 金的队里，7 金的那个成员
+     *     的话语权就是 0 金的那个的若干倍，符合「整队的泛用性由成本结构决定」。
+     *
+     * ⚠️ 权重用**账面金数**（`datasetGoldOf`，与上面那个 `gold` 同源）而不是「你还差几金」：
+     *    用户说的是「角色的成本**占整个队伍的成本**」，那是**配装本身**的成本结构，
+     *    与「我手上有没有」无关（不然同一个队换个账号就算出另一个泛用性）。
+     * ⚠️ 分母固定是**成员数 / 总金数**（不是「查到几个」）：查不到的成员按 0 分参与加权，
+     *    否则一个冷门角色会把整队的泛用性**抬高**（少算几个 0 反而更有利），方向是反的。
+     * ⚠️ **队伍总金数为 0 时退回等权平均**：那种队（全 4★ / 常驻 / 开拓者）在方案里本来
+     *    就被「补金 0 直接剔除」挡掉了，但 `teamPlan` 也会被工具与探针直接调用 ——
+     *    除零会算出 `NaN` 并让 ③ 整列变成 `null`，所以必须有一条确定的退路。
      */
-    const teamVersatility = team.members.length
-      ? team.members.reduce((n, m) => n + (versatilityOfChar.get(m.char) || 0), 0)
-        / team.members.length
-      : 0;
+    const memberGold = team.members.map((m) => Math.max(0, Number(datasetGoldOf(m, availability)) || 0));
+    const memberGoldSum = memberGold.reduce((n, v) => n + v, 0);
+    const teamVersatility = (() => {
+      if (!team.members.length) return 0;
+      const weights = memberGoldSum > 0 ? memberGold : team.members.map(() => 1);
+      const weightSum = memberGoldSum > 0 ? memberGoldSum : team.members.length;
+      const sum = team.members.reduce((n, m, i) => n
+        + (versatilityOfTier.get(versatilityKeyOfMember(m.char, m.eidolon)) || 0) * weights[i], 0);
+      return sum / weightSum;
+    })();
     candidates.push({
       ...team,
       gap: Math.max(0, Number(cost.pulls) || 0),
@@ -2551,8 +2575,8 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   const strengthLo = 0;
   const strengthHi = 100;
   /**
-   * ③ **泛用性得分**的刻度：候选池里**队内平均泛用性**的最小 ~ 最大值
-   * （用户 2026-10-13 第 3 条：「泛用性权重也适用于补金推荐」）。
+   * ③ **泛用性得分**的刻度：候选池里**队级泛用性**（各成员按成本占比加权）的最小 ~ 最大值
+   * （用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」+ 2026-10-14 第 1 条的加权口径）。
    *
    * 与 ① 完全同一条写法（**池内** min-max，不是角色总榜那把榜内的尺子）：
    * 卡片上那三个分量因此都是「这支队在候选池里的位置」，可以直接加权相加。
@@ -2600,8 +2624,9 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     // ⚠️ v4.6.87 这里还与「压金度」按 `teamPlanCostMix` 合成过 —— 已按用户要求删除，
     //    所以**不要再引入第二个金数刻度**：他与「你还要补几金」高度同向，属于重复计分。
     //    「这支队总共几金」仍逐行显示（`gold` / 卡片上的「账面 N 金」），只是不进分数。
-    // ③ **泛用性得分**（用户 2026-10-13 第 3 条）：队内平均泛用性在候选池里的位置（0~100）。
-    //    「这支队好抄、好换人」这一维度 —— 与角色总榜第三列同源，只是先按队内平均合成。
+    // ③ **泛用性得分**（用户 2026-10-13 第 3 条 + 2026-10-14 第 1 条）：队级泛用性在候选池里
+    //    的位置（0~100）。「这支队好抄、好换人」这一维度 —— 与角色总榜第三列同源，
+    //    只是先按**成员金数占比**合成队级的一个数（不再是简单平均）。
     t.versatilityPct = Number((100
       * clampUnit(span(t.versatilityRaw, versatilityLo, versatilityHi))).toFixed(4));
     // 总分 = 强度得分 × ws + 性价比得分（差额接近度）× wc + 泛用性得分 × wv
@@ -2755,6 +2780,10 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
       actionValue: t.best.actionValue ?? null,
       season: t.best.evidenceSeason ?? null,
       seasonMinCost: t.best.seasonMinCost ?? null,
+      // **来源视频**（用户 2026-10-14 第 6 条）：方案卡片上那个外链图标点开就是这条投稿。
+      // ⚠️ 它来自 `frontierTiers`（逐档榜）—— 方案的候选池就是它，服务端只在这一份载荷上
+      //    带了 `video`（见 `src/server/conclusion.js` 的 `slimFrontierUnit`）。
+      video: t.best.video ?? null,
     } : null,
     envCount: t.unit?.envCount ?? null,
     /**
@@ -2858,7 +2887,7 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     //    不能改回 `candidates` 的 min/max（那样池内第一又会被顶成 100 分）。
     strengthLo: Number(strengthLo.toFixed(4)),
     strengthHi: Number(strengthHi.toFixed(4)),
-    /** ③ 的刻度（队内平均泛用性，池内最小 ~ 最大值）：界面写「N 人即 0 分 / M 人即 100 分」。 */
+    /** ③ 的刻度（**队级**泛用性 = 成员按金数占比加权，池内最小 ~ 最大值）：界面写「N 人即 0 分 / M 人即 100 分」。 */
     versatilityLo: Number(versatilityLo.toFixed(4)),
     versatilityHi: Number(versatilityHi.toFixed(4)),
     /** 生效的抽卡权重（已归一化，和为 1）—— 界面照它印**三个**系数。 */
@@ -3423,6 +3452,20 @@ export const hiddenReductionOf = (members, availability, settings, convention = 
 };
 
 /**
+ * **投稿的来源视频**：只认真正的 `http(s)` 链接（用户 2026-10-14 第 6 条）。
+ *
+ * 数据集里每条投稿都有 `sample.video`（实测 11992/11992 全覆盖），但其中 **31 条**是
+ * `douyin:<id>` / `tiktok:<id>` 这种**伪串**（不是可用地址），直接渲染成一个「点击打开」
+ * 图标会得到一个死链。所以这里统一收口：不是 `http(s)://` 开头的一律当作没有视频。
+ *
+ * ⚠️ 它与「这条成绩的视频」不完全等价：`sample` 是建库时按「配装明细最全 / 成绩最好」
+ *    挑出来的那一条投稿，而榜上那一行是**另一套聚合口径**。所以界面上的文案一律写
+ *    「来源视频」，不写「这条成绩的视频」。
+ */
+export const videoUrlOf = (raw) =>
+  (typeof raw === 'string' && /^https?:\/\//i.test(raw.trim()) ? raw.trim() : null);
+
+/**
  * 把一个副本的前沿配置整理成「整包打分」要用的统一形状。
  *
  * 优先用服务端筛好的逐配置记录（`frontierRows`：达标/满分档 + 成本前沿，带角色、
@@ -3481,6 +3524,9 @@ const frontierPackRowsOf = (env, frontierEntry, aggRows, availability) => {
         actionValue: finiteOrNull(row.actionValue),
         season: row.newestSeason || row.season || env.season || null,
         members,
+        // 来源视频（用户 2026-10-14 第 6 条）：服务端 `frontierRows` 已经带上它，
+        // 这里只是把它一起归一化下去（伪串由 `videoUrlOf` 挡掉）。
+        video: videoUrlOf(row.video),
       };
     })
     : (aggRows || [])
@@ -3498,6 +3544,8 @@ const frontierPackRowsOf = (env, frontierEntry, aggRows, availability) => {
           actionValue: finiteOrNull(r.actionValue),
           season: r.team?.newestSeason || env.season || null,
           members,
+          // 回退路径直接从聚合阵容的 `sample` 取（`localizeSample` 原样透传了 `video`）。
+          video: videoUrlOf(r.team?.sample?.video),
         };
       });
   // 0 金配置没有「达成目标要花几金」的可比性（整包金数也必然全为 0），直接排除。
@@ -3700,14 +3748,20 @@ const buildConclusionInner = (envs, options = {}) => {
   const frontierPacks = new Map();
   const frontierMeta = new Map();
   /**
-   * **泛用性**的原料：`角色 -> 与它同队过的不同队友集合`（用户 2026-10-13 第 1 条）。
+   * **泛用性**的原料：`角色 + 星魂目标档 -> 与它同队过的不同队友集合`。
    *
-   * 用户原话：「此角色投稿的能通关的所有队伍，包含的不同队友越多得分越高」——
-   * 所以量的是**一个角色的关系网**：它出现在哪些队伍里、那些队伍里还有谁，
+   * 用户 2026-10-13 第 1 条的原话：「此角色投稿的能通关的所有队伍，包含的不同队友越多
+   * 得分越高」—— 所以量的是关系网：它出现在哪些队伍里、那些队伍里还有谁，
    * **跨副本 / 跨版本 / 跨配置全部并成一个集合**，最后取 `size` 当泛用性原始分。
    *
-   * ⚠️ 它是**角色级**的（不是整包级）：同一个角色的 E0 包与 E6 包共用一个泛用性得分，
-   * 因为「它能和谁一起打」是角色本身的属性，与这一包带几魂无关。
+   * ⚠️ **2026-10-14 用户第 1 条改为「关联到具体的星魂」**（原话：「泛用性需要关联到
+   * 具体的星魂，一个角色的 E0 的泛用性和 E6 的泛用性其实关系不大，不同星魂需要各自
+   * 比较泛用性」）。改前它是**角色级**的：同一角色的 E0 包与 E6 包共用同一个泛用性分。
+   * 现在主体键是 `归一角色|E{目标档}`（`versatilityKeyOf`），**只统计该星魂档自己**
+   * 出现在哪些通关队伍里 —— E6 那份「能和谁一起打」不再由 E0 的投稿代言。
+   *
+   * ⚠️ 队友那一侧仍然按**角色身份**计数（`varietyKeyOf`），不按 `角色|E档`：
+   * 「不同队友」数的是**人**，队友带几魂是另一支队伍自己的事。
    * ⚠️ 它**不吃隐金、也不吃任何权重**（只看队伍成员），所以整段算分链路不受它影响。
    * ⚠️ 开拓者的各命途变体在数据集里是**不同的英文键**（`Trailblazer (Harmony)` 等），
    * 直接计数会把「一个开拓者」数成 5 个不同队友 —— 所以按 `isTrailblazer` 归一成一个
@@ -3715,6 +3769,14 @@ const buildConclusionInner = (envs, options = {}) => {
    */
   const teammateVariety = new Map();
   const varietyKeyOf = (name) => (isTrailblazer(name) ? TRAILBLAZER_KEY : name);
+  /**
+   * 泛用性的**主体键** = 归一角色 + 星魂目标档（0 / 1 / 2 / 6）。
+   *
+   * 与 `packKeyOf()` 的星魂那一段同源（都过 `eidolonTierOf`），但不带光锥 —— 用户第 1 条
+   * 只要求「关联到具体的星魂」，光锥仍是同一个星魂档内部的另一种配装，合成一份集合。
+   */
+  const versatilityKeyOf = (name, eidolon) =>
+    `${varietyKeyOf(name)}|E${eidolonTierOf(eidolon)}`;
   // 服务端已把「达标档 + 完整配装」的前沿行传回来。总榜只在这批行上算，避免从全部
   // 历史投稿里挑出一条偶然极端配置；纯客户端夹具 / 旧调用没有该字段时，继续使用
   // env.frontierRows 兼容回退。
@@ -3780,18 +3842,24 @@ const buildConclusionInner = (envs, options = {}) => {
         // ---- 泛用性：把这一批「能通关的」配置里的**队友关系**记进 `teammateVariety` ----
         //
         // 用户 2026-10-13 第 1 条：「此角色投稿的能通关的所有队伍，包含的不同队友越多
-        // 得分越高」。同一支队伍里的成员**互为队友**，所以对每个成员都记下另外三个
+        // 得分越高」。同一支队伍里的成员**互为队友**，所以对每个成员都记下另外几个
         // （开拓者按 `varietyKeyOf` 归一）。
         //
+        // ⚠️ **主体是「成员 + 它自己那一档星魂」**（用户 2026-10-14 第 1 条）：同一个人
+        //    在这支队里带的是 E2，就只记进 `角色|E2` 那一份 —— E0 的投稿不再替 E6 记账。
         // ⚠️ 统计口径就是 `packRows` —— 它是服务端筛出来的「达标 / 满分档 + 成本前沿」，
         // 也就是这批数据里**唯一的「能通关」集合**（回退路径下是聚合阵容里的达标行）。
         // ⚠️ 与 `gold` 无关：这里**不**按进榜判据再筛一次，只看「这支队能不能通」。
         for (const row of packRows) {
-          const keys = row.members.map((m) => varietyKeyOf(m.char)).filter(Boolean);
-          for (const self of keys) {
-            let set = teammateVariety.get(self);
-            if (!set) { set = new Set(); teammateVariety.set(self, set); }
-            for (const other of keys) if (other !== self) set.add(other);
+          // 队友那一侧先去重：一支队里出现两个开拓者变体时不该被数成两个人。
+          const others = new Set(row.members.map((m) => varietyKeyOf(m.char)).filter(Boolean));
+          for (const m of row.members) {
+            const self = varietyKeyOf(m.char);
+            if (!self) continue;
+            const key = versatilityKeyOf(m.char, m.eidolon);
+            let set = teammateVariety.get(key);
+            if (!set) { set = new Set(); teammateVariety.set(key, set); }
+            for (const other of others) if (other !== self) set.add(other);
           }
         }
       }
@@ -3966,6 +4034,9 @@ const buildConclusionInner = (envs, options = {}) => {
             members: row.members.map((m) => ({
               char: m.char, eidolon: m.eidolon, lc: m.lc || null, superimp: m.superimp,
             })),
+            // 来源视频（用户 2026-10-14 第 6 条）：随这条证据一起走到 `unit.envs[]`，
+            // 界面在队伍卡片上画一个外链图标。伪串已在上游被 `videoUrlOf` 过滤掉。
+            video: row.video || null,
           };
           for (const m of row.members) {
             const gold = packGoldOf(m, availability);
@@ -4286,6 +4357,9 @@ const buildConclusionInner = (envs, options = {}) => {
               seasonMinCost: best.seasonMinCost ?? null,
               limitedCones: best.limitedCones,
               members: best.members,
+              // 来源视频（用户 2026-10-14 第 6 条）：界面在队伍卡片上挂一个外链图标，
+              // 点开就是那条投稿的 b 站 / 油管页面（不内嵌播放器）。
+              video: best.video || null,
               bornSeason: born,
             },
           });
@@ -5367,6 +5441,10 @@ const buildConclusionInner = (envs, options = {}) => {
           limitedCones: evidence.limitedCones ?? null,
           // 该整包所在的队伍（英文数据集键 + 星魂，界面自己用 i18n 解析中文）
           members: evidence.members || [],
+          // **来源视频**（用户 2026-10-14 第 6 条）：这条证据的队伍对应的 b 站 / 油管
+          // 投稿地址。界面在队伍卡片上画一个外链图标，`target="_blank"` 打开
+          // （不内嵌播放器）。⚠️ 没有视频时是 `null`（伪串 / 老载荷），界面不画图标。
+          video: evidence.video || null,
           // 证据广度：只展示，不参与排序。
           configCount: pack.configs?.size ?? null,
           seasonCount: pack.seasons?.size ?? null,
@@ -5406,6 +5484,9 @@ const buildConclusionInner = (envs, options = {}) => {
         ? unit.envs.reduce((n, e) => n + e.weight * e.envStrength, 0) / strengthWeight
         : 0;
       const best = unit.envs[0];
+      // 泛用性的主体键：**这个整包的星魂档**（用户 2026-10-14 第 1 条），与 `versatilityKeyOf`
+      // 同一写法。下面 `versatilityRaw` / `versatilityMembers` 都从这一份取。
+      const versatilityKey = versatilityKeyOf(unit.char, unit.eidolon);
       all.push({
         key: unit.key,
         // 整包不再是「角色 / 星魂 / 光锥」三选一，但保留 kind 字段的旧消费者兼容：
@@ -5430,20 +5511,23 @@ const buildConclusionInner = (envs, options = {}) => {
         // 金数项就能还原的数：0 金通关那一支的金数项是 ×1.2 而不是 min(1, ·)，
         // 所以 `all` 里如实存两份（见第一趟算分处那段注释）。
         strengthTotal: Number(strengthTotal.toFixed(4)),
-        // 泛用性原始分 = 这个角色投稿的**能通关**队伍里出现过的不同队友数（角色级）。
-        // ⚠️ 查表要用归一后的键（开拓者各命途算同一个人），见 `teammateVariety`。
-        versatilityRaw: teammateVariety.get(varietyKeyOf(unit.char))?.size ?? 0,
+        // 泛用性原始分 = **这个整包的星魂档**在能通关队伍里出现过的不同队友数
+        // （用户 2026-10-14 第 1 条：E0 与 E6 各算各的，不再共用一个数）。
+        // ⚠️ 查表要用归一后的键（开拓者各命途算同一个人），见 `versatilityKeyOf`。
+        versatilityRaw: teammateVariety.get(versatilityKey)?.size ?? 0,
         // 泛用性的**来源名单**（用户 2026-10-13：「给出泛用性的**完整得分来源**」）：
         // 上面那个数的分子，去重后的队友（数据集英文键，界面自己用 i18n 转中文）。
         // ⚠️ 排序后再存，别让集合的插入顺序走出去 —— 那是数据集的遍历顺序，
         //    界面按它渲染会让名单看起来「每次刷新都在变」。
         // ⚠️ **它留在服务端，不进 `/conclusion` 的载荷**（`slimFrontierUnit` 刻意不投影它）：
-        //    它是**角色级**的，而榜单里一个角色会出现在多条整包上（总榜 1 条 + 四个星魂档
-        //    各 1 条）—— 逐条带就是同一份名单重复 5 次。实测 319 条共 117 KB，
-        //    把载荷从 564 KB 顶到 730 KB，直接打穿 e2e 的 600 KB 硬上限。
-        //    界面按需取：`/api/archive/packs?char=…` 那份载荷里带**这一个角色**的名单
-        //    （几十字节 ~ 1.5 KB），与「全部配队」共用同一个缓存请求。
-        versatilityMembers: [...(teammateVariety.get(varietyKeyOf(unit.char)) || [])].sort(),
+        //    改前它是**角色级**的、一个角色在榜上出现 5 次就是同一份名单重复 5 次
+        //    （实测 319 条共 117 KB，把载荷从 564 KB 顶到 730 KB）；
+        //    2026-10-14 起它变成**角色 × 星魂档**级（一个角色最多 4 份），理由不变 ——
+        //    仍然是同一个角色在「总榜 + 四个星魂档」里重复出现，逐条带只会更浪费。
+        //    界面按需取：`/api/archive/packs?char=…` 那份载荷里带**这一个角色**的四份名单
+        //    （按档位索引，见 `archiveCharacterPacks` 的 `versatilityByTier`），
+        //    与「全部配队」共用同一个缓存请求。
+        versatilityMembers: [...(teammateVariety.get(versatilityKey) || [])].sort(),
         envCount: unit.envs.length,
         envs: unit.envs,
         basis: 'team-gold-frontier-pack',
@@ -5499,6 +5583,33 @@ const buildConclusionInner = (envs, options = {}) => {
     const costExtent = extentOf((u) => u.total);
     const versatilityExtent = extentOf((u) => u.versatilityRaw);
     /**
+     * **泛用性按星魂档各自归一**（用户 2026-10-14 第 1 条）。
+     *
+     * 用户原话：「不同星魂需要各自比较泛用性」。原始量已经按档算（见 `versatilityKeyOf`），
+     * 但**尺子**也必须各档一把 —— 拿整榜一把尺子量的话，`E6` 那一档天然只出现在少数几支
+     * 队伍里（投稿本来就少），原始量必然低于 `E0`，于是整档被系统性压到接近 0 分。
+     * 「各自比较」因此是**两层**的：值各算各的，区间也各算各的。
+     *
+     * ⚠️ 取样集合仍然是 `all`（收敛前的全部整包），只是**先按档分组**再取极值 ——
+     *    与改前「整榜一把尺子」相比，只有这一个差别（`E0` 档自己那一段不受影响）。
+     * ⚠️ 某一档只有一个整包 / 原始量全同时 `spanOf` 给 1（见它上面那段注释）：
+     *    该档的泛用性分**全体相同**，对这一档内部的排序无影响。
+     */
+    const versatilityExtentsByTier = (() => {
+      const out = {};
+      for (const unit of all) {
+        const tier = String(eidolonTierOf(unit.eidolon));
+        const v = Number(unit.versatilityRaw) || 0;
+        const cur = out[tier];
+        if (!cur) out[tier] = { lo: v, hi: v };
+        else {
+          if (v < cur.lo) cur.lo = v;
+          if (v > cur.hi) cur.hi = v;
+        }
+      }
+      return out;
+    })();
+    /**
      * 三个分项的**归一上下限**（用户 2026-10-13：「需要给出强度、性价比、泛用性的
      * **完整得分来源**」）。
      *
@@ -5513,7 +5624,8 @@ const buildConclusionInner = (envs, options = {}) => {
      * 598 KB，把 e2e 的 600 KB 硬上限吃光（同一批里逐条带的泛用性名单更狠，117 KB）。
      * 界面从 `state.conclusion.frontierExtents` 读它（那边的 `drawWeights` 也是同一读法）。
      *
-     * ⚠️ 同一份 `all` 算出来的，所以四个星魂档视图与「全部」共用同一把尺子。
+     * ⚠️ 同一份 `all` 算出来的，所以四个星魂档视图与「全部」共用同一份**取样集合**
+     * （泛用性的**区间**还额外按档分组，见 `versatilityExtentsByTier`）。
      */
     const extents = {
       // ⚠️ 强度是**绝对刻度**（用户 2026-10-14 新口径），不再榜内归一：
@@ -5523,7 +5635,17 @@ const buildConclusionInner = (envs, options = {}) => {
       //    整包顶满，于是「普遍偏高、还一堆并列 100」——正是用户报的那个观感。
       strength: { lo: 0, hi: 100 },
       cost: { lo: costExtent.lo, hi: costExtent.hi },
-      versatility: { lo: versatilityExtent.lo, hi: versatilityExtent.hi },
+      // ⚠️ 泛用性的区间是**按星魂档分组**的（用户 2026-10-14 第 1 条「不同星魂需要各自
+      //    比较泛用性」）：`lo` / `hi` 保留**整榜**那一把尺子（老载荷 / 缺档位信息时的
+      //    兜底），算分与界面换算读的是 `byTier`。键 = 星魂目标档的字符串（'0'/'1'/'2'/'6'）。
+      // ⚠️ `byTier` **嵌在 `versatility` 里**而不是与它平级：`herta-test.mjs` 有一条通用
+      //    断言遍历 `frontierExtents` 的每个值检查 `{lo, hi}` 合法 —— 平级会多出一个
+      //    「不是 {lo,hi}」的键，把那条与本改动无关的判据判红。
+      versatility: {
+        lo: versatilityExtent.lo,
+        hi: versatilityExtent.hi,
+        byTier: versatilityExtentsByTier,
+      },
     };
     const drawWeights = normalizeDrawWeights(options.drawWeights);
     /**
@@ -5610,8 +5732,12 @@ const buildConclusionInner = (envs, options = {}) => {
       unit.costScore = Number((100 * spanOf(
         costExtent.lo, costExtent.hi, unit.total,
       )).toFixed(4));
+      // ⚠️ 泛用性的尺子是**这个整包自己那一档**的（用户 2026-10-14 第 1 条
+      //    「不同星魂需要各自比较泛用性」）—— 取不到该档区间时才退回整榜那一把。
+      const vExtent = versatilityExtentsByTier[String(eidolonTierOf(unit.eidolon))]
+        || { lo: versatilityExtent.lo, hi: versatilityExtent.hi };
       unit.versatilityScore = Number((100 * spanOf(
-        versatilityExtent.lo, versatilityExtent.hi, unit.versatilityRaw,
+        vExtent.lo, vExtent.hi, unit.versatilityRaw,
       )).toFixed(4));
       unit.characterScore = Number((drawWeights.strength * unit.strengthScore
         + drawWeights.cost * unit.costScore

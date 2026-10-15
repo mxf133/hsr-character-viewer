@@ -215,8 +215,22 @@ const main = async () => {
         (conclusion.body.packages || []).length > 0
         && conclusion.body.packages.every((p) => Array.isArray(p.items) && p.pulls >= 1),
         '作业榜缺抽数列');
+      /**
+       * `/conclusion` 的载荷上限 —— 这道判据的性质是「**防止悄悄长胖**」，不是产品契约：
+       * 它当初写 600 KB，是为了逼着「强度来源」那几个原始字段挪去按需的
+       * `/api/archive/packs`（见 `src/server/conclusion.js` 里 `slimFrontierUnit` 的注释）。
+       *
+       * ⚠️ **2026-10-14 上调到 660 KB**：用户把版本权重改成 `3:2.5:2:1.5:1:0.5`，
+       *    窗口从 **3 版扩到 6 版**，于是更多「角色 × 星魂档」拿到证据进榜 ——
+       *    实测 `frontierTiers` 242 → 258 条、`frontierUnits` 的逐副本明细 262 → 291 条，
+       *    载荷 **596 KB → 636 KB（+6.7%）**。这一部分是用户点名要的口径，压不回去，
+       *    所以把上限抬到 660 KB（仍留 ~24 KB 余量继续当护栏）。
+       *    ⚠️ 别顺手再往上调：真需要更多空间时，先看能不能挪去按需接口 ——
+       *    这正是这条判据存在的意义。
+       */
+      const CONCLUSION_PAYLOAD_CAP_BYTES = 660 * 1024;
       check('conclusion stays small enough to send to the browser',
-        Buffer.byteLength(JSON.stringify(conclusion.body)) < 600 * 1024,
+        Buffer.byteLength(JSON.stringify(conclusion.body)) < CONCLUSION_PAYLOAD_CAP_BYTES,
         `${Math.round(Buffer.byteLength(JSON.stringify(conclusion.body)) / 1024)} KB`);
       check('unknown archive mode lists valid ones',
         Array.isArray(badMode.body?.availableModes) && badMode.body.availableModes.length > 0);
@@ -331,6 +345,36 @@ const main = async () => {
         new Set((hiddenOn.body?.frontierUnits || []).map((u) => Number(u.versatilityRaw))).size > 3,
         `distinct versatilityRaw=${new Set((hiddenOn.body?.frontierUnits || [])
           .map((u) => Number(u.versatilityRaw))).size}`);
+      /**
+       * **泛用性关联到具体的星魂**（用户 2026-10-14 第 1 条：原话「一个角色的 E0 的泛用性
+       * 和 E6 的泛用性其实关系不大，不同星魂需要各自比较泛用性」）。
+       *
+       * 两件事一起钉：
+       *   ① 区间是**按星魂档分组**的（`frontierExtents.versatility.byTier`）——
+       *      界面靠它写出「E6 这一档的最小 ~ 最大」，拿整榜那一把尺子会与榜上的分对不上；
+       *   ② 同一角色的不同档**真的拿到不同的原始量** —— 改前是角色级的一个数，
+       *      这条断言会红。取「档位最多的那个角色」来比，避免挑到一个只有单档的角色。
+       */
+      const byTier = hiddenOn.body?.frontierExtents?.versatility?.byTier || {};
+      check('⭐ 泛用性的归一区间按星魂档分组（byTier，四档各一把尺子）',
+        ['0', '1', '2', '6'].every((t) => byTier[t] === undefined
+          || (Number.isFinite(Number(byTier[t].lo)) && Number.isFinite(Number(byTier[t].hi))
+            && Number(byTier[t].hi) >= Number(byTier[t].lo))),
+        `byTier=${JSON.stringify(byTier)}`);
+      const tierRawOfChar = new Map();
+      for (const t of ['0', '1', '2', '6']) {
+        for (const u of (hiddenOn.body?.frontierTiers?.[t] || [])) {
+          if (!tierRawOfChar.has(u.name)) tierRawOfChar.set(u.name, new Map());
+          tierRawOfChar.get(u.name).set(t, Number(u.versatilityRaw));
+        }
+      }
+      const multiTierChar = [...tierRawOfChar.entries()].find(([, m]) => m.size >= 2);
+      check('⭐ 同一角色在不同星魂档拿到不同的泛用性原始量（不再是角色级的一个数）',
+        Boolean(multiTierChar)
+        && new Set([...multiTierChar[1].values()]).size >= 2,
+        multiTierChar
+          ? `${multiTierChar[0]}: ${JSON.stringify([...multiTierChar[1].entries()])}`
+          : '没有任何角色横跨两个星魂档，这条断言无从验证');
       // 队伍口径的抽卡方案在**界面**现算差额，所以 availability 必须真的发过去；
       // 缺它时界面会把 4★ 也算成 1 金（见 conclusion.js 的 slimAvailability 注释）。
       check('conclusion 带成本口径表 availability（星级 / 常驻标记）',
@@ -347,6 +391,31 @@ const main = async () => {
         ['0', '1', '2', '6'].every((t) => Array.isArray(hiddenOn.body?.frontierTiers?.[t])
           && hiddenOn.body.frontierTiers[t].length > 0),
         `tiers=${Object.keys(hiddenOn.body?.frontierTiers || {}).join('/') || '（没有）'}`);
+      /**
+       * **来源视频**（用户 2026-10-14 第 6 条：界面每支队伍一个图标，点开去 b 站 / 油管）。
+       *
+       * 数据集里 `sample.video` 实测 11992/11992 全覆盖，但其中 **31 条**是
+       * `douyin:<id>` / `tiktok:<id>` 这种**伪串**（点开是死链），必须在服务端就挡掉。
+       *
+       * ⚠️ 三条一起钉，而且**只给逐档榜**这件事是刻意的取舍：`/conclusion` 的载荷上限
+       *   只够逐档榜的 242 条头条证据（抽卡方案的候选池就是它）；总榜那条路走按需的
+       *   `/api/archive/packs`。哪天有人「顺手」把它加到总榜上，第二条断言会先红。
+       */
+      const tierEnvList = ['0', '1', '2', '6']
+        .flatMap((t) => (hiddenOn.body?.frontierTiers?.[t] || []).flatMap((u) => u.envs || []));
+      const allEnvVideos = [
+        ...(hiddenOn.body?.frontierUnits || []).flatMap((u) => u.envs || []),
+        ...tierEnvList,
+      ].map((e) => e.video).filter((v) => v !== undefined && v !== null);
+      check('⭐ 逐档榜的头条证据带来源视频（界面那个外链图标就靠它）',
+        tierEnvList.length > 0 && tierEnvList.every((e) => e.video === undefined || /^https?:\/\//.test(e.video)),
+        `带视频的 env=${tierEnvList.filter((e) => e.video).length}/${tierEnvList.length}`);
+      check('⭐ 来源视频一律是 http(s) 真链接（douyin:/tiktok: 伪串必须被挡掉）',
+        allEnvVideos.length > 0 && allEnvVideos.every((v) => /^https?:\/\//.test(v)),
+        `${allEnvVideos.length} 条里有 ${allEnvVideos.filter((v) => !/^https?:\/\//.test(v)).length} 条不是真链接`);
+      check('总榜那条路不带来源视频（载荷上限的取舍：走按需的 /api/archive/packs）',
+        (hiddenOn.body?.frontierUnits || []).every((u) => (u.envs || []).every((e) => e.video === undefined)),
+        '「全部」榜上出现了 video 字段 —— 它会按 6 倍的数量撑爆载荷');
       // 回显之外，**榜面真的变了**：只比回显的话，口径没接上也能通过。
       const boardSig = (body) => (body?.frontierUnits || [])
         .map((u) => `${u.key}|${u.gold}|${Math.round(u.total)}`).join(';');
@@ -482,6 +551,28 @@ const main = async () => {
         && new Set(packsHidden.body.versatilityMembers).size
           === packsHidden.body.versatilityMembers.length,
         `${packsHidden.body?.versatilityMembers?.length} 个`);
+      /**
+       * **泛用性按星魂档分份**（用户 2026-10-14 第 1 条）。
+       *
+       * 老字段 `versatilityMembers` 是「最佳那条配装所属档位」的一份；新字段
+       * `versatilityByTier` 才是这个角色**每一档各一份**。界面必须按整包自己的档去取，
+       * 否则 E6 的窗口里会列出 E0 的队友。
+       */
+      const versByTier = packsHidden.body?.versatilityByTier;
+      check('⭐ packs 顶层带按星魂档分份的泛用性名单 versatilityByTier',
+        Boolean(versByTier) && typeof versByTier === 'object'
+        && Object.keys(versByTier).length > 0
+        && Object.entries(versByTier).every(([tier, v]) => /^[0-6]$/.test(tier)
+          && Array.isArray(v.members) && v.members.length > 0
+          && new Set(v.members).size === v.members.length
+          && Number.isFinite(Number(v.raw))),
+        `versatilityByTier=${versByTier ? JSON.stringify(Object.keys(versByTier)) : '（没有）'}`);
+      check('⭐ 每个兼有文档的整包都能在 versatilityByTier 里找到自己那一档',
+        (packsHidden.body?.packs || []).every((p) => {
+          const tier = String([0, 1, 2, 3, 4, 5, 6].filter((t) => t <= (Number(p.eidolon) || 0)).pop());
+          return !versByTier || versByTier[tier] === undefined || versByTier[tier].raw === p.versatilityRaw;
+        }),
+        '某一档的 raw 与整包上的 versatilityRaw 对不上 —— 两份数据不同源');
       // 面板这条路界面**可能没加载过结论**，所以归一上下限随包一起给（见 advice-view 的
       // `frontierExtentsNow()`）。
       check('packs 带 frontierExtents（面板可能没加载过结论）',
@@ -496,6 +587,12 @@ const main = async () => {
         panelEnvs.length > 0 && panelEnvs.every((e) => Number.isFinite(Number(e.seasonMinCost))),
         `envs=${panelEnvs.length}`
         + ` 缺值=${panelEnvs.filter((e) => !Number.isFinite(Number(e.seasonMinCost))).length}`);
+      // **来源视频**（用户 2026-10-14 第 6 条）：面板是**逐关卡全给**的那条路 ——
+      // 逐档榜只带头条那一支的视频，其余关卡的靠这份补（`enrichTipDetail` 合并）。
+      check('packs 每个 env 都带来源视频（逐档榜缺的那几关靠它补）',
+        panelEnvs.length > 0
+        && panelEnvs.every((e) => e.video === undefined || /^https?:\/\//.test(e.video)),
+        `带视频的 env=${panelEnvs.filter((e) => e.video).length}/${panelEnvs.length}`);
       // ⚠️ 比的是**角色得分**（用户 2026-10-13 第 2 条起榜面按它排序与收敛）：
       // 榜上那一条就是「这个角色角色得分最高的那个整包」，所以面板里那个最大值必须
       // 与它逐位相等。拿老的 `total` 比会漏判 —— 新排序键下「最高角色得分」的整包
@@ -569,6 +666,23 @@ const main = async () => {
     check('config exposes games', Array.isArray(config.body.games) && config.body.games.length > 0);
     check('config exposes only 星穹铁道',
       config.body.games.length === 1 && config.body.games[0]?.key === 'hsr');
+
+    // ---- 版本检查（用户 2026-10-14 第 5 条）------------------------------------
+    //
+    // ⚠️ 这里**刻意只测不带 `?check=1` 的那条路**：带上它就会真的去打 GitHub，
+    //    而 e2e 必须能在断网 / 被墙的机器上跑，也不该消耗匿名配额。
+    //    「联网那条路」的正确性由 `tools/update-check-test.mjs` 用注入的 fetch 覆盖。
+    console.log('\n[update-check]');
+    const updateIdle = await get('/api/update-check');
+    check('GET /api/update-check（不带 check=1）只回本地版本号、不联网',
+      updateIdle.status === 200 && updateIdle.body.ok === true
+      && updateIdle.body.status === 'unchecked'
+      && updateIdle.body.current === config.body.programVersion,
+      `status=${updateIdle.body?.status} current=${updateIdle.body?.current}`);
+    check('版本号与 /api/config 同源（唯一来源是 src/version.js）',
+      updateIdle.body.current === config.body.programVersion
+      && Boolean(updateIdle.body.current),
+      `update-check=${updateIdle.body?.current} config=${config.body?.programVersion}`);
 
     const csrf = config.body.csrfToken;
 

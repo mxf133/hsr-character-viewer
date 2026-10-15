@@ -86,6 +86,8 @@ const el = {
   layoutRecords: $('layoutRecords'),
   layoutAdvice: $('layoutAdvice'),
   appVersion: $('appVersion'),
+  appUpdateCheck: $('appUpdateCheck'),
+  appUpdateResult: $('appUpdateResult'),
 };
 
 const state = {
@@ -1164,7 +1166,10 @@ const addCharacterCard = () => {
   plus.textContent = '＋';
   const label = document.createElement('div');
   label.className = 'char-add-label';
-  label.textContent = '添加角色';
+  // 用户 2026-10-14：「虚拟账号-**添加角色**改为**添加/修改角色**」。
+  // 这张卡本来就不只做「添加」：点开的是同一个角色编辑器，已有角色也能改星魂 / 光锥
+  // （`openVirtualRoster()` 列出账号里全部角色，未拥有的那几行才是「＋ 添加」）。
+  label.textContent = '添加/修改角色';
   const hint = document.createElement('div');
   hint.className = 'char-add-hint';
   hint.textContent = '任意角色 / 星魂 / 同命途光锥';
@@ -1292,6 +1297,79 @@ const characterCard = (character) => {
 
 // -------------------------------------------------------------------- bootstrap
 
+/**
+ * 「检查更新」——用户 2026-10-14 第 5 条。
+ *
+ * 用户原话：「程序要支持与从 GitHub 比较最新版本，当版本与此项目的 GitHub 版本不同时，
+ * 点击提示进行更新，当版本与 GitHub 项目相同时，提示已是最新版本，显示此程序的版本号」。
+ *
+ * 三种结果分开处理（服务端已经把 `status` 判好了，界面**不**再自己比版本号 ——
+ * 比版本号这件事只有 `src/server/update-check.js` 一个实现，抄一份到浏览器迟早分会叉）：
+ *   * `latest`  → 「已是最新版本 v4.6.104」
+ *   * `update`  → 「发现新版本 v4.6.105（当前 v4.6.104）」+ 一个**前往下载**的外链
+ *   * `ahead`   → 本地比 GitHub 还新（开发分支 / 提前打包，不是错）
+ *   * `error`   → 「检查更新失败：…（当前 v4.6.104）」
+ *
+ * ⚠️ 结果**留在页脚**而不是只弹一个 toast：toast 4.2 秒就没了，而这里有一个要点得开的
+ *    下载链接，而且用户可能想回头再看一次。toast 照样弹一下（那是「点击的即时反馈」）。
+ * ⚠️ 按钮在请求期间**禁用并改文案**：GitHub 直连偶尔要好几秒，没有这个反馈用户会连点，
+ *    而服务端缓存只挡得住第二次之后的请求（第一次照样要等满）。
+ */
+const renderUpdateResult = (data) => {
+  const el2 = el.appUpdateResult;
+  if (!el2) return;
+  const current = data?.current || el.appVersion?.textContent?.replace(/^ · /, '') || '';
+  const status = data?.status || 'error';
+  el2.replaceChildren();
+  let text2 = '';
+  let kind = '';
+  if (status === 'latest') {
+    text2 = `已是最新版本 ${current}`;
+    kind = 'is-ok';
+  } else if (status === 'update') {
+    text2 = `发现新版本 ${data.latest}（当前 ${current}），`;
+    kind = 'is-update';
+  } else if (status === 'ahead') {
+    text2 = data.latest
+      ? `本地 ${current} 比 GitHub 上的 ${data.latest} 还新（那边的发布还没跟上）。`
+      : (data.note || `GitHub 上还没有发布记录可比较（本地 ${current}）。`);
+    kind = 'is-ok';
+  } else {
+    text2 = `检查更新失败：${data?.error || '未知原因'}（当前 ${current}）`;
+    kind = 'is-err';
+  }
+  el2.className = `footer-update-result ${kind}`;
+  el2.appendChild(document.createTextNode(text2));
+  if (status === 'update' && data.url) {
+    const a = document.createElement('a');
+    a.href = data.url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = '前往下载';
+    a.title = '在 GitHub 上打开这一条发布（在新标签页）';
+    el2.appendChild(a);
+  }
+  el2.hidden = false;
+  toast(text2.replace(/，$/, ''), status === 'error' ? 'err' : (status === 'update' ? '' : 'ok'));
+};
+
+const checkUpdate = async () => {
+  const btn = el.appUpdateCheck;
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = '检查中…';
+  try {
+    // `check=1` 是**唯一**会真的联网的形态（不带它时服务端只回本地版本号）。
+    renderUpdateResult(await api('/api/update-check?check=1'));
+  } catch (err) {
+    renderUpdateResult({ ok: false, status: 'error', error: err.message });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+};
+
 const loadConfig = async () => {
   state.accessToken = readAccessToken();
   const data = await api('/api/config');
@@ -1303,6 +1381,9 @@ const loadConfig = async () => {
     el.appVersion.textContent = data.versionText ? ` · ${data.versionText}` : '';
     el.appVersion.hidden = !data.versionText;
   }
+  // 「检查更新」按钮（用户 2026-10-14 第 5 条）：版本号一显示出来就给用户这个入口。
+  // ⚠️ 它**不会**自己点自己 —— 外网请求只发生在用户点击之后（见 `checkUpdate()`）。
+  if (el.appUpdateCheck) el.appUpdateCheck.hidden = !data.versionText;
   if (state.activeAccountId && !state.accounts.some((a) => a.id === state.activeAccountId)) {
     state.activeAccountId = null;
     state.activeUid = null;
@@ -1391,6 +1472,8 @@ const wireEvents = () => {
   wireTabs();
   // 顶栏那个品牌图标可点（用户 2026-10-14 第 6 条：「点击可以更换」）。
   el.brandMark?.addEventListener('click', () => { void openIconPicker(); });
+  // 「检查更新」（用户 2026-10-14 第 5 条）：**只有点它**才会去打 GitHub。
+  el.appUpdateCheck?.addEventListener('click', () => { void checkUpdate(); });
   el.qrRefresh.addEventListener('click', startQrLogin);
   // ---- 虚拟账号（用户 2026-10-12）------------------------------------------
   //

@@ -34,6 +34,9 @@ import {
   formatRate, frontierFactorsOf, avLinesOf, metricShortText, metricValueText, ownedCharacters,
   ownedLightCones, perfAnchorsOf, perfLineWeightsOf, scorePercent,
   eidolonsOf, lightConeRanksOf, TIER_PLACEHOLDER, tierLabelsOf, tierMoveText, tierTextOf,
+  // ⚠️ `eidolonTierOf`：泛用性的**归一区间是按星魂档分组**的（用户 2026-10-14 第 1 条），
+  //    详情窗口要按整包自己的档去取 `frontierExtents.versatility.byTier`，与算分同一把尺子。
+  eidolonTierOf,
   weightInputOf, teamPlan,
   // 隐金设置（用户 2026-10-11）：五组的名单 / 文案 / 默认值都只有 advice.js 那一份，
   // 这里只负责按它画界面，绝不抄第二份名单。
@@ -2113,13 +2116,16 @@ const wireValueTips = (container) => {
   const enrichTipDetail = async (tip) => {
     const unit = tip?.__unit;
     if (!unit) return;
-    // 两件事都靠**同一个** `/api/archive/packs?char=` 的载荷（有缓存，一个窗口最多多发一次）：
+    // 三件事都靠**同一个** `/api/archive/packs?char=` 的载荷（有缓存，一个窗口最多多发一次）：
     //   ① 逐档榜那四页只带**最好那一关**的明细 → 补齐全部关卡；
     //   ② 泛用性的**来源名单**与三个分项的**归一上下限**只在这个接口上（不在 `/conclusion`，
-    //      理由见 `src/server/conclusion.js` 里 `slimFrontierUnit` 那段「为什么不上榜」）。
+    //      理由见 `src/server/conclusion.js` 里 `slimFrontierUnit` 那段「为什么不上榜」）；
+    //   ③ **来源视频**（用户 2026-10-14 第 6 条）：`/conclusion` 只给逐档榜的头条那一支带它
+    //      （600 KB 硬上限，见 `slimFrontierUnit` 的 env 投影），总榜那条路要在这里补回来。
     const needEnvs = Number(unit.envCount) > (unit.envs || []).length;
     const needVersatility = !Array.isArray(unit.versatilityMembers);
-    if (!needEnvs && !needVersatility) return;
+    const needVideo = (unit.envs || []).some((env) => !env.video);
+    if (!needEnvs && !needVersatility && !needVideo) return;
     const hit = await fetchPacks(unit.name);
     if (!hit) return;
     let learned = false;
@@ -2128,16 +2134,45 @@ const wireValueTips = (container) => {
       state.packsFrontierExtents = hit.frontierExtents;
       learned = true;
     }
-    if (needVersatility && Array.isArray(hit.versatilityMembers)) {
-      // 挂回整包对象上：`frontierTip()` 是从 `unit` 渲染的（与上面补 `envs` 同一条路）。
-      unit.versatilityMembers = hit.versatilityMembers;
-      learned = true;
-    }
-    if (needEnvs) {
-      const match = (hit.packs || []).find((p) => p.key === unit.key);
-      if (match?.envs?.length && match.envs.length > (unit.envs || []).length) {
-        unit.envs = match.envs;
+    if (needVersatility) {
+      // ⚠️ **按档取名单**（用户 2026-10-14 第 1 条）：`versatilityByTier` 是这个角色的
+      //    四份名单（按星魂目标档索引），窗口要用**这个整包自己那一档**那份。
+      //    取不到该档时才退回老字段 `versatilityMembers`（老服务端 / 只有一个档的载荷）。
+      if (hit.versatilityByTier) unit.versatilityByTier = hit.versatilityByTier;
+      const mine = hit.versatilityByTier?.[String(eidolonTierOf(unit.eidolon))];
+      if (Array.isArray(mine?.members)) {
+        // 挂回整包对象上：`frontierTip()` 是从 `unit` 渲染的（与上面补 `envs` 同一条路）。
+        unit.versatilityMembers = mine.members;
         learned = true;
+      } else if (Array.isArray(hit.versatilityMembers)) {
+        unit.versatilityMembers = hit.versatilityMembers;
+        learned = true;
+      }
+    }
+    const match = (needEnvs || needVideo)
+      ? (hit.packs || []).find((p) => p.key === unit.key) || null
+      : null;
+    if (needEnvs && match?.envs?.length && match.envs.length > (unit.envs || []).length) {
+      // ⚠️ 这一支是**整份替换**：换进来的每一行本来就带着 `video`，所以不必再合并。
+      unit.envs = match.envs;
+      learned = true;
+    } else if (needVideo && Array.isArray(match?.envs)) {
+      /**
+       * **来源视频的合并**（不是替换）。
+       *
+       * 总榜那条路上 `unit.envs` 已经是完整的（`envCount` 与实际条数相等），所以
+       * `needEnvs` 为 false、整份替换那支不会走 —— 但它一个 `video` 都没有
+       * （`/conclusion` 只给逐档榜带）。而**一个窗口最多 5 行**、一行一支队，只能逐行补。
+       *
+       * ⚠️ 命中判据必须用 **`id` + `evidenceSeason` 两把**：同一个副本在窗口里会出现多次
+       *    （不同版本各一行），只按 `id` 匹配会把 4.5 的投稿视频贴到 4.6 那一行上 ——
+       *    那正是界面最容易被指认成「数据错了」的地方。
+       */
+      for (const env of unit.envs || []) {
+        if (env.video) continue;
+        const src = match.envs.find((e) => e.id === env.id
+          && e.evidenceSeason === env.evidenceSeason);
+        if (src?.video) { env.video = src.video; learned = true; }
       }
     }
     // 只有真学到东西才重画（`learned === false` 时重画是白费，而且会让窗口闪一下）。
@@ -2335,6 +2370,11 @@ const fetchPacks = async (charKey) => {
       // 所以详情窗口要渲染「泛用性来源」就必须走这个请求，
       // 与「全部配队」「逐档榜补明细」共用同一份缓存，不会多发请求。
       versatilityMembers: Array.isArray(data.versatilityMembers) ? data.versatilityMembers : null,
+      // ⚠️ **2026-10-14 起名单按星魂档分份**（用户第 1 条）：`{ '0': {raw, members}, … }`。
+      //    界面必须按**当前整包自己的档**取 —— `versatilityMembers`（老字段）只有
+      //    `hit[0]` 那一档的，拿它给 E6 的窗口渲染会列出 E0 的队友。
+      versatilityByTier: data.versatilityByTier && typeof data.versatilityByTier === 'object'
+        ? data.versatilityByTier : null,
       // 三个分项的归一上下限：面板这条路上界面可能**根本没加载过结论**
       // （用户直接在「角色信息」页点开），所以它随包一起来。
       frontierExtents: data.frontierExtents || null,
@@ -2489,6 +2529,12 @@ const packRow = (pack, metaById) => {
         card.appendChild(info);
         team.appendChild(card);
       }
+      // **来源视频**（用户 2026-10-14 第 6 条）：「该角色的全部配队」里每一行也是一支队，
+      // 所以图标要跟到底（用户原话是「界面上**每个**显示的队伍都要有一个图标」）。
+      // ⚠️ 这一节的队伍走的是 `/api/archive/packs` 那份载荷（`slimCharacterPack` 逐关卡
+      //    全给 `video`），与浮层主表那条路同源。取不到地址时不画。
+      const video = videoLink(env.video);
+      if (video) team.appendChild(video);
       row.appendChild(team);
     }
   }
@@ -2526,12 +2572,67 @@ const packRow = (pack, metaById) => {
  * `.advice-team-slot` 改成了这个名字，与「队伍方案」那一节同名）——两处各用各的上下文，
  * 选择器都要限定作用域（浮层里就用 `.advice-value-tip` 打头）。
  */
-const teamSlot = (members) => {
+const teamSlot = (members, video = null) => {
   if (!members?.length) return null;
   const slot = text('span', 'advice-plan-team-slot');
   // 队友名单先挂在节点上（不必为此引入 Map：这个节点本来就是这一份数据的宿主）。
   slot.__members = members.slice(0, 4);
+  // 来源视频（用户 2026-10-14 第 6 条）：与队友名单同源（同一个 env 的 `video`）。
+  slot.__video = video || null;
   return slot;
+};
+
+/**
+ * **来源视频**（用户 2026-10-14 第 6 条）：「界面上每个显示的队伍都要有一个图标，点击在
+ * 新界面打开对应的 b 站/油管页面，类似黑塔网（不需要内嵌播放器）」。
+ *
+ * 两件事分得很清：
+ *   * **平台判定** —— 只认 b 站与油管（数据里实测还有 tiktok / douyin 的少量投稿，
+ *     它们不是用户点名的那两家，统一落到中性的 `video` 档，图标照样点得开）；
+ *   * **平台名** —— 只用于 `title` / `aria-label`，**不写进可见文字**：图标旁边再挂一行
+ *     「bilibili」会把队伍卡片挤宽，而悬停提示里说清楚就够了。
+ *
+ * ⚠️ 伪串（`douyin:<id>` / `tiktok:<id>`）不会走到这里 —— 服务端与 `advice.js` 的
+ *    `videoUrlOf()` 已经统一挡掉了。这里仍然对 `new URL()` 失败做兜底：拿到坏地址时
+ *    **不画图标**，绝不留一个点了没反应的东西。
+ */
+const VIDEO_PLATFORM_LABEL = { bilibili: 'bilibili', youtube: 'YouTube', video: '第三方视频站' };
+
+/** 视频地址 → 平台键（`bilibili` / `youtube` / `video`）；地址非法时返回 null。 */
+const videoPlatformOf = (url) => {
+  let host = '';
+  try {
+    host = new URL(String(url)).host.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return null;
+  }
+  if (!host) return null;
+  if (host === 'b23.tv' || host === 'bilibili.com' || host.endsWith('.bilibili.com')) return 'bilibili';
+  if (host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com')) return 'youtube';
+  return 'video';
+};
+
+/**
+ * 一个「来源视频」外链图标。`url` 取不到 / 非法时返回 `null`（调用方据此不画）。
+ *
+ * 用真 `<a target="_blank" rel="noopener noreferrer">` 而不是 `window.open()`：
+ * 浏览器按用户点的是链接来处理（中键新标签页、右键复制地址、状态栏显示目标地址），
+ * 而 `window.open()` 会被弹窗拦截器当成脚本开窗。
+ */
+const videoLink = (url) => {
+  const platform = videoPlatformOf(url);
+  if (!platform) return null;
+  const a = document.createElement('a');
+  a.className = `advice-team-video is-${platform}`;
+  a.href = String(url);
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  const title = `来源视频 · ${VIDEO_PLATFORM_LABEL[platform]}（在新标签页打开）`;
+  a.title = title;
+  a.setAttribute('aria-label', title);
+  // 一个纯 CSS 画的播放三角（`▶`）：不引第三方图标字体，也不必内联 SVG。
+  a.appendChild(text('span', 'advice-team-video-glyph', '▶'));
+  return a;
 };
 
 /**
@@ -2575,6 +2676,11 @@ const fillTeamCards = (slot) => {
     row.appendChild(card);
   }
   slot.appendChild(row);
+  // **来源视频**（用户 2026-10-14 第 6 条）：这支队的 b 站 / 油管投稿入口。
+  // 摆在队伍那一行的**末尾**（不是每位成员各挂一个）—— 投稿是**整支队**一条，
+  // 挂到某个人头上会被读成「这个人的视频」。取不到地址时 `videoLink()` 返回 null，不画。
+  const video = videoLink(slot.__video);
+  if (video) slot.appendChild(video);
 };
 
 /**
@@ -2693,8 +2799,19 @@ const scoreBreakdownTable = (unit) => {
    * 载荷没带 `extents` 时（老服务端 / 合成夹具）这一行只是不显示，其余照旧。
    */
   const extents = frontierExtentsNow();
-  const extentOf = (key) => {
-    const e = extents?.[key];
+  /**
+   * 取一个分项的归一上下限。
+   *
+   * ⚠️ **泛用性要按整包自己的星魂档取**（用户 2026-10-14 第 1 条「不同星魂需要各自比较
+   *    泛用性」）：算分用的是 `versatility.byTier[档]`，界面这里也必须取同一把尺子，
+   *    否则窗口里写出来的 `得分 = 100 × (原始量 − 最小) / (最大 − 最小)` 与榜上的分对不上。
+   *    取不到该档（老载荷 / 合成夹具）才退回整榜那一份。
+   */
+  const extentOf = (key, unit) => {
+    let e = extents?.[key];
+    if (key === 'versatility') {
+      e = e?.byTier?.[String(eidolonTierOf(unit?.eidolon))] ?? e;
+    }
     if (!e || !Number.isFinite(Number(e.lo)) || !Number.isFinite(Number(e.hi))) return null;
     return e;
   };
@@ -2727,10 +2844,12 @@ const scoreBreakdownTable = (unit) => {
     ['强度', '各副本最近版本的行动值 → 按关卡权重加权平均', unit.strengthTotal, unit.strengthScore,
       w.strength, 'strength', false],
     ['性价比', '同成绩下金数越少越高', unit.total, unit.costScore, w.cost, 'cost', false],
-    ['泛用性', '能通关队伍里的不同队友数', unit.versatilityRaw, unit.versatilityScore,
+    // ⚠️ 用户 2026-10-14 第 1 条之后这个「为什么」必须写明**是这一档的**：
+    //    改前泛用性是角色级的（E0 与 E6 共用一份），现在每个星魂档各算各的。
+    ['泛用性', '本星魂档能通关队伍里的不同队友数', unit.versatilityRaw, unit.versatilityScore,
       w.versatility, 'versatility', true],
   ]) {
-    const e = extentOf(key);
+    const e = extentOf(key, unit);
     // ⚠️ 强度是**绝对刻度**（0~100 就是原始量本身），没有榜内归一那一步 —— 对它写
     //    「（榜内 0 ~ 100）」既没用又会让人以为还有一次归一（用户 2026-10-14 的新口径）。
     const isAbsolute = key === 'strength';
@@ -2772,7 +2891,8 @@ const scoreBreakdownTable = (unit) => {
     '角色得分 = 强度 × 权重 + 性价比 × 权重 + 泛用性 × 权重'
     // ⚠️ 强度**不再榜内归一**（用户 2026-10-14 的口径）：它本来就是 0~100 的绝对刻度。
     //    这里必须分开说，否则读者会拿 min-max 那条式子去验算强度，永远对不上。
-    + '（强度 = 绝对刻度 0~100；性价比与泛用性：得分 = 100 ×（原始量 − 榜内最小）/（榜内最大 − 榜内最小））'));
+    + '（强度 = 绝对刻度 0~100；性价比：得分 = 100 ×（原始量 − 榜内最小）/（榜内最大 − 榜内最小）；'
+    + '泛用性同式，但**最小 / 最大取本星魂档自己那一把尺子**）'));
   const table = tipTable(
     ['分项', '原始量', '得分', '权重', '贡献'],
     rows,
@@ -2926,25 +3046,36 @@ const strengthSourceBlock = (unit) => {
 };
 
 /**
- * 「**泛用性**」这一项的完整来源（用户 2026-10-13 第 3 条）。
+ * 「**泛用性**」这一项的完整来源（用户 2026-10-13 第 3 条 + 2026-10-14 第 1 条）。
  *
  * 这一项的原始量不是分数而是一个**集合的大小**，所以它的「来源」就是把那个集合**列出来**：
- * 这个角色的**能通关**队伍里出现过的**不同队友**。再补一句归一换算，
+ * 这个整包**那个星魂档**在**能通关**队伍里出现过的**不同队友**。再补一句归一换算，
  * 读者就能从名单一路验算到榜上那个 0~100 的分。
  *
+ * ⚠️ **口径 2026-10-14 改过**（用户原话：「泛用性需要关联到具体的星魂，一个角色的 E0 的
+ *    泛用性和 E6 的泛用性其实关系不大，不同星魂需要各自比较泛用性」）：改前它是
+ *    **角色级**的（同一个角色的 E0 包与 E6 包共用一份名单），现在**按星魂档各算各的** ——
+ *    所以标题必须把档位写出来，否则读者会以为这是「这个角色的泛用性」。
+ *    归一区间也换成**该档自己那一把尺子**（`versatility.byTier`），与算分同源。
  * ⚠️ 名单只对**前 `FRONTIER_DETAIL_ROWS` 条**下发（`slimFrontierUnit` 里那一段）：
  * 排后面的条目这里拿不到名单，**如实返回 null**（那一格不画），不要伪造一行「—」。
  * ⚠️ 开拓者各命途在数据集里是**不同的英文键**，原样列出来会看到 5 个开拓者 ——
  * 脚注必须说明「算同一个人」，否则读者会以为榜单数错了。
  */
 const versatilitySourceBlock = (unit) => {
-  const members = unit.versatilityMembers;
+  const tier = eidolonTierOf(unit.eidolon);
+  // ⚠️ 名单要取**这个整包自己那一档**那份（`enrichTipDetail` 已经把它写成
+  //    `unit.versatilityMembers`；`versatilityByTier` 是同一份数据、留着当兜底 ——
+  //    面板那条路可能还没跑过 `enrichTipDetail` 就直接渲染）。
+  const mine = unit.versatilityByTier?.[String(tier)];
+  const members = Array.isArray(mine?.members) ? mine.members : unit.versatilityMembers;
   if (!Array.isArray(members) || !members.length) return null;
-  const raw = Number(unit.versatilityRaw) || 0;
-  const e = frontierExtentsNow()?.versatility;
+  const raw = Number(mine?.raw ?? unit.versatilityRaw) || 0;
+  const whole = frontierExtentsNow()?.versatility;
+  const e = whole?.byTier?.[String(tier)] ?? whole;
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
-    `泛用性来源：这个角色**能通关**的队伍里出现过的不同队友（共 ${raw} 个）`));
+    `泛用性来源：**E${tier}** 这一档在**能通关**的队伍里出现过的不同队友（共 ${raw} 个）`));
   // 名单做成**一个个 span**（不是一整串文本）：① 分隔符不会与名字里的「•」混在一起；
   // ② CDP 探针可以按元素数数，不必去猜分隔符（实测角色名里确实有「•」这种点）。
   const list = text('div', 'advice-vtip-members');
@@ -3018,7 +3149,8 @@ const costSourceBlock = (unit) => {
     labelCell.appendChild(tipEnvLabel(
       meta?.label || env.envLabel || env.id, env.evidenceSeason,
     ));
-    const teamSlotNode = teamSlot(env.members);
+    // 来源视频（用户 2026-10-14 第 6 条）随 `env` 一起交给队伍槽（见 `teamSlot()`）。
+    const teamSlotNode = teamSlot(env.members, env.video);
     if (teamSlotNode) labelCell.appendChild(teamSlotNode);
     return [
       labelCell,
@@ -3107,16 +3239,17 @@ const frontierTip = (unit) => {
   const evidenceUnits = (unit.envs || [])
     .reduce((n, e) => n + (Number(e.seasonCount) || 0), 0);
   /**
-   * 版本权重那一行的**比例文本**（`2:2:2`）：从下发的 `seasonWeights` 现算。
+   * 版本权重那一行的**比例文本**（`3:2.5:2:1.5:1:0.5`）：从下发的 `seasonWeights` 现算。
    *
-   * ⚠️ 2026-10-12 第 5 条把窗口从 7 版收到 3 版（`VERSION_WEIGHTS` 变回 `2:2:2`），
-   * 所以**不能**再写死 `2:2:2:1:1:1:1` —— 那张表一改，脚注就会与榜上的分对不上。
+   * ⚠️ **不许写死**：用户 2026-10-14 把表改成 `3:2.5:2:1.5:1:0.5`（窗口 6），而它上一轮
+   * 还是 `2:2:2`（窗口 3）—— 这张表一改，脚注就会与榜上的分对不上。
+   * 兜底值（`seasonWeights` 缺失时）也跟着当前表走，别再留 `2:2:2` 那种过期常量。
    * 对象键序 = 新 → 旧（见 `buildConclusionInner` 的 `windowSeasons`），所以直接取 values。
    */
   const versionRatioText = (() => {
     const values = Object.values(bestMeta?.seasonWeights || {}).map((v) => Number(v));
     const usable = values.filter((v) => Number.isFinite(v) && v > 0);
-    return usable.length ? usable.join(':') : '2:2:2';
+    return usable.length ? usable.join(':') : '3:2.5:2:1.5:1:0.5';
   })();
   // 脚注一律**单行**（用户要求「更简略」）：一条只说一件事，能省的定语全省。
   // ⚠️ 每条 ≤60 字有 CDP 断言钉着（`check-advice-layout.mjs` 的 notesShortOk）。
@@ -3151,10 +3284,10 @@ const frontierTip = (unit) => {
     //    （`feat/level-icons-cost-cap` 那一轮加的）。
     '跨版本发挥 = 各版本加权平均 / 最好的那一版，恒 ≤ 1。',
     // 用户 2026-10-10 第 8 条给了整句：「最近 7 个版本按 2:2:2:1:1:1:1 加权，未上线版本
-    // 不参与加权」。⚠️ 2026-10-12 第 5 条把窗口收到 **3 版**，比例与版数都改为**跟着数据走**
-    // （版数取 `versionWindow`、比例取 `versionRatioText`）—— 只有「未上线版本不参与加权」
-    // 这句是固定的口径，其余照用户原话。
-    `最近 ${bestMeta?.versionWindow || 3} 个版本按 ${versionRatioText} 加权，未上线版本不参与加权。`,
+    // 不参与加权」。⚠️ 版数一律**跟着数据走**（版数取 `versionWindow`、比例取
+    // `versionRatioText`，兜底 6 版 = 当前 `VERSION_WEIGHTS` 的长度）—— 只有「未上线
+    // 版本不参与加权」这句是固定的口径，其余照用户原话。
+    `最近 ${bestMeta?.versionWindow || 6} 个版本按 ${versionRatioText} 加权，未上线版本不参与加权。`,
     // ⚠️ 用户 2026-10-11 缺陷 5：**新老角色的尺子不同**必须让读者看得见。
     // 「早于登场 → 不参与平均」让新角色只按**它唯一那一版**算（近似单点最大值），
     // 而老角色是多版加权平均（被没上榜的版本拖低）。两者混在一张榜上时，
@@ -3167,9 +3300,10 @@ const frontierTip = (unit) => {
     // ⚠️ 用户 2026-10-13 第 1、2 条之后，这个窗口里有**两类**权重同时在起作用，
     // 所以这句必须说清分工（改前只说「这里的权重是关卡权重那一类」）。
     '关卡权重决定哪些副本算数；抽卡权重决定三个分项怎么加权。',
-    // 泛用性的口径（用户 2026-10-13 第 1 条原话：「包含的不同队友越多得分越高」）。
-    // ⚠️ 它是**角色级**的：同一个角色的 E0 包与 E6 包共用同一个泛用性分。
-    '泛用性 = 能通关的队伍里出现过的不同队友数（角色级，与本包星魂无关）。',
+    // 泛用性的口径（用户 2026-10-13 第 1 条 + **2026-10-14 第 1 条改口径**）。
+    // ⚠️ 它现在是**按星魂档**算的：同一个角色的 E0 包与 E6 包拿到的是两个不同的数，
+    //    而且各自在**本档**的区间里归一到 0~100（用户原话：「不同星魂需要各自比较泛用性」）。
+    '泛用性 = **本档星魂**在能通关的队伍里出现过的不同队友数（各星魂档各自排名）。',
   ];
   // 「最佳证据的队伍」那一块**已删除**（用户 2026-10-11 第 5 条「图标都放进表格内」）：
   // 队伍卡片现在长在表格第一格里（见 `costSourceBlock()` 的 `labelCell`），关卡信息因此
@@ -3294,7 +3428,10 @@ const teamPlanTip = (row, plan) => {
   const wc = formatShare(draw.cost);
   // 泛用性的系数（用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」）。
   const wv = formatShare(draw.versatility);
-  /** 队内平均泛用性 / 它的池内刻度：都是**平均值**，所以要一位小数（不是整数人数）。 */
+  /**
+   * 队级泛用性 / 它的池内刻度：2026-10-14 起这个数是**按成本占比加权的平均**
+   * （不再是简单平均），所以照样要一位小数（它可能是 12.5 而不是整数人数）。
+   */
   const vers = (v) => Number(v || 0).toFixed(1);
   /**
    * 这张卡在方案里的序号（**只用来给折叠块的 id 去重**）。
@@ -3355,9 +3492,11 @@ const teamPlanTip = (row, plan) => {
       ['差额接近度', `补金 ${row.gap} 金｜账面 ${row.gold} 金`,
         `(1 − 补金 ÷ ${plan.gapMax} 金)^${gapPower}（池内 p75）`,
         `${num(row.gapPct)} × ${wc}`],
-      // ③ 泛用性（用户 2026-10-13 第 3 条）：队内成员**各自**泛用性的**平均**，再按候选池
-      // 归一。刻度是「个队友」，所以写清楚单位 —— 否则读者会把它当成一个百分比。
-      ['泛用性', `队内平均 ${vers(row.versatilityRaw)} 个队友`,
+      // ③ 泛用性（用户 2026-10-13 第 3 条 + **2026-10-14 第 1 条改口径**）：队内成员
+      // **各自**泛用性按**成本占比**加权（每人那个数 = 他在**自己那一档星魂**下能通关的
+      // 队伍里见过的不同队友数），再按候选池归一。刻度是「个队友」，所以写清楚单位 ——
+      // 否则读者会把它当成一个百分比。
+      ['泛用性', `成本加权 ${vers(row.versatilityRaw)} 个队友`,
         `${vers(plan.versatilityLo)} ~ ${vers(plan.versatilityHi)} 个（池内现算）`,
         `${num(row.versatilityPct)} × ${wv}`],
     ],
@@ -3385,10 +3524,13 @@ const teamPlanTip = (row, plan) => {
     + `**与金数、与你有多少钱无关**。三个系数来自「抽卡权重」（强度 ${(draw.strength * 100).toFixed(0)}% / `
     + `性价比 ${(draw.cost * 100).toFixed(0)}% / 泛用性 ${(draw.versatility * 100).toFixed(0)}%），`
     + '改它不用重算数据集。',
-    // ⚠️ 用户 2026-10-13 第 3 条：泛用性**也**进补金推荐分。口径是**队内平均**（用户选定），
-    //    与角色总榜那一列的原始量同源（那一个数 = 该角色能通关的队伍里出现过的不同队友数）。
-    '泛用性 = 队内成员**各自**泛用性的平均（每人那个数 = 他在能通关的队伍里见过的不同队友数，'
-    + '开拓者各命途算一个人），再按候选池归一 —— 所以「成员越百搭，这支队越好抄、越好换人」。',
+    // ⚠️ 用户 2026-10-13 第 3 条：泛用性**也**进补金推荐分。
+    //    2026-10-14 第 1 条把两件事一起改了（原话：「整个队伍的泛用性根据不同角色的成本
+    //    占整个队伍的成本的权重而定」）：① 每人的那个数现在是**他自己那一档星魂**的数
+    //    （不再是角色级的一个数）；② 队级合成从**简单平均**换成**按各成员金数占比加权**。
+    '泛用性 = 队内成员**各自**泛用性按**成本占比**加权（每人那个数 = 他在**自己那一档星魂**下'
+    + '能通关的队伍里见过的不同队友数，开拓者各命途算一个人；权重 = 这个人的金数 ÷ 全队金数），'
+    + '再按候选池归一 —— 所以「队里花金最多的那位越百搭，这支队越好抄、越好换人」。',
   ];
   const tip = tipBox({
     head: `补金推荐分 +${num(row.total)}`,
@@ -3635,6 +3777,12 @@ const renderTeamPlan = (conclusion) => {
         `最佳证据：${b.label} ${b.bestTeamGold ?? '—'} 金`
         + `${Number.isFinite(Number(b.actionValue)) ? ` · ${b.actionValue} 行动值` : ''}`
         + `${b.season ? ` · ${b.season} 版本` : ''}`));
+      // **来源视频**（用户 2026-10-14 第 6 条）：这张卡就是一支队，所以图标紧跟在
+      // 「最佳证据」那半句后面 —— 它标的正是那支队伍的证据投稿。取不到地址时不画。
+      // ⚠️ 这一份来自 `frontierTiers`（方案的候选池就是它）—— 服务端只在那份载荷上带了
+      //    `video`，见 `src/server/conclusion.js` 的 `slimFrontierUnit`。
+      const video = videoLink(b.video);
+      if (video) facts.appendChild(video);
     }
     card.appendChild(facts);
 
