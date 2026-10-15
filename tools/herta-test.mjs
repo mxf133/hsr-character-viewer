@@ -2703,16 +2703,20 @@ check('性价比总榜：已登场却缺证据的版本**算 0 分**（权重仍
     '「已登场却无人使用」应确实拉低分数（否则这条规则等于没生效）');
 });
 
-check('性价比总榜：池 = 全部成绩（不再按成本截断），跨版本发挥恒 ≤ 1', () => {
+check('性价比总榜：池 = 全部成绩（不再按成本截断），最佳证据取**版本最新**的那次', () => {
   // v4.6.78（用户 2026-10）：「改为所有成绩都要进池，我不希望估算」。
   //
   // 旧口径（池 = 最便宜 25%）会制造一个中间态「有人用、但没挤进最便宜那批」，它只能靠
   // **估算**填；估算值与分母不同源 → 「跨版本发挥」能 > 1（实测绯英 E6+邂逅S5 ×1.50）。
   // 现在池 = 窗口内全部达标/满分行，分子分母同源。
   //
-  // 这条用例钉住三件事：
-  //   ① 更贵但更强的那一版**也算证据**，并且能成为「最佳证据」（旧口径会把它挡在池外）；
-  //   ② 因子 = 各版本加权平均 ÷ 最好的那一版，恒 ≤ 1；
+  // ⚠️ **2026-10-15 用户改了「最佳证据」的口径**（原话：「最佳证据会受到跨版本发挥的
+  // 削减，因此还是新版本新配队更强」）：它从「跨版本原始分最高的那次」改成「**版本最新**
+  // 的那次成绩」（与强度来源表同一口径）。所以这一条用例钉住三件新事：
+  //   ① 更贵但更强的那一版**也算证据**（旧口径会把它挡在池外）——但它**不再**凭原始分
+  //     抢走「最佳证据」的头衔，展示与因子拆解都跟着**最新版**那一条走；
+  //   ② 跨版本发挥 = 各版本加权平均 ÷ **最新版那次成绩**，**可以 > 1** —— 旧版本的成绩
+  //     更好时它就是把平均往上抬（> 1 = 旧版抬分；< 1 = 缺投稿摊薄），不再恒 ≤ 1；
   //   ③ `unrankedSeasons`（那台估算机器的字段）**不再下发** —— 防止它被悄悄塞回来。
   const availability = {
     characters: {
@@ -2746,19 +2750,20 @@ check('性价比总榜：池 = 全部成绩（不再按成本截断），跨版�
   // ① 更贵那一版也是证据：两版都进平均（没有任何一版被当成「无人使用」）。
   assert.equal(pool.envs[0].droppedSeasons, 0,
     '池 = 全部成绩 → 有投稿的版本不该被记成「没有任何成绩（算 0 分）」');
-  assert.equal(pool.envs[0].evidenceSeason, '4.4',
-    '最佳证据应是那一版自己最好的成绩（4.4 拿满 1.0 > 4.5 的 0.5）');
+  assert.equal(pool.envs[0].evidenceSeason, '4.5',
+    '最佳证据应是**版本最新**的那次（4.5；4.4 原始分更高也不再抢头衔，2026-10-15 口径）');
 
-  // ② 加权平均 = (50×2 + 100×2) ÷ 4 = 75；分母 = 最好的那一版 = 100 → 因子 0.75。
+  // ② 加权平均 = (50×2 + 100×2) ÷ 4 = 75；分母 = 最新版那次 = 50 → 因子 1.5（> 1 合法：
+  // 4.4 的满分记录把加权平均抬到了最新版成绩之上 —— 正是「旧版抬分」的形态）。
   const perEnv = pool.total / 10;                       // 绝境权重 10
   assert.ok(Math.abs(perEnv - 75) < 0.01,
     `应按 (50×2 + 100×2) ÷ 4 = 75 计分，实际 ${perEnv.toFixed(2)}`);
   const meta = (out.frontierEnvs || []).find((e) => e.id === 'aa|plight');
   const f = frontierFactorsOf(pool.envs[0], meta);
-  assert.ok(Math.abs(f.seasonFactor - 0.75) < 1e-9,
-    `跨版本发挥应为 0.75，实际 ${f.seasonFactor}`);
-  assert.ok(f.seasonFactor <= 1 + 1e-9,
-    '跨版本发挥恒 ≤ 1（分子与分母取自同一个集合，构造上不可能超过）');
+  assert.ok(Math.abs(f.seasonFactor - 1.5) < 1e-9,
+    `跨版本发挥应为 75 ÷ 50 = 1.5，实际 ${f.seasonFactor}`);
+  assert.ok(f.seasonFactor > 1,
+    '旧版本成绩更好时跨版本发挥应当 > 1（2026-10-15 起不再恒 ≤ 1）');
 
   // ③ 估算机器的字段已经删掉（不是「恒为 0」，而是**不存在**）。
   assert.equal(pool.envs[0].unrankedSeasons, undefined,
@@ -3761,14 +3766,12 @@ checkAsync('贡献值来源：真实数据集上因子能还原每一行的分�
       // 一旦查不到就退化成 0，`贡献 = 权重 × 分` 会变成 0 = 0 的假通过。
       assert.ok(f.weight > 0, `${unit.name} / ${env.id}：副本权重必须 > 0，实际 ${f.weight}`);
       assert.ok(f.score > 0, `${unit.name} / ${env.id}：这一副本的分必须 > 0，实际 ${f.score}`);
-      // ⚠️ v4.6.78：跨版本发挥**恒 ≤ 1**（分子与分母取自同一个集合 —— 池 = 全部成绩）。
-      // 旧口径（池 = 最便宜 25% + 未进池按质量估算）实测有 10 条 > 1（绯英 E6+邂逅S5 ×1.50）。
-      // 容差 1e-4 而不是 1e-9：载荷把 `env.score` 四舍五入到 **4 位小数**
-      // （`Number(pack.score.toFixed(4))`），而 `base` 由界面从其余字段现算 ——
-      // 于是余数会带上一点四舍五入噪声（实测最差 1.0000001，界面显示仍是 ×1.00）。
-      // 那是载荷精度，不是口径：真口径的溢出（旧版 ×1.50）比它大四个数量级。
-      assert.ok(f.seasonFactor <= 1 + 1e-4,
-        `${unit.name} / ${env.id}：跨版本发挥必须 ≤ 1，实际 ${f.seasonFactor}`);
+      // ⚠️ **2026-10-15 起「跨版本发挥」不再恒 ≤ 1**：分母从「跨版本原始分最高的那次」
+      // 改成「版本最新那次成绩」（用户口径：最佳证据受跨版本发挥削减，新版本新配队更强）。
+      // `> 1` = 旧版本成绩仍在把加权平均往上抬（老常客的常态）；`< 1` = 缺投稿摊薄。
+      // 这里只钉「有限且为正」+ 恒等式（下面 `rebuilt` 那条），不再设上限。
+      assert.ok(Number.isFinite(f.seasonFactor) && f.seasonFactor > 0,
+        `${unit.name} / ${env.id}：跨版本发挥必须是正数，实际 ${f.seasonFactor}`);
       if (Math.abs(f.weight - 1) > 1e-9) weighted += 1;
       if (f.costFactor !== null && Math.abs(f.costFactor - 1) > 0.05) movedCost += 1;
       if (Math.abs(f.perfFactor - 1) > 0.05) movedAv += 1;
@@ -3818,12 +3821,13 @@ checkAsync('⭐ 面板（/api/archive/packs）那一路的 env 也要能还原�
         assert.ok(Number.isFinite(Number(env.seasonMinCost)),
           `${name} / ${env.id}：面板的 env 必须带 seasonMinCost`);
         withSeasonMinCost += 1;
-        // ② 因子必须能还原成榜上的分，且**恒 ≤ 1**
+        // ② 因子必须能还原成榜上的分；跨版本发挥 2026-10-15 起不再设 ≤ 1 上限
+        //（> 1 = 旧版抬分、< 1 = 缺投稿摊薄，见上面结论载荷那条用例的注释）。
         const f = frontierFactorsOf(env, metaOf(env.id));
         if (!(f.base > 0)) continue;
         maxFactor = Math.max(maxFactor, Number(f.seasonFactor) || 0);
-        assert.ok(f.seasonFactor <= 1 + 1e-4,
-          `${name} / ${env.id}：跨版本发挥必须 ≤ 1，实际 ${f.seasonFactor}`
+        assert.ok(Number.isFinite(f.seasonFactor) && f.seasonFactor > 0,
+          `${name} / ${env.id}：跨版本发挥必须是正数，实际 ${f.seasonFactor}`
           + `（minCost ${f.minCost}/${f.cost}）`);
         const rebuilt = 100 * f.perfFactor * (f.costFactor ?? 1) * f.seasonFactor;
         assert.ok(Math.abs(rebuilt - f.score) < 1e-6,

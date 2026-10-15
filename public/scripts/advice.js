@@ -2372,9 +2372,10 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
    * 队伍成员的星魂要从**成员自己**身上取（`m.eidolon`），不能拿代表整包的档去顶 ——
    * 一支队里四个人的档通常各不相同。
    *
-   * ⚠️ 同一个 `角色|E档` 在池里可能出现多条（不同光锥），而 `versatilityRaw` 只由
-   *    「角色 + 星魂档」决定（与光锥无关，见 `buildConclusionInner` 的 `versatilityKeyOf`），
-   *    所以取第一条即可；下面仍按「先到先得」而不是覆盖，避免最后一条把值改掉。
+   * ⚠️ 同一个 `角色|E档` 在池里可能出现多条（不同光锥）。2026-10-15 起泛用性按版本
+   *    加权（见 `buildConclusionInner`），原始量**随整包自己的证据版本走**、不再与
+   *    光锥无关 —— 所以这里取该档**最大**的那条（这一档攒下的最宽关系网），
+   *    不再「先到先得」：那会随池的遍历顺序漂。
    * ⚠️ 键用 `unit.name`（= 角色英文键），**不是** `unit.char`：这条链拿到的是
    *    `projectConclusion` 投影过的整包（`slimFrontierUnit` 把角色键写在 `name` 上），
    *    夹具也是同一个形状。用错了不会报错 —— 只会让表里只剩一个 `undefined` 键，
@@ -2384,8 +2385,9 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   const versatilityKeyOfMember = (name, eidolon) => `${name}|E${eidolonTierOf(eidolon)}`;
   for (const unit of units) {
     const key = versatilityKeyOfMember(unit.name, unit.eidolon);
-    if (!versatilityOfTier.has(key)) {
-      versatilityOfTier.set(key, Number(unit.versatilityRaw) || 0);
+    const value = Number(unit.versatilityRaw) || 0;
+    if (!versatilityOfTier.has(key) || value > versatilityOfTier.get(key)) {
+      versatilityOfTier.set(key, value);
     }
   }
   // 抽卡权重（用户 2026-10-12 第 3、4 条 + 2026-10-13 第 3 条）：只认**相对大小**，
@@ -3838,6 +3840,11 @@ const buildConclusionInner = (envs, options = {}) => {
     // 既不能单独抽，也不该和「要花金」的整包排在同一个性价比榜上。
     {
       const packRows = frontierPackRowsOf(env, frontier[id], rows, availability);
+      // 泛用性的**按版本分桶**（键 = 归一角色|E档 → 版本 → 队友集合）。
+      // ⚠️ 声明在 `packRows` 旁边：下面两个 `if (packRows.length)` 块（本趟记账 /
+      //    算分）都要读它，而黑塔网四个副本各用一套版本号（混沌 4.5 与异相 4.5
+      //    不是同一期），所以**每个副本各一份**，不能提到副本循环外按版本字符串并桶。
+      const teammateVarietyBySeason = new Map();
       if (packRows.length) {
         // ---- 泛用性：把这一批「能通关的」配置里的**队友关系**记进 `teammateVariety` ----
         //
@@ -3850,6 +3857,15 @@ const buildConclusionInner = (envs, options = {}) => {
         // ⚠️ 统计口径就是 `packRows` —— 它是服务端筛出来的「达标 / 满分档 + 成本前沿」，
         // 也就是这批数据里**唯一的「能通关」集合**（回退路径下是聚合阵容里的达标行）。
         // ⚠️ 与 `gold` 无关：这里**不**按进榜判据再筛一次，只看「这支队能不能通」。
+        //
+        // ⚠️ **2026-10-15 起泛用性按版本权重加权**（用户：「泛用性得分也要受到权重影响，
+        //    老版本的泛用性会被稀释，新登场角色的泛用性仅考虑新版本，旧版本不参与权重」）：
+        //    算分那一侧读的是**按版本分桶**的 `teammateVarietyBySeason`（声明在 `packRows`
+        //    旁边、下面两个 `if` 块都能看到），与性价比/强度共用同一套两态规则
+        //    （早于登场不参与平均、已登场无成绩算 0 分）；
+        //    `teammateVariety`（跨版本并集）只剩**展示**用途（`versatilityMembers` 名单）。
+        // ⚠️ 分桶必须**每个副本一份**：黑塔网四个副本各用一套版本号（混沌 4.5 与
+        //    异相 4.5 不是同一期），跨副本按版本字符串并桶会把不同期的队伍混进同一个集合。
         for (const row of packRows) {
           // 队友那一侧先去重：一支队里出现两个开拓者变体时不该被数成两个人。
           const others = new Set(row.members.map((m) => varietyKeyOf(m.char)).filter(Boolean));
@@ -3860,6 +3876,12 @@ const buildConclusionInner = (envs, options = {}) => {
             let set = teammateVariety.get(key);
             if (!set) { set = new Set(); teammateVariety.set(key, set); }
             for (const other of others) if (other !== self) set.add(other);
+            let bySeason = teammateVarietyBySeason.get(key);
+            if (!bySeason) { bySeason = new Map(); teammateVarietyBySeason.set(key, bySeason); }
+            const season = String(row.season ?? '');
+            let seasonSet = bySeason.get(season);
+            if (!seasonSet) { seasonSet = new Set(); bySeason.set(season, seasonSet); }
+            for (const other of others) if (other !== self) seasonSet.add(other);
           }
         }
       }
@@ -4170,11 +4192,21 @@ const buildConclusionInner = (envs, options = {}) => {
 
         const packs = new Map();
         for (const [key, pack] of perPack) {
+          // 「最佳证据」= **版本最新**的那一次成绩（用户 2026-10-15：最佳证据要受跨版本
+          // 发挥的削减，新版本新配队才是最强证据 —— 与 `strengthAvHit` 的「取版本最新」
+          // 同一个口径，改前是「跨版本取 score 最高的那条」，旧版本的金数水位低、
+          // 原始分占便宜，榜首的证据几乎全是 4.0~4.3 的旧配队）。
+          // ⚠️ 版本内的挑选已经在 `bySeason` 填充时做过（score 最高、同分限定光锥多者），
+          //    这里只需要跨版本挑最新的；比较必须走 `cmpVersion`，不能靠 Map 的插入顺序
+          //    —— `windowSeasons` 会把窗口外「有观测」的版本并到末尾，那种版本可能更新
+          //    （与 `strengthAvHit` 那条注释同一个坑）。
           let best = null;
-          for (const hit of pack.bySeason.values()) {
-            // 最好那一条 = 这一行的「最佳证据」；同分同样用限定光锥多者（第 10 条）。
-            if (!best || hit.score > best.score
-              || (hit.score === best.score && hit.limitedCones > best.limitedCones)) best = hit;
+          let bestSeason = null;
+          for (const [season, hit] of pack.bySeason) {
+            if (!best || cmpVersion(String(season), String(bestSeason)) > 0) {
+              best = hit;
+              bestSeason = season;
+            }
           }
           if (!best) continue;
           const born = firstSeenOf(pack);
@@ -4184,6 +4216,16 @@ const buildConclusionInner = (envs, options = {}) => {
           // `pack.bestPerf`（该版本表现分最高那条），**不乘金数项**；分母 `wSum` 与
           // 性价比那条**完全共用**，所以两个分项的版本覆盖口径天然一致。
           let accStrength = 0;
+          /**
+           * 泛用性的**版本加权累计器**（用户 2026-10-15：泛用性也受权重影响）。
+           *
+           * 与 `accStrength` 同一个模式：分子累计 `w × 该版本队友数`（队友集合来自
+           * `teammateVarietyBySeason`，**本副本**按版本分桶的那份），分母与性价比/强度
+           * **完全共用 `wSum`** —— 所以两态口径天然一致：早于登场不参与、已登场无投稿
+           * 的版本算 0（老版本的队友关系被低权重稀释、缺投稿的版本被 0 分摊薄）。
+           * 新登场角色只有登场之后的版本进分母，泛用性即「仅考虑新版本」。
+           */
+          let accVersa = 0;
           /**
            * 强度分项里**最好的那一版**（与 `accStrength` 同一条 `bestPerf` 尺子取 max）。
            *
@@ -4233,6 +4275,12 @@ const buildConclusionInner = (envs, options = {}) => {
                 * (pack.bestPerf.get(s) ?? observed.perf);
               accStrength += w * strengthPerf;
               accStrengthBest = Math.max(accStrengthBest, strengthPerf);
+              // 泛用性那一档（用户 2026-10-15）：该版本**本副本**的队友集合大小。
+              // `observed` 成立 ⇒ 这条整包在该版本有达标行 ⇒ 它的成员出现在那些
+              // 队伍里 ⇒ 分桶里一定有这份集合（两趟遍历的是同一批 `packRows`）。
+              const versaKey = versatilityKeyOf(pack.char, pack.eidolon);
+              const seasonSet = teammateVarietyBySeason.get(versaKey)?.get(String(s));
+              accVersa += w * (seasonSet ? seasonSet.size : 0);
               // 强度口径的输入：这个版本里行动值最少的那一行 —— 再**取版本最新的那个**
               // （2026-10-15 用户报「老队伍强度过高」后改；改前是跨版本取行动值最少的）。
               const avHit = pack.bestAvHit.get(s);
@@ -4320,6 +4368,9 @@ const buildConclusionInner = (envs, options = {}) => {
             // 强度分项（**不含金数项**）：同一套版本加权、同一个分母（用户 2026-10-13
             // 第 1、2 条）。它与 `score`（性价比）一起进 `frontierBoard` 的两个分项。
             strength: accStrength / wSum,
+            // 泛用性分项的**本副本**版本加权值（用户 2026-10-15）：`Σ w × 队友数 ÷ Σ w`，
+            // 分母与 `score` / `strength` 共用。frontierBoard 再按关卡权重合成整包值。
+            versatility: accVersa / wSum,
             // 强度分项里**最好的那一版**（0~100，与 `strength` 同一量纲）：详情窗口靠它
             // 写强度来源表的「跨版本发挥」列（= `strength ÷ strengthBest`，恒 ≤ 1）。
             strengthBest: accStrengthBest,
@@ -5411,6 +5462,10 @@ const buildConclusionInner = (envs, options = {}) => {
           // ⚠️ 老载荷 / 合成夹具没有 `pack.strength` 时退回 `pack.score`（不出现 NaN）。
           envStrength: Number(envStrengthNew.toFixed(4)),
           envStrengthValue: Number((envStrengthNew * weight).toFixed(4)),
+          // 泛用性的**本副本**版本加权值（用户 2026-10-15）：`buildConclusionInner` 的
+          // 第二趟按版本权重算好（与 score / strength 同一套两态口径），这里随关卡
+          // 权重进整包合成 —— 缺副本按 0 计，与 `strengthTotal` 的口径一致。
+          envVersatility: Number((Number(pack.versatility) || 0).toFixed(4)),
           // 新口径的原始证据（强度来源表要写出来）：这次成绩的行动值、金数、档位、版本，
           // 以及它是否落在满分档（界面据此解释「为什么这里按金数扣分」）。
           avBest: Number.isFinite(avBest) ? avBest : null,
@@ -5483,6 +5538,14 @@ const buildConclusionInner = (envs, options = {}) => {
       const strengthTotal = strengthWeight > 0
         ? unit.envs.reduce((n, e) => n + e.weight * e.envStrength, 0) / strengthWeight
         : 0;
+      // 泛用性的整包合成（用户 2026-10-15）：与 `strengthTotal` 同一个形状 ——
+      // 每个副本先按**版本权重**加权（第二趟算好，缺投稿版本计 0），再按**关卡权重**
+      // 跨副本加权，分母是**全部副本**的权重和（缺副本按 0 计，不是「有数据的那些」
+      // —— 同一个反向激励根治点，见 `strengthTotal` 的注释）。
+      const versatilityRaw = strengthWeight > 0
+        ? unit.envs.reduce((n, e) => n + e.weight * (Number(e.envVersatility) || 0), 0)
+          / strengthWeight
+        : 0;
       const best = unit.envs[0];
       // 泛用性的主体键：**这个整包的星魂档**（用户 2026-10-14 第 1 条），与 `versatilityKeyOf`
       // 同一写法。下面 `versatilityRaw` / `versatilityMembers` 都从这一份取。
@@ -5511,10 +5574,12 @@ const buildConclusionInner = (envs, options = {}) => {
         // 金数项就能还原的数：0 金通关那一支的金数项是 ×1.2 而不是 min(1, ·)，
         // 所以 `all` 里如实存两份（见第一趟算分处那段注释）。
         strengthTotal: Number(strengthTotal.toFixed(4)),
-        // 泛用性原始分 = **这个整包的星魂档**在能通关队伍里出现过的不同队友数
-        // （用户 2026-10-14 第 1 条：E0 与 E6 各算各的，不再共用一个数）。
-        // ⚠️ 查表要用归一后的键（开拓者各命途算同一个人），见 `versatilityKeyOf`。
-        versatilityRaw: teammateVariety.get(versatilityKey)?.size ?? 0,
+        // 泛用性原始分（用户 2026-10-15 起改为**双重加权**）：每个副本按**版本权重**
+        // 加权该版本的队友数（早于登场不参与、已登场无投稿计 0），再按**关卡权重**
+        // 跨副本加权 —— 老版本的队友关系被低权重稀释，新登场角色只由它有证据的
+        // 版本说话。⚠️ 它不再是「不同队友数」的整数并集 —— 那份并集仍在
+        // `versatilityMembers`（展示用），原始量的量纲是「加权队友数」（可为小数）。
+        versatilityRaw,
         // 泛用性的**来源名单**（用户 2026-10-13：「给出泛用性的**完整得分来源**」）：
         // 上面那个数的分子，去重后的队友（数据集英文键，界面自己用 i18n 转中文）。
         // ⚠️ 排序后再存，别让集合的插入顺序走出去 —— 那是数据集的遍历顺序，
