@@ -1506,6 +1506,36 @@ if (!tipTarget) {
       packRows: items.length,
       packScores: items.map((it) => (it.querySelector('.advice-packs-score')?.textContent || '')
         .replace('角色得分 +', '')),
+      /**
+       * **来源视频**图标（用户 2026-10-14 第 6 条：「界面上每个显示的队伍都要有一个图标，
+       * 点击在新界面打开对应的 b 站/油管页面」）。
+       *
+       * 这条窗口里有**两处**队伍，图标也必须在两处都到位：
+       *   ① 逐关卡表第一格里的队伍行（选择器 advice-plan-team-slot，主干那张表）；
+       *   ② 「该角色的全部配队」里每个整包的逐关卡队伍（选择器 advice-packs-team）。
+       * 判据要的四个事实：地址是不是真 http(s)、target / rel 有没有配好（配错就是
+       * 「点了跳走本页」或「反向劫持 opener」）、平台 class 认不认得出来、
+       * 以及它**有没有长在队伍里面**（脱离队伍就等于挂错了对象）。
+       * ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF 6.1 第 16 条 / CDP 文档 3.3）。
+       */
+      teamVideos: [ ...tip.querySelectorAll('.advice-plan-team-slot .advice-team-video') ].map((a) => ({
+        href: a.getAttribute('href') || '',
+        target: a.getAttribute('target') || '',
+        rel: a.getAttribute('rel') || '',
+        platform: [ ...a.classList ].find((c) => c.startsWith('is-')) || '',
+        inSlot: Boolean(a.closest('.advice-plan-team-slot')),
+        glyph: (a.querySelector('.advice-team-video-glyph')?.textContent || '').trim(),
+      })),
+      teamSlots: [ ...tip.querySelectorAll('.advice-plan-team-slot') ]
+        .filter((s) => s.querySelector('.advice-team')).length,
+      packVideos: [ ...tip.querySelectorAll('.advice-packs-team .advice-team-video') ].map((a) => ({
+        href: a.getAttribute('href') || '',
+        target: a.getAttribute('target') || '',
+        rel: a.getAttribute('rel') || '',
+        platform: [ ...a.classList ].find((c) => c.startsWith('is-')) || '',
+        inTeam: Boolean(a.closest('.advice-packs-team')),
+      })),
+      packTeams: tip.querySelectorAll('.advice-packs-team').length,
       // ---- 三个分项那张表（用户 2026-10-13 第 1、2 条）------------------------------
       // 它是这个窗口的**第一层拆解**：强度 / 性价比 / 泛用性三个分项 + 归一后的得分 +
       // 抽卡权重 + 贡献，合计行的数必须与标题上那个数**逐字相同**（同一个 packScoreText）。
@@ -1825,8 +1855,11 @@ if (!tipTarget) {
   const NOTE_RE = [
     /^整包 = 角色 \+ 星魂档 \+ 光锥（含叠影）；整包自身 \d+ 金不进公式。$/,
     // ⚠️ 比例与版数都**跟着数据走**（2026-10-12 第 5 条把窗口从 7 版收到 3 版，
-    // `VERSION_WEIGHTS` 也随之从 2:2:2:1:1:1:1 变成 2:2:2），所以正则只能钉形状。
-    /^最近 \d+ 个版本按 [\d:]+ 加权，未上线版本不参与加权。$/,
+    // `VERSION_WEIGHTS` 也随之从 2:2:2:1:1:1:1 变成 2:2:2；2026-10-14 用户又改成
+    // `3:2.5:2:1.5:1:0.5`），所以正则只能钉形状。
+    // ⚠️ 字符类里**必须允许小数点**：`3:2.5:2:1.5:1:0.5` 里的 `.` 不在 `[\d:]` 里 ——
+    //    只写 `[\d:]+` 会让这条判据在新权重表下直接判红（看起来像「脚注格式坏了」）。
+    /^最近 \d+ 个版本按 [\d:.]+ 加权，未上线版本不参与加权。$/,
     notePerfRe,
     // 用户 2026-10-11 缺陷 5：证据基础必须写出来（新角色按单版最大值、老角色按 7 版平均）。
     /^实测证据 \d+ 个（副本×版本）；证据越少，分数波动越大。$/,
@@ -1948,6 +1981,40 @@ if (!tipTarget) {
     && tipReport.versListCount > 0
     && tipReport.versListCount === tipReport.versRaw
     && /得分 = 100 ×（\d+ − [\d.]+）\/（[\d.]+ − [\d.]+）/.test(tipReport.versNote);
+  /**
+   * **来源视频图标**（用户 2026-10-14 第 6 条：「界面上每个显示的队伍都要有一个图标，
+   * 点击在新界面打开对应的 b 站/油管页面，类似黑塔网（不需要内嵌播放器）」）。
+   *
+   * 判五件事：
+   *   ① 窗口里**真的有**图标（功能接上了，不是只有接口字段）；
+   *   ② 每个都是**真 http(s) 地址**（数据里那 31 条 `douyin:` / `tiktok:` 伪串必须被挡掉）；
+   *   ③ `target="_blank"` + `rel` 带 `noopener`（用户要「在新界面打开」，而外链必须防劫持）；
+   *   ④ 平台 class 认得出来（`is-bilibili` / `is-youtube` / `is-video` 三档之一）；
+   *   ⑤ 图标长在**队伍槽里面**（那是「每支队伍一个」的落地方式）。
+   * 图标数**允许少于队伍槽数**：个别队伍的证据投稿恰好是伪串时本来就没有地址 ——
+   * 那种情况界面不该画一个点了没反应的图标。所以只要求「至少一个」+「一个都不坏」。
+   */
+  const teamVideoOk = Boolean(tipReport)
+    && tipReport.teamSlots >= 1
+    && tipReport.teamVideos.length >= 1
+    && tipReport.teamVideos.length <= tipReport.teamSlots
+    && tipReport.teamVideos.every((v) => /^https?:\/\//.test(v.href)
+      && v.target === '_blank' && /noopener/.test(v.rel) && v.inSlot
+      && ['is-bilibili', 'is-youtube', 'is-video'].includes(v.platform)
+      && v.glyph.length > 0);
+  /**
+   * 同一件事的**第二处**：「该角色的全部配队」里每个整包的逐关卡队伍也要有图标。
+   *
+   * 用户要的是「**每个**显示的队伍」——那一节一屏能列出 8 个整包 × 最多 5 个关卡，
+   * 少挂一处就等于半数队伍没有图标。数量上只要求「每一支队伍行都有」，
+   * 所以比的是**队伍行数**（不是整包数）；地址合法性同上面那条。
+   */
+  const packVideoOk = Boolean(tipReport)
+    && tipReport.packTeams >= 1
+    && tipReport.packVideos.length === tipReport.packTeams
+    && tipReport.packVideos.every((v) => /^https?:\/\//.test(v.href)
+      && v.target === '_blank' && /noopener/.test(v.rel) && v.inTeam
+      && ['is-bilibili', 'is-youtube', 'is-video'].includes(v.platform));
   // 次序：等式（`.advice-value-tip-eq`，永远是 sub 的第一个子节点）→ 表 → 全部配队 → 脚注。
   // ⚠️ 2026-10-11 第 5 条起队伍图标在**表格里面**，所以不再有「队伍块在表之前」这一项。
   const orderOk = Boolean(tipReport) && tipReport.order.table >= 0
@@ -1967,6 +2034,8 @@ if (!tipTarget) {
     && splitOk
     // 用户 2026-10-13：「三项都要有**完整得分来源**」——强度那张表 + 泛用性那块名单。
     && strengthSourceOk && versatilitySourceOk
+    // 用户 2026-10-14 第 6 条：每支显示的队伍一个来源视频外链（在新标签页打开）。
+    && teamVideoOk && packVideoOk
     // 用户 2026-10-13 第 8 条：这三个来源块**默认全部收起**、点一下就地展开。
     && collapseOk && expandOk
     && notesTextOk && notesShortOk
@@ -2110,6 +2179,17 @@ if (!tipTarget) {
       + `${tipReport.strengthTotalRow ? `，合计 ${JSON.stringify(tipReport.strengthTotalRow)}` : '，单副本无合计行'}`);
     console.log(`      ${versatilitySourceOk ? '✓' : '✗'} 泛用性来源：名单 ${tipReport.versListCount} 个`
       + `（标题写 ${tipReport.versRaw} 个）｜归一换算「${tipReport.versNote}」`);
+    // 用户 2026-10-14 第 6 条：每支显示的队伍一个来源视频外链。
+    console.log(`      ${teamVideoOk ? '✓' : '✗'} 队伍来源视频图标（详情表第一格的队伍行）：`
+      + `${tipReport.teamVideos.length} 个 / 队伍槽 ${tipReport.teamSlots} 个`
+      + `（首个 ${JSON.stringify(tipReport.teamVideos[0]?.href || '')}`
+      + ` ${tipReport.teamVideos[0]?.platform || ''} target=${tipReport.teamVideos[0]?.target || ''}`
+      + ` rel=${JSON.stringify(tipReport.teamVideos[0]?.rel || '')}`
+      + `；要求全是 http(s) + _blank + noopener + 平台 class + 长在队伍里）`);
+    console.log(`      ${packVideoOk ? '✓' : '✗'} 队伍来源视频图标（「该角色的全部配队」每一行）：`
+      + `${tipReport.packVideos.length} 个 / 队伍行 ${tipReport.packTeams} 个`
+      + `（首个 ${JSON.stringify(tipReport.packVideos[0]?.href || '')}`
+      + ` ${tipReport.packVideos[0]?.platform || ''}；要求逐行都有、且与原表同口径）`);
     // 用户 2026-10-13 第 8 条：折叠块的默认态与展开动作。探针是**先量收起、再点开**量的，
     // 所以这两行合起来证明「默认收起 + 点击后可展开」这一对行为都在。
     console.log(`  ${collapseOk ? '✓' : '✗'} 三个分项的来源**默认全部收起**`
@@ -2628,6 +2708,17 @@ const teamPlanProbe = await evaluate(`(() => {
       ownedChars: [ ...card.querySelectorAll('.advice-plan-team-slot.is-owned .advice-plan-team-char') ]
         .map((n) => n.textContent),
       hasBest: Boolean(card.querySelector('.advice-plan-team-best')),
+      // 用户 2026-10-14 第 6 条：卡片上那一枚「来源视频」外链（挂在「最佳证据」那半句后面）。
+      video: (() => {
+        const a = card.querySelector('.advice-team-video');
+        if (!a) return null;
+        return {
+          href: a.getAttribute('href') || '',
+          target: a.getAttribute('target') || '',
+          rel: a.getAttribute('rel') || '',
+          platform: [ ...a.classList ].find((c) => c.startsWith('is-')) || '',
+        };
+      })(),
       // 用户 2026-10-11 第 7 条：「过渡档位」那一行（需要补多笔时才有）。
       hasMid: Boolean(card.querySelector('.advice-plan-team-mid')),
       midText: card.querySelector('.advice-plan-team-mid')?.textContent || '',
@@ -2693,6 +2784,23 @@ if (teamPlanProbe.missing) {
       + `｜最佳证据 ${first.hasBest ? '✓' : '✗'}`);
     console.log(`        ${first.fillText[0]?.replace(/\\s+/g, ' ').trim().slice(0, 70) || '(空)'}`);
     if (!first.hasBest) failures += 1;
+    /**
+     * **抽卡方案卡片上的来源视频**（用户 2026-10-14 第 6 条）。
+     *
+     * 与详情窗口那条判据同一套要求（真 http(s) + `_blank` + `noopener` + 平台 class），
+     * 差别是位置：这里的图标挂在「最佳证据」那半句后面。**允许部分卡片没有** ——
+     * 那一行证据的投稿恰好是 `douyin:` / `tiktok:` 伪串时本来就没有可点的地址，
+     * 硬画一个死链比不画更糟。但至少要有一张卡带上（否则就是功能没接）。
+     */
+    const planVideos = teamPlanProbe.rows.map((r) => r.video).filter(Boolean);
+    const planVideoOk = planVideos.length >= 1 && planVideos.every((v) => /^https?:\/\//.test(v.href)
+      && v.target === '_blank' && /noopener/.test(v.rel)
+      && ['is-bilibili', 'is-youtube', 'is-video'].includes(v.platform));
+    if (!planVideoOk) failures += 1;
+    console.log(`  ${planVideoOk ? '✓' : '✗'} 方案卡片带来源视频外链（用户 2026-10-14 第 6 条）：`
+      + `${planVideos.length}/${teamPlanProbe.rows.length} 张`
+      + `（首个 ${JSON.stringify(planVideos[0]?.href || '')} ${planVideos[0]?.platform || ''}`
+      + ` target=${planVideos[0]?.target || ''}；要求 _blank + noopener + 平台 class）`);
     // ---- 用户 2026-10-11 的抽卡方案第 2~6 条 ----------------------------------------
     //   ② 徽标标签必须叫「补金推荐分」、「性价比」必须改叫「强度得分」，
     //      且等式里**不许再用全角空格**（用户：「注意空格不要离得太远」）；

@@ -1252,6 +1252,41 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 /* 版本号内联在页脚同一段里：独占一行会让页脚高度随宽度变化，
    而页面高度一变就可能多出/少掉一条滚动条，进而改变内容宽度。 */
 .footer-version { white-space: nowrap; opacity: 0.85; }
+/* ---------------------------------------------------------------------------
+   「检查更新」（用户 2026-10-14 第 5 条）
+
+   与版本号同在页脚那一行里，做成一个**朴素的小链接按钮**：页脚是说明性文本，
+   在这里放一个实心按钮会把注意力从「这是一个本地工具」上抢走。
+   结果那一行（`.footer-update-result`）跟在按钮后面，更新时还会多一个「前往下载」外链。
+   --------------------------------------------------------------------------- */
+.footer-update {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.footer-update:hover:not(:disabled),
+.footer-update:focus-visible {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+/* 请求期间禁用：GitHub 直连偶尔要好几秒，不给反馈用户就会连点（见 `checkUpdate()`）。 */
+.footer-update:disabled { opacity: 0.5; cursor: default; }
+.footer-update-result { margin-left: 6px; }
+.footer-update-result.is-ok { color: var(--success); }
+.footer-update-result.is-update { color: var(--gold); }
+.footer-update-result.is-err { color: var(--danger); }
+.footer-update-result a {
+  margin-left: 4px;
+  color: var(--cyan);
+  text-decoration: underline;
+}
 
 /* ==========================================================================
    分页导航（角色信息 / 抽卡推荐）
@@ -2138,6 +2173,53 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   border: 1px solid var(--border);
   background: rgba(0, 0, 0, 0.3);
 }
+/* ---------------------------------------------------------------------------
+   「来源视频」外链图标（用户 2026-10-14 第 6 条）
+
+   原话：「界面上每个显示的队伍都要有一个图标，点击在新界面打开对应的 b 站/油管页面，
+   类似黑塔网（不需要内嵌播放器）」。所以它是一枚**小小的播放键**，不是一张大卡片：
+   队伍那一行本来就有 4 张成员卡，再加一块「视频」区块会把表格第一格撑得很高
+   （那一格在 `.advice-value-tip-table` 里是最窄的一列）。
+
+   两处用法共用这一套样式：
+     * 浮层「性价比来源」表第一格里的队伍行（`fillTeamCards()`）；
+     * 抽卡方案卡片的「最佳证据」那半句后面（`renderTeamPlan()`）。
+   平台只体现在**颜色**上（b 站粉 / 油管红），名字走 `title` 与 `aria-label` ——
+   在图标旁边再印一行「bilibili」会把这半句挤到换行。
+   --------------------------------------------------------------------------- */
+.advice-team-video {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  margin-left: 4px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-dim);
+  text-decoration: none;
+  vertical-align: middle;
+  transition: transform 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.advice-team-video:hover,
+.advice-team-video:focus-visible {
+  transform: scale(1.12);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+/* ⚠️ 播放三角用**文字**而不是 SVG：字体已经在了，不必为 9px 的图形引一条 `<svg>` 构造
+   （项目无依赖、也不引图标字体）。`padding-left` 把三角形的视觉重心挪回圆心。 */
+.advice-team-video-glyph {
+  font-size: 9px;
+  line-height: 1;
+  padding-left: 1px;
+}
+/* b 站：官方粉。油管：官方红。第三档（tiktok / douyin 等）保持默认的中性灰。 */
+.advice-team-video.is-bilibili { border-color: rgba(255, 102, 153, 0.55); color: #ff9ec4; }
+.advice-team-video.is-youtube { border-color: rgba(255, 82, 82, 0.55); color: #ff8a8a; }
 .advice-team-info { display: grid; gap: 2px; min-width: 0; }
 .advice-team-name { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
 .advice-team-tags {

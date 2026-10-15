@@ -60,7 +60,7 @@
         <p class="muted small" id="virtualAccountHint">
           虚拟账号用**真实数据集**的强度数据算分，只把「你拥有什么」换掉 ——
           用来试各种角色池下抽卡方案会怎么推。它只写进本机账号库，不会动你已登录的账号。
-          建好之后在**角色列表末尾**点「＋ 添加角色」，可以自己加人、设星魂与同命途光锥。
+          建好之后在**角色列表末尾**点「＋ 添加/修改角色」，可以自己加人、改星魂 / 光锥。
         </p>
         <div id="virtualAccountList" class="virtual-list">
           <p class="muted small">正在读取预设…</p>
@@ -418,6 +418,11 @@
       仅供学习与个人查询使用，数据来自米游社官方战绩接口。
       本项目与米哈游 / HoYoverse 无任何关联。
       <span class="footer-version" id="appVersion" hidden></span>
+      <!-- 和 GitHub 上的最新发布比一比（用户 2026-10-14 第 5 条）。
+           ⚠️ 这个按钮是**唯一**会去打 GitHub 的入口 —— 不加 ?check=1 时那个接口只回
+           本地版本号，所以启动 / 开页面都不会产生任何外网请求。 -->
+      <button class="footer-update" id="appUpdateCheck" type="button" hidden>检查更新</button>
+      <span class="footer-update-result" id="appUpdateResult" hidden></span>
     </p>
   </footer>
 

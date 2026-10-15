@@ -1398,6 +1398,28 @@ CDP 那两条新判据（残留 0 个 / 每格都有卡片与行线）跑 `node 
   ⚠️ **抽卡方案的 ①（强度得分）读的就是这个数**（2026-10-15 起，见下面「抽卡方案的分项」一条）——
   两处**必须同一个数**：v4.6.101 那次只改了这里，抽卡方案那边还留着老口径（含金数项 + 池内
   min-max），于是同一个词在两个榜上指了两个东西（用户 2026-10-15 报的就是它）。
+- **泛用性的主体是「角色 + 星魂档」，不是角色**（2026-10-14 第 1 条，改它先读
+  `docs/评分模型设计.md` 的 v51 那一节）。`teammateVariety` 的键 = `归一角色|E档`
+  （`versatilityKeyOf`），**得分按档各自 min-max**（`frontierExtents.versatility.byTier`）——
+  E6 那一档投稿天然更少，拿整榜一把尺子会把它系统性压低。队友那一侧仍按**角色身份**计数
+  （「不同队友」数的是人）。抽卡方案的队级 ③ = 成员各自那个数按**成员金数占比加权**
+  （`datasetGoldOf`，不是「你还差几金」；总金 0 时退回等权平均）。
+  ⚠️ 按档归一的副作用：**只出场一支队伍的整包在本档拿 0 分**（4 人队的最小原始量恒为 3）——
+  写夹具时别忘了这一条。
+- **`/conclusion` 的载荷上限现在是 660 KB**（2026-10-14 从 600 KB 上调：版本窗口 3 → 6 版
+  让进榜的「角色 × 星魂档」变多，实测 596 → 636 KB）。它在 `tools/e2e-test.mjs` 与
+  `tools/team-plan-test.mjs` **各有一份、必须同数**。要更多空间时**先想能不能挪去按需接口**
+  （强度那几个原始字段、来源视频都是这么处理的），别顺手往上调。
+- **来源视频只挂在「逐档榜的头条那一支」**（`slimFrontierUnit` 的第 4 个参数 `withVideo`）：
+  抽卡方案的候选池就是逐档榜（实测总榜那几十条全被它覆盖），而 `/conclusion` 余量不够。
+  总榜那条路的队伍卡片走**按需**的 `/api/archive/packs`，`enrichTipDetail` 按
+  **`id` + `evidenceSeason` 两把键**合并（只按 `id` 会把 4.5 的投稿贴到 4.6 那一行）。
+  伪串（`douyin:` / `tiktok:`，实测 31 条）一律由 `videoUrlOf()` 挡掉。
+  ⚠️ **战斗记录那一节没有来源视频**（米游社战绩数据里没有），别去补。
+- **外网出口只有两条，而且都必须由用户显式触发**：①「同步黑塔网数据」
+  （`/api/archive/update`）；②「检查更新」（`/api/update-check`，**只有带 `?check=1` 才联网**，
+  不带就只回本地版本号）。启动、开页面、切分页、切账号都**不许**产生任何站外请求；
+  GitHub 那条还带 10 分钟缓存（**失败也缓存**，否则断网时连点要连等 8 秒超时）。
 - **整包金数里光锥那一份 = 本体 × 叠影**（用户 2026-10-14 第 10 条：「E6S5 的限定角色+限定光锥
   **不算隐金**应当是 **12** 成本」= 本体 1 + 星魂 6 + 光锥本体 1 + 叠影 4）。`packGoldOf` 与
   `hiddenReductionOf` 的 `coneGoldOf`（**两种口径都**）必须一致 —— 一边乘叠影、另一边不乘，
@@ -2869,6 +2891,84 @@ worktree —— 上一轮刚把桌面上的 worktree 全清掉）。
 ⚠️ 本机 9222 的调试浏览器在上一轮之后已经退出（最后一个标签被关掉就自杀，见 §5.1），
 本轮按 `docs/CDP布局套件.md` §2.2 的「沙箱较宽时自己起」用**临时 profile** 起了一个：
 `chrome.exe --remote-debugging-port=9222 --user-data-dir="$env:TEMP\hsr-cdp-oldteam" …`。
+
+---
+
+### 4.2AF 本轮（v4.6.105，worktree `.worktrees/versatility-per-eidolon` / 分支 `feat/versatility-per-eidolon`，基于 `fceaab8`）—— 用户六条清单：泛用性细化到星魂档 + 队级按成本占比加权 + 版本权重 3:2.5:2:1.5:1:0.5 + 三条界面/程序能力
+
+**用户原话**（六条，逐条落在下面）：
+
+1. 「泛用性需要关联到具体的星魂，一个角色的 E0 的泛用性和 E6 的泛用性其实关系不大，
+   不同星魂需要各自比较泛用性，整个队伍的泛用性根据不同角色的成本占整个队伍的成本的
+   权重而定」
+2. 「版本权重改为 3:2.5:2:1.5:1:0.5」
+3. 「虚拟账号-添加角色改为添加/修改角色」
+4. 「选择程序图标的三月七（存护）的图标错了」
+5. 「程序要支持与从 GitHub 比较最新版本，当版本与此项目的 GitHub 版本不同时，点击提示
+   进行更新，当版本与 GitHub 项目相同时，提示已是最新版本，显示此程序的版本号」
+6. 「界面上每个显示的队伍都要有一个图标，点击在新界面打开对应的 b 站/油管页面，
+   类似黑塔网（不需要内嵌播放器）」
+
+**① 泛用性细化到「角色 × 星魂档」**（口径与公式见 `docs/评分模型设计.md` v51）：
+
+* `teammateVariety` 的键从角色细到 `归一角色|E档`（`versatilityKeyOf`）；队友那一侧仍按
+  **角色身份**计数。得分改成**按档分组 min-max**（`frontierExtents.versatility.byTier`）。
+* ⚠️ 坑（本轮实测，别重踩）：按档归一之后**只出场一支队伍的整包在本档拿 0 分**
+  （它是本档地板），`herta-test` 那条「最佳成绩不在这一档」的夹具因此自毁前提 ——
+  两队改成**共用同一套队友**才对（详见那条用例的注释）。
+* 队级 ③ 从简单平均改成**按成员金数占比加权**（用户后半句），权重用账面金数
+  （`datasetGoldOf`，不是「你还差几金」）；总金 0 时退回等权。
+
+**② 版本权重 `3:2.5:2:1.5:1:0.5`**：窗口 **3 → 6 版**、线性递减。
+⚠️ 两条连带影响：`check-advice-layout.mjs` 的版本比例正则 `[\d:]+` **不含小数点**，
+会把 `3:2.5:…` 判红（已改成 `[\d:.]+`）；`/conclusion` 载荷 **596 → 636 KB**，
+两道硬断言（`e2e-test` / `team-plan-test`）**从 600 KB 上调到 660 KB**。
+
+**③④ March 七天图标 / 文案**：图标根因在**数据生成期**（`herta-i18n.mjs` 按 `name` 收口，
+1001 存护被 1224 巡猎覆盖）。修法是把原本只服务虚拟账号快照的修正表抽成
+`src/server/character-icon-ids.js`，在 i18n 加载期**补出显式键** —— 四条「掉括号回退」的路
+一次全对。⚠️ 只补头像，立绘/半身像的 1001 版没实测过，凭空改写会换来 404。
+
+**⑤ GitHub 版本检查**：`src/server/update-check.js` + `GET /api/update-check`
+（**只有 `?check=1` 才联网**）+ 页脚按钮。四态 `latest/update/ahead/error`；
+版本**逐段比数字**、tag「抓第一段数字」；缓存 10 分钟、**失败也缓存**。
+
+**⑥ 来源视频**：`sample.video` 数据全覆盖（11992/11992，31 条伪串），缺的是投影 ——
+`archiveFrontier` 按「版本|阵容」回查 `teams[].sample` 补进 `frontierRows`；
+`/conclusion` **只给逐档榜的头条那一支**（方案候选池就是它、总榜全被它覆盖），
+其余关卡走按需的 `/api/archive/packs`（`enrichTipDetail` 按 `id + evidenceSeason` 合并）。
+界面三处都挂：浮层表第一格队伍行 / 「全部配队」每一行 / 方案卡「最佳证据」后面。
+⚠️ **战斗记录那一节加不了**（米游社战绩没有视频源），交付时要明说。
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `public/scripts/advice.js` | `versatilityKeyOf()`（新）+ `teammateVariety` 改按档记；`versatilityRaw`/`versatilityMembers` 按档取；`versatilityExtentsByTier`（新）+ `extents.versatility.byTier`；算分读本档区间；`teamPlan()` 的 ③ 改成本占比加权（`versatilityOfTier` + `memberGold`）；`VERSION_WEIGHTS` → `[3,2.5,2,1.5,1,0.5]`；新增 `videoUrlOf()`（挡伪串）+ `frontierPackRowsOf`/`hit`/`evidence`/`envs` 透传 `video`；`teamPlan` 行上新增 `bestEnv.video` |
+| `src/server/archive.js` | i18n 加载期 `applyCharacterIdOverrides(data.icons.characters)`；`archiveFrontier` 新增「版本\|阵容 → sample」回查并给 `frontierRows` 补 `video`/`runId`；版本权重注释 |
+| `src/server/character-icon-ids.js` | **新文件**：`CHARACTER_ID_OVERRIDES` / `iconWithId` / `baseFormKeyOf` / `applyCharacterIdOverrides`（从 `virtual-accounts.js` 抽出来共用） |
+| `src/server/virtual-accounts.js` | 删掉本地那份修正表，改从 `character-icon-ids.js` 取 |
+| `src/server/conclusion.js` | `slimFrontierUnit(unit, i, maxEnvs, withVideo)` —— 逐档榜（`frontierTiers`）才带头条 `video`；`slimCharacterPack` 每个 env 带 `video`；新增顶层 `versatilityByTier`（老字段 `versatilityMembers` 保留） |
+| `src/server/update-check.js` | **新文件**：GitHub 最新发布比对（纯函数 + 一次取数 + 10 分钟缓存，永远 resolve） |
+| `src/server/app.js` | 新增 `GET /api/update-check`（不带 `check=1` 只回本地版本号）+ import |
+| `public/scripts/advice-view.js` | 新增 `videoPlatformOf()` / `videoLink()`；`teamSlot(members, video)` + `fillTeamCards` 末尾挂图标；`packRow` 每行队伍挂图标；方案卡「最佳证据」后挂图标；`enrichTipDetail` 合并 video（`id + evidenceSeason`）+ 按档取 `versatilityByTier`；`extentOf(key, unit)` 读 `byTier`；泛用性文案改成「本星魂档…」；版本比例兜底 → `3:2.5:2:1.5:1:0.5`、版数兜底 → 6 |
+| `public/styles/app.css` | 新增 `.advice-team-video`（22px 圆形播放键 + 平台配色）、`.footer-update` / `.footer-update-result` |
+| `public/index.html` | 虚拟账号说明文案；页脚新增「检查更新」按钮 + 结果行 |
+| `public/scripts/app.js` | 「添加角色」→「添加/修改角色」；页脚版本检查（`renderUpdateResult` / `checkUpdate` + 接线） |
+| `tools/herta-test.mjs` | 版本权重那条重写成 6 版线性递减；「切到某个星魂档」夹具改成两队共用队友 |
+| `tools/team-plan-test.mjs` | 新增「队级泛用性按成本占比加权」（30 / 5）；载荷上限 660 KB |
+| `tools/e2e-test.mjs` | 上限 660 KB（带注释说明为什么上调）；新增 byTier / 跨档原始量 / 来源视频 / 伪串 / 总榜不许带 video / `update-check` 不联网 / `versatilityByTier` 分档 |
+| `tools/update-check-test.mjs` | **新套件**（14 项，fetch 注入，完全不联网） |
+| `tools/check-advice-layout.mjs` | 版本比例正则补小数点；新增两条来源视频判据（浮层表队伍行 5/5、「全部配队」37/37）、方案卡 15/15 条 |
+| `tools/run-tests.mjs` | 注册新套件 |
+| `src/version.js` / `package.json` | 版本 → **4.6.105** + changelog |
+| `docs/评分模型设计.md` | 新增 **v51** 那一节 |
+| `HANDOFF.md` | 本节 |
+
+**实测**：`/conclusion` = **636 KB**（上限 660 KB）；`update-check` 打真 GitHub →
+`status: latest`（GitHub 最新 `v4.6.104`）；CDP 布局套件打在**本 worktree 自己的服务 8361** 上
+`--url=http://127.0.0.1:8361/` **通过 ✓**（含两条来源视频新判据）。
+⚠️ 本轮又踩了一次「探针注释里写反引号」那个坑（`docs/CDP布局套件.md` §3.3）——
+在 `evaluate()` 的模板串里写 `` `.advice-plan-team-slot` `` 会让整个套件
+`SyntaxError`/`ReferenceError` 起不来，注释里一律用「」代替。
 
 ---
 
