@@ -1903,8 +1903,9 @@ const tipFactor = (main, sub) => {
  * `season` 的唯一合法来源是 `env.evidenceSeason` —— `advice.js` 的 `frontierPacks()` 把它
  * 写成 `evidence.season`（「最佳证据所在版本」），`src/server/conclusion.js` 的
  * `slimFrontierUnit()` 原样下发。它就是这一行的分**从哪一版的数据里取的**，
- * 也是「跨版本发挥」那个加权窗口里被拿来当**分子**的那一版（`seasonFactor = 加权平均 ÷
- * 最好的那一版`），所以它与表里其余因子是同一个坐标系里的数。
+ * 也是「跨版本发挥」那一列的**分母**那一次成绩（`seasonFactor = 加权平均 ÷ 最新版那次`，
+ * 2026-10-15 起「最佳证据」取版本最新的那次 —— 与强度来源表同一口径），
+ * 所以它与表里其余因子是同一个坐标系里的数。
  *
  * ⚠️ 另外两个看着「像版本」的字段**都不能拿来顶替**：
  *   * 左边的**版本权重表**（`seasonWeights`，2:2:2:1:1:1:1）是全榜共用的一串权重，
@@ -2815,7 +2816,7 @@ const scoreBreakdownTable = (unit) => {
     if (!e || !Number.isFinite(Number(e.lo)) || !Number.isFinite(Number(e.hi))) return null;
     return e;
   };
-  /** 泛用性的原始量是「人数」（整数），另两个是 0~100 的分数（一位小数）。 */
+  /** 泛用性的原始量 2026-10-15 起是「加权队友数」（小数），另两个是 0~100 的分数（一位小数）。 */
   const rawText = (v, integer) => (integer ? num(v).toFixed(0) : num(v).toFixed(1));
   /**
    * 三个分项各自的**来源块**（用户 2026-10-13 第 8 条）。
@@ -2846,8 +2847,10 @@ const scoreBreakdownTable = (unit) => {
     ['性价比', '同成绩下金数越少越高', unit.total, unit.costScore, w.cost, 'cost', false],
     // ⚠️ 用户 2026-10-14 第 1 条之后这个「为什么」必须写明**是这一档的**：
     //    改前泛用性是角色级的（E0 与 E6 共用一份），现在每个星魂档各算各的。
-    ['泛用性', '本星魂档能通关队伍里的不同队友数', unit.versatilityRaw, unit.versatilityScore,
-      w.versatility, 'versatility', true],
+    // ⚠️ 2026-10-15 起原始量是**双重加权**的（关卡权重 × 版本权重，缺投稿版本计 0），
+    //    不再是整数并集 —— 那份并集名单在「泛用性来源」折叠块里（versatilityMembers）。
+    ['泛用性', '本星魂档不同队友数，按关卡与版本权重加权', unit.versatilityRaw, unit.versatilityScore,
+      w.versatility, 'versatility', false],
   ]) {
     const e = extentOf(key, unit);
     // ⚠️ 强度是**绝对刻度**（0~100 就是原始量本身），没有榜内归一那一步 —— 对它写
@@ -3070,12 +3073,15 @@ const versatilitySourceBlock = (unit) => {
   const mine = unit.versatilityByTier?.[String(tier)];
   const members = Array.isArray(mine?.members) ? mine.members : unit.versatilityMembers;
   if (!Array.isArray(members) || !members.length) return null;
-  const raw = Number(mine?.raw ?? unit.versatilityRaw) || 0;
+  // ⚠️ **验算公式必须用整包自己的原始量**（`unit.versatilityRaw`，2026-10-15 起按
+  // 版本/关卡双重加权、随整包自己的证据走）；`mine.raw` 是**这一档最大**的那条
+  // （`versatilityByTier` 只按档索引，同档不同配装不再共享同一个数），拿它验算
+  // 会算出别人的分。名单（并集）与原始量（加权）现在是两个量纲，标题分开说。
   const whole = frontierExtentsNow()?.versatility;
   const e = whole?.byTier?.[String(tier)] ?? whole;
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
-    `泛用性来源：**E${tier}** 这一档在**能通关**的队伍里出现过的不同队友（共 ${raw} 个）`));
+    `泛用性来源：**E${tier}** 这一档在**能通关**的队伍里出现过的不同队友（并集 ${members.length} 个）`));
   // 名单做成**一个个 span**（不是一整串文本）：① 分隔符不会与名字里的「•」混在一起；
   // ② CDP 探针可以按元素数数，不必去猜分隔符（实测角色名里确实有「•」这种点）。
   const list = text('div', 'advice-vtip-members');
@@ -3089,7 +3095,8 @@ const versatilitySourceBlock = (unit) => {
       // ⚠️ 除法符号写**斜杠**、不写 `÷`：用户 2026-10-11 的原话是「金数的符号改为斜杠，
       //    表示除以」，而 `check-advice-layout.mjs` 有一条**全窗口**断言禁止出现 `÷`
       //    （改前写 `÷` 实测把那条判据判红了 —— 它对全窗口生效，不分哪一格）。
-      ? `得分 = 100 ×（${raw} − ${Number(e.lo)}）/（${Number(e.hi)} − ${Number(e.lo)}）`
+      // ⚠️ 验算用的是**这个整包自己**的加权原始量（见上面的注释），不是档里最大的那个。
+      ? `得分 = 100 ×（${num(unit.versatilityRaw).toFixed(1)} − ${Number(e.lo)}）/（${Number(e.hi)} − ${Number(e.lo)}）`
         + ` = ${(Number(unit.versatilityScore) || 0).toFixed(1)}`
         + '（榜内最小 ~ 最大就是这一项的全部刻度）'
       : '（本次载荷没带榜内区间，所以只能看上面的原始量。）'));
@@ -3275,14 +3282,18 @@ const frontierTip = (unit) => {
     //     封顶之前这一列能出现 `7/1 = 7.00`（末日幻影 4.3），与「越接近 ×1 越强」自相矛盾。
     '金数 = 该版本最便宜的配置 / 这支队伍，封顶 ×1；0 金通关 ×1.2。',
     // 用户 2026-10-10 第 6 轮：那一栏原名「版本」太抽象（会被当成左边的版本权重）。
-    // 改名后补一句算式 —— 它 = 各版本加权平均 ÷ **最好的那一版**，所以恒 ≤ 1：
-    // 只在某一版强、别的版本掉队的整包会被压得低；`1.00` 表示每版都打出了自己的最好水平。
+    // ⚠️ **2026-10-15 起口径变了**（用户：「最佳证据会受到跨版本发挥的削减，因此还是
+    // 新版本新配队更强」）：「最好的那一版」从「跨版本原始分最高的那次」改成「**版本
+    // 最新**的那一次成绩」（与强度来源表同一口径）。所以这一列不再恒 ≤ 1：
+    //   * `< 1` = 缺投稿的版本被按 0 分摊薄（典型：新角色只有一两版有成绩）；
+    //   * `> 1` = 旧版本的成绩仍在把加权平均往上抬（典型：老常客，当前版本金数水位高）。
+    //   `1.00` 表示这一版的成绩就是各版本的加权平均水平。
     // ⚠️ v4.6.78 删掉了后半句「非前沿投稿按质量梯度估算」：前沿池改成**全部成绩**之后，
     // 「有成绩但没进池」这种版本不存在了（估算机器整台删除）。这条脚注有 ≤60 字上限，
     // 改动必须同步 `tools/check-advice-layout.mjs` 的 `NOTE_EXACT`。
     // ⚠️ 除号写成 `/`：`check-advice-layout.mjs` 有一条「浮层正文里不许出现 ÷」的判据
     //    （`feat/level-icons-cost-cap` 那一轮加的）。
-    '跨版本发挥 = 各版本加权平均 / 最好的那一版，恒 ≤ 1。',
+    '跨版本发挥 = 各版本加权平均 / 最新版那次成绩；小于 1 被摊薄，大于 1 是旧版抬分。',
     // 用户 2026-10-10 第 8 条给了整句：「最近 7 个版本按 2:2:2:1:1:1:1 加权，未上线版本
     // 不参与加权」。⚠️ 版数一律**跟着数据走**（版数取 `versionWindow`、比例取
     // `versionRatioText`，兜底 6 版 = 当前 `VERSION_WEIGHTS` 的长度）—— 只有「未上线
@@ -3326,7 +3337,8 @@ const frontierTip = (unit) => {
     // ⚠️ 用户 2026-10-13 第 2 条：这个数从「性价比得分」改名「**角色得分**」。
     head: `角色得分 +${packScoreText(unitRoleScore(unit))}`,
     // 用户 2026-10-10 第 6 轮：原来这里叫「版本」，与左边的版本权重表撞名、看不出在算什么。
-    // 改叫「跨版本发挥」（＝各版本加权平均 ÷ 最好的那一版，恒 ≤ 1）。
+    // 改叫「跨版本发挥」。⚠️ 2026-10-15 起「最好的那一版」= **版本最新**的那次成绩
+    // （与强度来源表同一口径），所以这一列可 `< 1`（缺投稿摊薄）也可 `> 1`（旧版抬分）。
     // ⚠️ 这条等式描述的是**「性价比」那一项的来源表**（现在收在它那一行的折叠块里），
     // 不是上面的角色得分 —— 所以开头写明「性价比分项」。
     eq: '性价比分项 = 副本权重 × 100 × 表现 ×（该副本最便宜金数 / 这支队金数）× 跨版本发挥',
