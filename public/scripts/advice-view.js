@@ -228,10 +228,57 @@ const apiGet = async (path) => {
   return payload;
 };
 
+/**
+ * 极简行内富文本：把 `**重点**` 渲染成 `<strong>`，**其余一律按纯文本**。
+ *
+ * 为什么需要它（2026-10-15，用户这一轮要「更美观、小字更好懂」时发现的）：
+ * 界面文案里有**四十多处**是按 Markdown 习惯写的（例：
+ * `'……但**最小 / 最大取本星魂档自己那一把尺子**）'`），而 `text()` 用的是
+ * `textContent` —— 于是那些 `**` **原样印在屏幕上**。CDP 截图确认过，「角色得分 = …」
+ * 那一行实际渲染成 `但**最小 / 最大取本星魂档自己那一把尺子**）`。
+ * 既难看，又正好把这批「小字说明」的可读性拉低 —— 而它们恰恰是用户说的
+ * 「方便用户了解程序的功能」的那部分文字。
+ *
+ * ⚠️ **从不拼 HTML 字符串**：命中的片段用 `createElement('strong')` + `textContent`
+ * 建出来、其余进文本节点，所以角色名 / 关卡名这类**数据侧**字符串即使带 `<` `>` `**`
+ * 也只会被当普通文字（不存在注入面）。
+ * ⚠️ `textContent` 读出来 = 去掉那几对星号。探针里的逐字断言（`NOTE_EXACT` 等）
+ * 本来就没有星号，所以不受影响 —— 反过来，若哪天某条断言**依赖**星号，那说明
+ * 它钉错了东西。
+ */
+const inlineRichText = (raw) => {
+  const s = String(raw);
+  const parts = s.split('**');
+  const frag = document.createDocumentFragment();
+  // 没有成对的 `**`（length === 1），或者星号落单（偶数长度）→ 整段按纯文本，
+  // **一个字都不改**：宁可把星号原样留着，也不要把用户看得见的文字吃掉。
+  if (parts.length < 3 || parts.length % 2 === 0) {
+    frag.appendChild(document.createTextNode(s));
+    return frag;
+  }
+  // 拆分后**奇数下标**就是被星号包住的那几段。
+  parts.forEach((piece, i) => {
+    if (!piece) return;
+    if (i % 2 === 1) {
+      const strong = document.createElement('strong');
+      strong.textContent = piece;
+      frag.appendChild(strong);
+    } else {
+      frag.appendChild(document.createTextNode(piece));
+    }
+  });
+  return frag;
+};
+
 const text = (tag, className, content) => {
   const node = document.createElement(tag);
   if (className) node.className = className;
-  if (content !== undefined && content !== null) node.textContent = String(content);
+  if (content !== undefined && content !== null) {
+    const raw = String(content);
+    // 快路径：绝大多数文案没有 `**`，走 `textContent`（与改前逐字节相同）。
+    if (raw.includes('**')) node.appendChild(inlineRichText(raw));
+    else node.textContent = raw;
+  }
   return node;
 };
 
