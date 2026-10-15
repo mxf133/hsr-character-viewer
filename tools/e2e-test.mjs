@@ -567,12 +567,17 @@ const main = async () => {
           && new Set(v.members).size === v.members.length
           && Number.isFinite(Number(v.raw))),
         `versatilityByTier=${versByTier ? JSON.stringify(Object.keys(versByTier)) : '（没有）'}`);
-      check('⭐ 每个兼有文档的整包都能在 versatilityByTier 里找到自己那一档',
+      // ⚠️ 2026-10-15 起原始量按版本/关卡双重加权、**随整包自己的证据走**，同档不同
+      // 配装不再共享同一个数 —— `versatilityByTier[tier].raw` 取的是该档**最大**的那条。
+      // 所以这里的同源判据从「相等」放宽成「档位表 ≥ 每条整包自己的值」（最大值恒被
+      // 该档某条整包取到，构造上成立）。
+      check('⭐ 每个兼有文档的整包的 versatilityRaw 都 ≤ 自己那一档的 raw（档表取最大）',
         (packsHidden.body?.packs || []).every((p) => {
           const tier = String([0, 1, 2, 3, 4, 5, 6].filter((t) => t <= (Number(p.eidolon) || 0)).pop());
-          return !versByTier || versByTier[tier] === undefined || versByTier[tier].raw === p.versatilityRaw;
+          return !versByTier || versByTier[tier] === undefined
+            || Number(versByTier[tier].raw) >= Number(p.versatilityRaw) - 1e-9;
         }),
-        '某一档的 raw 与整包上的 versatilityRaw 对不上 —— 两份数据不同源');
+        '档位表的 raw 应是该档内各整包的最大值，不应小于任何一条');
       // 面板这条路界面**可能没加载过结论**，所以归一上下限随包一起给（见 advice-view 的
       // `frontierExtentsNow()`）。
       check('packs 带 frontierExtents（面板可能没加载过结论）',
