@@ -35,6 +35,7 @@ import { datasetStats, pruneBackups, updateArchive, updateInProgress } from './a
 import { challengePathFor, completeVerification, createVerification, dropVerification } from '../mihoyo/verification.js';
 import { APP_VERSION, enabledGames, gameByBiz, isGameEnabled, regionFromUid, regionName } from '../mihoyo/constants.js';
 import { GAME_VERSION, PROGRAM_VERSION, VERSION_TEXT } from '../version.js';
+import { checkForUpdate } from './update-check.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = resolve(here, '../../public');
@@ -290,6 +291,29 @@ export const createApp = (options = {}) => {
           games: gameDescriptors(),
           accounts: (await store.listAccounts()).map(AccountStore.toPublic),
         });
+        return;
+      }
+
+      // ---- 和 GitHub 上的最新发布比一比（用户 2026-10-14 第 5 条）------------------
+      //
+      // ⚠️ **这是全程序唯一一条「点一下才出去」的额外外网出口**（另一条是「同步黑塔网
+      //    数据」）。启动、开页面、切分页都**不会**走到这里 —— 用户原话要的就是「点击
+      //    提示」，所以只有 `?check=1` 时才真的打 GitHub；不带参数只回本地版本号，
+      //    这样界面可以先把版本号显示出来（用户第 5 条后半句：「显示此程序的版本号」）。
+      //
+      // 取不到时回 200 + `ok:false`（与上面几条 archive 路由同一种降级风格）：
+      // 界面要区分「已是最新 / 有更新 / 没问成」三种结果，而 500 只会让它显示一句
+      // 「请求失败」，真实原因（超时 / 限流 / 断网）就丢了。
+      if (path === '/api/update-check' && req.method === 'GET') {
+        if (url.searchParams.get('check') !== '1') {
+          json(res, 200, {
+            ok: true, status: 'unchecked', current: PROGRAM_VERSION, latest: null,
+          });
+          return;
+        }
+        // `?force=1` 跳过 10 分钟缓存（用户连点「检查更新」时用不上，留给探针/排障）。
+        const result = await checkForUpdate({ force: url.searchParams.get('force') === '1' });
+        json(res, 200, result);
         return;
       }
 

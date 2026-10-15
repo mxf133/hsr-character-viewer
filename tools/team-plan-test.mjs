@@ -250,8 +250,9 @@ section('A1. 抽卡权重（强度 / 性价比，用户 2026-10-12 第 3、4、8
  */
 const strengthFixture = {
   ...conclusionFixture,
-  // ⚠️ `versatilityRaw` 必须给（用户 2026-10-13 第 3 条）：队级 ③ = **队内成员各自泛用性的
-  //    平均**，而 `teamPlan()` 是从 `frontierUnits` 建「角色 → 泛用性」那张表的 ——
+  // ⚠️ `versatilityRaw` 必须给（用户 2026-10-13 第 3 条）：队级 ③ = 队内成员各自那个数
+  //    按**成本占比**加权（2026-10-14 第 1 条改的口径，见下面那条专门的用例），
+  //    而 `teamPlan()` 是从 `frontierUnits` 建「角色 + 星魂档 → 泛用性」那张表的 ——
   //    夹具里不带这个字段的话，两队都算成 0，③ 退化成「全池同分」（`span` 给 1），
   //    于是「泛用性权重起作用」这件事**在夹具上根本测不出来**。
   //    两个数刻意不同（40 / 10），让 ③ 真的分得开。
@@ -325,6 +326,26 @@ check('⭐ 抽卡权重只认**相对大小**：3:1:1 与 0.6:0.2:0.2 得到同�
     `③ 的刻度不该退化：${onlyVersatility.versatilityLo} ~ ${onlyVersatility.versatilityHi}`);
   assert.equal(Math.round(onlyVersatility.rows[0].versatilityPct), 100,
     '泛用性拉满时该由「队内平均泛用性最高」的那支排第一');
+});
+
+check('⭐ 队级泛用性 = 成员各自泛用性按**成本占比**加权（用户 2026-10-14 第 1 条）', () => {
+  // 用户原话：「整个队伍的泛用性根据不同角色的成本占整个队伍的成本的权重而定」。
+  // 改前（v4.6.97）是**简单平均**（四个成员一人一份），现在按各自金数占比加权。
+  const plan = strengthPlan({ strength: 0, cost: 0, versatility: 1 });
+  const rowOf = (char) => plan.rows.find((r) => r.members.some((m) => m.char === char));
+  const carrier = rowOf('charX');
+  const bodyGap = rowOf('charY');
+  // 夹具只有两个整包带 `versatilityRaw`（charX 40 / charY 10），其余成员查不到 → 按 0 参与。
+  //   carrier = charX(E1 + coneB S1 = 1 本体 + 1 星魂 + 1 光锥 = 3 金) + charB(1 金) + freeC(0)
+  //             → 总金 4 → (40×3 + 0×1 + 0×0) / 4 = **30**
+  //   bodyGap = charY(E0 = 1 金) + charB(1 金) + freeC(0) → 总金 2 → (10×1 + 0 + 0) / 2 = **5**
+  // ⚠️ 简单平均会给 13.33 / 3.33 —— 两组数都咬得住「退回简单平均」这个回归；
+  //    而「分母用成员数而不是总金数」会给出 30 / 5 之外的值（40×3/3 = 40、10×1/2 = 5），
+  //    所以 carrier 那个 30 同时钉住了分母。
+  assert.ok(near(carrier.versatilityRaw, 30),
+    `carrier 的成本加权泛用性应为 30，实际 ${carrier.versatilityRaw}`);
+  assert.ok(near(bodyGap.versatilityRaw, 5),
+    `bodyGap 的成本加权泛用性应为 5，实际 ${bodyGap.versatilityRaw}`);
 });
 
 check('⭐ 强度权重高 → 强度分高的在前；性价比权重高 → 补金少的在前；泛用性高 → 队内平均高的在前', () => {
@@ -833,8 +854,11 @@ check('⭐ 真载荷：① = **代表整包自己**的 `strengthScore`（绝对�
   assert.equal(envWithStrength.length, 0, '逐副本明细也不该带 strength');
 });
 
-check('/conclusion 载荷仍在 600 KB 硬上限内（e2e 有同一断言）', () => {
-  assert.ok(live.bytes > 0 && live.bytes < 600 * 1024, `实际 ${live.bytes} 字节`);
+// ⚠️ 上限与 `tools/e2e-test.mjs` 的那条**必须同一个数**（那边是 660 KB，2026-10-14 上调：
+//    用户把版本权重改成 3:2.5:2:1.5:1:0.5、窗口 3 → 6 版之后载荷 596 → 636 KB）。
+//    改一处忘另一处就会出现「这个套件过、那个套件红」的假信号。
+check('/conclusion 载荷仍在 660 KB 硬上限内（e2e 有同一断言）', () => {
+  assert.ok(live.bytes > 0 && live.bytes < 660 * 1024, `实际 ${live.bytes} 字节`);
 });
 
 check('账面金数与「最佳证据 N 金」是同一个尺子（数据集口径，不是目标档）', () => {

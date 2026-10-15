@@ -2290,10 +2290,20 @@ check('性价比总榜：切到某个星魂档，看得到「最佳成绩不在�
   //   * Star 有两套整包 —— E0 在 4 金队里（更便宜 → 分更高）、E2 在 6 金队里；
   //   * 于是「全部」里只有 Star E0；
   //   * 旧口径下 E2 页里**根本看不到 Star**，新口径下 `frontierTiers[2]` 必须有它。
+  //
+  // ⚠️ **两队必须用同一套队友**（2026-10-14 泛用性改成按星魂档之后修的夹具）：
+  //    泛用性现在是「`角色|E档` 见过的不同队友数」，再**在本档内** min-max 归一到 0~100。
+  //    老夹具让 E2 那队换成 `Fourth`，于是 Star E0 的队友集是 {Pal,Other,Third}（3 个）、
+  //    而 Pal/Other 因为**两队都出现**拿到 4 个 —— E0 档的区间成了 {3,4}，Star E0 直接落到
+  //    本档地板（0 分），而 E2 档只有它一条 → 退化区间给满分（100）。这一来 E2 反而成了
+  //    Star 的「最佳整包」，下面那条「最佳成绩在 E0」的前提被夹具自己毁掉。
+  //    两队共用同一套队友之后，每个整包的队友集都是 {Star,Pal,Other,Third}（3 个），
+  //    两档的区间都退化 → 泛用性对两者同分，**成本差**重新成为唯一的决定因素 ——
+  //    这正是本条用例想测的东西。
   const availability = {
     characters: {
       Star: { limited: true }, Pal: { limited: true }, Other: { limited: true },
-      Third: { limited: true }, Fourth: { limited: true },
+      Third: { limited: true },
     },
     lightCones: {},
   };
@@ -2301,10 +2311,10 @@ check('性价比总榜：切到某个星魂档，看得到「最佳成绩不在�
     { perfect: 10, target: 0, pass: 0, below: 0 }, 0,
     [{ char: 'Star', eidolon: 0 }, { char: 'Pal', eidolon: 0 },
       { char: 'Other', eidolon: 0 }, { char: 'Third', eidolon: 0 }]);
-  const starE2 = teamFixture(['Star', 'Pal', 'Other', 'Fourth'],
+  const starE2 = teamFixture(['Star', 'Pal', 'Other', 'Third'],
     { perfect: 10, target: 0, pass: 0, below: 0 }, 0,
     [{ char: 'Star', eidolon: 2 }, { char: 'Pal', eidolon: 0 },
-      { char: 'Other', eidolon: 0 }, { char: 'Fourth', eidolon: 0 }]);
+      { char: 'Other', eidolon: 0 }, { char: 'Third', eidolon: 0 }]);
   const out = buildConclusion([envFixture('moc', [starE0, starE2])], {
     availability,
     account: { owned: new Set(), eidolons: new Map(), cones: new Map() },
@@ -2435,7 +2445,7 @@ check('性价比总榜：只有 E2 的证据时，E2 整包照样按自己的队
     '没有 E0 配置时不该凭空生成 E0 整包');
 });
 
-check('性价比总榜：版本窗口 = 3 版、窗口内等权、窗口外权重 0（用户 2026-10-12 第 5 条）', () => {
+check('性价比总榜：版本权重 = 3:2.5:2:1.5:1:0.5（窗口 6 版、线性递减）（用户 2026-10-14）', () => {
   // ⚠️ 口径变更史（别改回去）：
   //   * v16（用户 2026-10 第 7 条）：近 1-3 版各 2 分、近 4-7 版各 1 分，窗口 7。
   //   * v4.6.87（用户 2026-10-12 第 5 条原话：「把角色总榜的版本窗口收到 3 版」）：
@@ -2443,13 +2453,21 @@ check('性价比总榜：版本窗口 = 3 版、窗口内等权、窗口外权�
   //     `VERSION_WEIGHTS` 变回 **三版等权** `2:2:2`。
   //     依据是实测：用户点名那支（遐蝶/昔涟/长夜月/风堇）有 **32.1%** 的分来自权重 1 的
   //     那四个旧版本，而它那四个人一起上场在 4.6 根本没有投稿（最新满分证据停在 4.5）。
+  //   * **2026-10-14**（用户原话：「版本权重改为 3:2.5:2:1.5:1:0.5」）：窗口**重开回 6 版**，
+  //     但权重**线性递减**（3 → 0.5，每档 -0.5）—— 旧版本重新算数，可 4.0~4.2 三版加起来
+  //     只有 3 分，**不到最新版一个人的分**。下面这条用例同时钉住「表本身」与
+  //     「同样的分数集合，把高分放在最新版的那支更高」。
   //
-  // 所以这条用例现在测的是两件事：① 表本身是 2:2:2、窗口是 3；
-  // ② **窗口外的版本对分数没有任何贡献**（权重 0 = 不进分子也不进分母）。
-  assert.deepEqual(VERSION_WEIGHTS, [2, 2, 2], '版本权重表应是三版等权 2:2:2');
-  assert.equal(VERSION_WINDOW, 3, '版本窗口应是 3');
-  assert.equal(versionWeightOf(2), 2, '第 3 个版本仍是 2 分');
-  assert.equal(versionWeightOf(3), 0, '第 4 个版本起权重 0（不进窗口，不是「权重很小」）');
+  // 所以这条用例现在测的是三件事：① 表本身是 3:2.5:2:1.5:1:0.5、窗口是 6；
+  // ② **窗口外**（第 7 版起）的版本对分数没有任何贡献（权重 0 = 不进分子也不进分母）；
+  // ③ 权重真的按「距最新版几个版本」递减。
+  assert.deepEqual(VERSION_WEIGHTS, [3, 2.5, 2, 1.5, 1, 0.5],
+    '版本权重表应是 3:2.5:2:1.5:1:0.5（用户 2026-10-14）');
+  assert.equal(VERSION_WINDOW, 6, '版本窗口应是 6');
+  assert.equal(versionWeightOf(0), 3, '最新版 3 分');
+  assert.equal(versionWeightOf(2), 2, '第 3 个版本 2 分');
+  assert.equal(versionWeightOf(5), 0.5, '第 6 个版本（窗口最后一档）0.5 分');
+  assert.equal(versionWeightOf(6), 0, '第 7 个版本起权重 0（不进窗口，不是「权重很小」）');
 
   const availability = {
     characters: {
@@ -2461,9 +2479,13 @@ check('性价比总榜：版本窗口 = 3 版、窗口内等权、窗口外权�
   const seasons = ['4.0', '4.1', '4.2', '4.3', '4.4', '4.5'];
   // ⚠️ 键必须写成**带引号的字符串**：对象字面量里的 `4.0` 是数字字面量，
   // `{ 4.0: 1 }` 的键是 `"4"` 而不是 `"4.0"` —— 实测过：那样写会让 4.0 这一版
-  // 查不到权重，静默退回 `versionWeightOf(5)`，旧表里是 1、新表里是 0，
-  // 于是这条用例在收窗之后凭空红了（夹具 bug，不是生产 bug）。
-  const seasonWeights = { '4.5': 2, '4.4': 2, '4.3': 2, '4.2': 0, '4.1': 0, '4.0': 0 };
+  // 查不到权重，静默退回 `versionWeightOf(5)`，于是这条用例会凭空红（夹具 bug，不是生产 bug）。
+  //
+  // ⚠️ 这张夹具表**必须与 `VERSION_WEIGHTS` 逐档一致**（窗口 6 = 这 6 个版本全覆盖）：
+  // 它是「服务端下发的那一份」的替身，抄错就等于在测另一张表。
+  const seasonWeights = {
+    '4.5': 3, '4.4': 2.5, '4.3': 2, '4.2': 1.5, '4.1': 1, '4.0': 0.5,
+  };
   const rowsOf = (char, bestSeason) => seasons.map((season) => ({
     cost: season === bestSeason ? 2 : (season === '4.0' || season === '4.5' ? 4 : 3),
     tier: 'perfect',
@@ -2488,31 +2510,36 @@ check('性价比总榜：版本窗口 = 3 版、窗口内等权、窗口外权�
   const recent = out.frontierUnits.find((unit) => unit.name === 'Recent');
   const stale = out.frontierUnits.find((unit) => unit.name === 'Stale');
   assert.ok(recent && stale, '两个整包都应进榜');
-  // 分母只含**权重 > 0** 的那三版（4.5/4.4/4.3），窗口外的三版连分母都不进。
+  // 6 个版本**全在窗口内**（权重 3/2.5/2/1.5/1/0.5），所以没有「不进窗口」的版本。
   assert.equal(recent.envs[0].absentSeasons, 0,
     '权重 0 的版本是「不进窗口」，不是「早于登场」—— 不该被记成不参与平均');
   assert.equal(recent.envs[0].droppedSeasons, 0, '权重 0 的版本也不该被记成「无人使用算 0 分」');
-  // Recent：4.5 拿 2 金 → 100；4.4 / 4.3 各 3 金 → 66.67。Σw = 6。
+  // 纸条上的算式：单版分 = 100 × (该版本最便宜金数 ÷ 这支队金数)，本例 minCost 恒为 2。
   const perEnv = (u) => u.total / 10; // 绝境权重 10
-  const expectRecent = (2 * 100 + 2 * (200 / 3) + 2 * (200 / 3)) / 6;
+  const w = seasonWeights;
+  const wSum = Object.values(w).reduce((n, v) => n + v, 0);
+  // Recent：4.5 拿 2 金 → 100；4.0 → 4 金 → 50；其余三版各 3 金 → 66.67。
+  const expectRecent = (w['4.5'] * 100 + w['4.4'] * (200 / 3) + w['4.3'] * (200 / 3)
+    + w['4.2'] * (200 / 3) + w['4.1'] * (200 / 3) + w['4.0'] * 50) / wSum;
   assert.ok(Math.abs(perEnv(recent) - expectRecent) < 0.01,
-    `Recent 的三版等权平均应为 ${expectRecent.toFixed(2)}，实际 ${perEnv(recent).toFixed(4)}`);
-  // Stale：4.5 是 4 金 → 50；4.4 / 4.3 各 3 金 → 66.67（它「最便宜的那一版」4.0 在窗口外，
-  // 权重 0 —— 这正是收窗要治的那件事：旧版本的便宜优势不再能拉住分数）。
-  const expectStale = (2 * 50 + 2 * (200 / 3) + 2 * (200 / 3)) / 6;
+    `Recent 的线性加权平均应为 ${expectRecent.toFixed(2)}，实际 ${perEnv(recent).toFixed(4)}`);
+  // Stale：把「2 金」那一版挪到最旧的 4.0（权重只有 0.5）、最新版反而是 4 金 → 50。
+  const expectStale = (w['4.5'] * 50 + w['4.4'] * (200 / 3) + w['4.3'] * (200 / 3)
+    + w['4.2'] * (200 / 3) + w['4.1'] * (200 / 3) + w['4.0'] * 100) / wSum;
   assert.ok(Math.abs(perEnv(stale) - expectStale) < 0.01,
-    `Stale 的三版应为 ${expectStale.toFixed(2)}（它的 4.0 那版不进窗口），实际 ${perEnv(stale).toFixed(4)}`);
+    `Stale 的线性加权平均应为 ${expectStale.toFixed(2)}，实际 ${perEnv(stale).toFixed(4)}`);
   assert.ok(recent.total > stale.total,
-    '分数集合相同、只把高分从窗口外换到窗口内 → 窗口内那个必须更高');
+    '分数集合相同、只把高分从最旧版换到最新版 → 最新版那支必须更高（权重按新近度递减）');
   // 版本元数据要真的下发到界面（界面据此写「按 N 个版本加权」与那张比例）。
   // ⚠️ 顺序是**新的在前**（内部 `seasonOrder` 就是这个顺序，权重表按下标取），
   // 别按升序断言；也不要在这里改字典序排序 —— 版本号迟早出现 4.10，字典序会把它
   // 排到 4.2 前面。
   assert.deepEqual(out.frontierEnvs[0].seasons, [...seasons].reverse(),
     '副本元数据要带版本列表（新的在前）');
-  assert.equal(out.frontierEnvs[0].seasonWeights['4.5'], 2, '窗口内第 1 版 2 分');
-  assert.equal(out.frontierEnvs[0].seasonWeights['4.3'], 2, '窗口内第 3 版也是 2 分（等权）');
-  assert.equal(out.frontierEnvs[0].seasonWeights['4.2'], 0, '窗口外的版本权重 0');
+  assert.equal(out.frontierEnvs[0].seasonWeights['4.5'], 3, '窗口内第 1 版 3 分');
+  assert.equal(out.frontierEnvs[0].seasonWeights['4.3'], 2, '窗口内第 3 版 2 分');
+  assert.equal(out.frontierEnvs[0].seasonWeights['4.0'], 0.5, '窗口最后一版 0.5 分');
+  assert.equal(out.frontierEnvs[0].versionWindow, 6, '下发的窗口长度是 6');
 });
 
 check('性价比总榜：早于「登场版本」的版本**不参与平均**（不奖不罚，用户 2026-10-10 第二轮）', () => {
