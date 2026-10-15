@@ -2753,7 +2753,14 @@ const teamPlanProbe = await evaluate(`(() => {
   const body = document.getElementById('adviceTeamPlanBody');
   if (!body) return { missing: true };
   const cards = [ ...body.querySelectorAll('.advice-plan-team') ];
-  const parse = (t) => Number(String(t || '').replace(/[^0-9.]/g, '')) || 0;
+  // ⚠️ 2026-10-15：取数要**认得负号**。② 从这一轮起可以是负的（用户要求「性价比过低改为
+  //    负数」），而原来这两处都把负号吃掉了：
+  //      · parse   用 replace(/[^0-9.]/g,'') —— 「-20.2」会变成「20.2」，符号丢失；
+  //      · numAfter 的 [^0-9]* 会把「-」当分隔符一起跳过，同样只留绝对值。
+  //    符号丢了之后「等式 = 徽标」那条判据会按 +20.2 重算，差出 2×0.33×20.2 ≈ 13 分，
+  //    直接假红 —— 而界面其实是对的。所以两处都改成正则**捕获可选负号**。
+  //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+  const parse = (t) => Number((String(t || '').match(/-?[0-9]+(?:\\.[0-9]+)?/) || [])[0]) || 0;
   const rows = cards.map((card) => {
     const head = card.querySelector('.advice-plan-team-head');
     const badge = head?.querySelector('.advice-unit-value')?.textContent || '';
@@ -2766,7 +2773,11 @@ const teamPlanProbe = await evaluate(`(() => {
     //    ⚠️ 2026-10-12 第 3、4 条把写死的 × 0.5 换成了**用户可调的抽卡权重**，
     //    所以这两个系数必须从等式里现取，不能再写死（默认仍是 0.5 / 0.5）。
     //    ⚠️ 这一段整个是模板字符串：注释里**不能出现反引号**（HANDOFF §6.1 第 16 条）。
-    const numAfter = (label) => Number((eq.match(new RegExp(label + '[^0-9]*([0-9]+(?:\\.[0-9]+)?)')) || [])[1]);
+    // ⚠️ 分隔符类里**不能吃掉负号**（用 [^0-9-] 而不是 [^0-9]）：② 从 2026-10-15 起可以为负
+    //    （英文式「性价比 -20.2 × 0.33」），写成 [^0-9]*(-?…) 时那个减号会被前半段先吞掉，
+    //    于是只取到 20.2（符号丢失 → 假红）。
+    //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+    const numAfter = (label) => Number((eq.match(new RegExp(label + '[^0-9-]*(-?[0-9]+(?:\\.[0-9]+)?)')) || [])[1]);
     const coefAfter = (label) => {
       const seg = eq.slice(eq.indexOf(label));
       return Number((seg.match(/×\\s*([0-9]+(?:\\.[0-9]+)?)/) || [])[1]);
