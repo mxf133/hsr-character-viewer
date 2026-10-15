@@ -143,10 +143,11 @@ const check = (label, fn) => {
 /** 对一次方案运行做全套不变量检查（返回该次运行的结论摘要）。 */
 const audit = (title, account, plan) => {
   const before = CHECKS.length;
-  check('① / ② 都在 0~100，且总分 = ①×ws + ②×wc（默认等权）', () => {
+  check('① 在 0~100、② 在 −100~100，且总分 = ①×ws + ②×wc（默认等权）', () => {
     for (const r of plan.rows) {
       if (!(r.strengthPct >= 0 && r.strengthPct <= 100)) return `${r.key}: ①=${r.strengthPct}`;
-      if (!(r.gapPct >= 0 && r.gapPct <= 100)) return `${r.key}: ②=${r.gapPct}`;
+      // ⚠️ 2026-10-15：② 可以是**负分**（超过封顶值之后不再截断，见 `teamPlanGapPower`）。
+      if (!(r.gapPct >= -100 && r.gapPct <= 100)) return `${r.key}: ②=${r.gapPct}`;
       const want = WEIGHTS.strength * r.strengthPct + WEIGHTS.cost * r.gapPct;
       if (Math.abs(want - r.total) > 0.051) return `${r.key}: ${r.total} ≠ ${want}`;
     }

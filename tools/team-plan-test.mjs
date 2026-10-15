@@ -33,9 +33,14 @@ const section = (title) => console.log(`\n=== ${title} ===`);
 /** `teamPlan` 会把两个分项四舍五入到 4 位小数，所以按线性公式复算时要留容差。 */
 const near = (a, b) => Math.abs(Number(a) - Number(b)) < 1e-3;
 /** 「差额接近度」那条曲线的期望值（与 `teamPlan()` 里的写法逐字一致，只用于复算）。
- *  ⚠️ 先 `clamp` 再取幂：负数取小数次幂是 `NaN`（生产代码也是先 clampUnit 再 `** power`）。 */
-const caret = (gap, cap, power) => 100
-  * Math.max(0, Math.min(1, 1 - gap / cap)) ** power;
+ *  ⚠️ 形状是 `sign(t) × |t|^k`，幅值截到 1（值域 [−100, 100]）——**不能**直接写
+ *     `t ** k`：负数取小数次幂是 `NaN`（2026-10-15 接通负分时踩到的就是这个）。
+ *  ⚠️ 2026-10-15 起 **0 以下不再截断**：正好到封顶值 = 0 分，超过转负分。
+ *     改前那句注释写的是「先 clamp 再取幂」，那正是被用户否掉的做法。 */
+const caret = (gap, cap, power) => {
+  const t = 1 - gap / cap;
+  return 100 * Math.max(-1, Math.min(1, Math.sign(t) * Math.abs(t) ** power));
+};
 
 // ---------------------------------------------------------------- A. 合成夹具
 //
@@ -431,17 +436,18 @@ check('⭐ 性价比只有**差额接近度**一个刻度：差额与整包分�
     '同分时的名次必须可复现');
 });
 
-check('指标②是**分位封顶 + 曲线指数**：达到/超过封顶值一律 0 分，以下按 (1 − 差额÷封顶)^k 展开', () => {
+check('指标②是**分位封顶 + 曲线指数**：正好到封顶值 0 分、超过转负分，以下按 |1 − 差额÷封顶|^k 展开', () => {
   const plan = fixturePlan();
   const cap = plan.gapMax;
-  // ⚠️ 这里验的是**规则**，不写死封顶值与指数 —— 两者都改过（封顶 p50 → p75；
-  //    指数 1 → 1.5，用户 2026-10-12 第 9 条「差额接近度给要补大量金的队伍的分太多」）。
-  // 规则：≥ 封顶 → 0 分；以下 → `100 × (1 − 差额 ÷ 封顶) ^ SCORING.teamPlanGapPower`。
+  // ⚠️ 这里验的是**规则**，不写死封顶值与指数 —— 三者都改过（封顶 p50 → p75 → p60；
+  //    指数 1 → 1.5 → 1.8，用户 2026-10-12 第 9 条「差额接近度给要补大量金的队伍的分太多」；
+  //    以及 2026-10-15 用户「可不可以让性价比过低的得分改为负数」→ **0 以下不再截断**）。
+  // 规则：`sign(t) × |t|^k × 100`（t = 1 − 差额 ÷ 封顶），幅值截到 1 ⇒ 值域 [−100, 100]。
   const power = Math.max(1, Number(SCORING.teamPlanGapPower) || 1);
   for (const r of plan.rows) {
-    const expect = Math.max(0, Math.min(100, 100 * (1 - r.gap / cap) ** power));
+    const expect = caret(r.gap, cap, power);
     assert.ok(near(r.gapPct, expect),
-      `${r.gap} 金 ÷ 封顶 ${cap} 金 的 ② 应是 ${expect}（^${power}），实际 ${r.gapPct}`);
+      `${r.gap} 金 ÷ 封顶 ${cap} 金 的 ② 应是 ${expect.toFixed(1)}（^${power}），实际 ${r.gapPct}`);
   }
   // ⚠️ 指数必须**真的在压尾部**：这是用户第 9 条要的东西。线性（^1）时 8 金能拿 42.9 分，
   //    ^1.5 只有 28.1 —— 如果哪天有人把指数改回 1，这条断言会红给他看。
@@ -471,9 +477,23 @@ check('指标②是**分位封顶 + 曲线指数**：达到/超过封顶值一�
   assert.equal(Math.round(byGap(1).gapPct), Math.round(caret(1, wcap, power)),
     `1 金 ÷ 封顶 ${wcap} 金 的 ② 应落在封顶值以内、按 ^${power} 拿分`);
   assert.ok(byGap(1).gapPct > 0, '1 金应拿正分（否则「以下」这段没被验到）');
-  for (const r of wide.rows.filter((x) => x.gap >= wcap)) {
-    assert.equal(r.gapPct, 0, `${r.gap} 金 ≥ 封顶 ${wcap} 金 → 0 分`);
+  // ⚠️ 2026-10-15：这一段从「≥ 封顶 → 0 分」改成「**超过**封顶才转负分，正好等于封顶仍是 0」
+  //    （用户要求「性价比过低的得分改为负数」—— 截断在 0 会让贵队之间全部打平）。
+  for (const r of wide.rows.filter((x) => x.gap > wcap)) {
+    assert.ok(r.gapPct < 0, `${r.gap} 金 > 封顶 ${wcap} 金 → 应当是负分（实际 ${r.gapPct}）`);
+    assert.ok(r.gapPct >= -100, `${r.gap} 金的 ② 不应低于 −100（实际 ${r.gapPct}）`);
   }
+  const atCap = wide.rows.filter((x) => x.gap === wcap);
+  for (const r of atCap) {
+    assert.ok(near(r.gapPct, 0), `${r.gap} 金 = 封顶 ${wcap} 金 → 应当正好 0 分（实际 ${r.gapPct}）`);
+  }
+  // ⚠️ 上一条循环只在「下发的 15 条里真的出现过超封顶的队伍」时才验到东西。为了不让它
+  //    静默空跑，这里再钉**曲线本身**的三条性质（纯函数，与池内构成无关）：
+  assert.ok(caret(wcap + 1, wcap, power) < 0, '超过封顶值应当算出负分');
+  assert.ok(caret(wcap * 2, wcap, power) < caret(wcap + 1, wcap, power),
+    '补得越多负得越多（单调下降）');
+  assert.ok(caret(wcap * 5, wcap, power) >= -100, '② 的值域下限是 −100（幅值截到 1）');
+  assert.ok(caret(0, wcap, power) === 100, '补金 0 金应当是满分 100（幅值上限同样是 1）');
 });
 
 check('⭐ 隐金减免的两处来源必须同源：账面取**载荷里的** hiddenCosts，不是模块级状态', () => {
