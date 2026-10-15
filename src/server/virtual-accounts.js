@@ -23,6 +23,12 @@ import { HIDDEN_COST_SETTINGS, coneCostOf } from '../../public/scripts/advice.js
 // `loadArchive()` 是 `archive.js` 里已有的带缓存读法，**不要**在这里再读一次 23 MB 的
 // `archive.json`（那就是两份解析 + 两份内存）。
 import { loadArchive } from './archive.js';
+// 「数据集分不清的多形态角色 → 权威头像 id」那张表**只有一份**，见
+// `character-icon-ids.js` 的注释。2026-10-14 起它同时也被 `archive.js` 的 i18n
+// 加载期用上（图标选择器 / 角色编辑器 / 抽卡页的头像都靠那一次修正），
+// 这里保留同样的调用是为了让**虚拟账号快照**自己也是对的（它可能拿着一个
+// 还没经过 i18n 修正的裸图标表）。
+import { CHARACTER_ID_OVERRIDES, iconWithId } from './character-icon-ids.js';
 
 /** 开拓者（任意命途）：不算常驻池角色，也没有「专属光锥」这一说。 */
 const isTrailblazerName = (name) => /trailblazer|\{nickname\}|开拓者/i.test(String(name || ''));
@@ -67,32 +73,14 @@ const TRAILBLAZER_BASE_KEY = 'Trailblazer';
 /**
  * 数据集**分不清**的多形态角色 → 权威头像 id（`{ 角色英文键: id }`）。
  *
- * 为什么需要它（2026-10-14 第 1 条往下挖出来的）：`i18n.charactersById` 把
- * **两个 id 都写成同一个名字** —— 实测 `1001 → {en:'March 7th', cn:'三月七'}`、
- * `1224 → {en:'March 7th', cn:'三月七'}`，**没有命途信息**；而
- * `availability.characters` 里是 `March 7th (Preservation)` / `March 7th (Hunt)`
- * 两个键，图标表里却只有一条 `March 7th → 1224.png`。于是「宽松匹配」把两行都指到
- * 1224：两张卡的 `data-char-id` 撞车（抽卡页「点角色 chip 滚过去」会滚错一张），
- * 而且服务端侧 `charCostOf('March 7th')` 走的是「未知键 → 按限定算」那条保守兜底，
- * 让平铺档凭空多出 2 金。
- *
- * 依据（都是实测，不是猜的）：
- *   * StarRailRes `index_min/en/characters.json`：`1001` = `March 7th` / path **Knight**
- *     / rarity 4 → 即**存护**；`1224` = `March 7th` / path **Rogue** / rarity 4 → 即**巡猎**；
- *   * 两张图标 `icon/character/1001.png` 与 `1224.png` 都请求得到（200）。
+ * ⚠️ 表本身搬到了 `character-icon-ids.js`（2026-10-14）：它以前只长在这个文件里，
+ * 于是**只有虚拟账号快照**用上它 —— 图标选择器 / 角色编辑器 / 抽卡页一律把
+ * `March 7th (Preservation)` 指到巡猎那张 1224.png（用户报的「三月七（存护）
+ * 图标错了」）。现在 i18n 加载期会用它补出显式键，四处一次全对；
+ * 这里仍然按同一张表做事，是为了不依赖「i18n 已经加载过」这个前提。
+ * 完整依据（1001 = Knight 存护 / 1224 = Rogue 巡猎，两张图都 200）见那个文件。
  */
-const CHARACTER_ID_OVERRIDES = Object.freeze({
-  'March 7th (Preservation)': 1001,
-  'March 7th (Hunt)': 1224,
-});
-
-/**
- * 把一条图标地址里的**文件名 id** 换成目标的（`/icons/.../<id>.png?fallback=<cdn .../<id>.png>`）。
- *
- * ⚠️ 正则必须带 `g`：`fallback` 那一段里**也有同一个文件名**，只换第一处的话，
- * 本地没镜像时 `/icons` 会 302 回**原来那个 id**（开拓者就会永远显示 8010 = 女主·欢愉）。
- */
-const iconWithId = (raw, id) => (raw ? String(raw).replace(/(\d+)\.png/g, `${id}.png`) : null);
+const characterIconIdOf = (key) => CHARACTER_ID_OVERRIDES[key] || null;
 
 /** 随机抽一个开拓者头像 id。 */
 const randomTrailblazerId = (rng = Math.random) => TRAILBLAZER_AVATARS[

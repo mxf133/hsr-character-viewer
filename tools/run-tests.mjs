@@ -44,6 +44,9 @@ const suites = [
   // 以及成本账（限定 E6S5 不算隐金 = 12 金）。离线，样本角色，实测 638 组可比档位。
   ['强度口径不变式（投入单调 / E6S5=12 金）', 'strength-invariant-test.mjs'],
   ['中文名称映射 (对照游戏内中文)', 'herta-i18n-check.mjs'],
+  // 「和 GitHub 上的最新发布比一比」（用户 2026-10-14 第 5 条）。**完全不联网**：
+  // `fetchImpl` 是注入的，所以断网 / 被墙的机器照样跑，也不消耗 GitHub 匿名配额。
+  ['版本检查（GitHub 最新发布比对）', 'update-check-test.mjs'],
   ['端到端 HTTP / 静态资源 / 会话', 'e2e-test.mjs'],
   ['启动器 start.bat 自检', 'launcher-test.mjs'],
   ['启动后自动打开浏览器', 'launcher-open-test.mjs'],
