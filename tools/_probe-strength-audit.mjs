@@ -2,16 +2,21 @@
 //
 // 检查项（都只看客观事实，不掺口径偏好）：
 //   1. strengthScore ∈ [0, 100] 且有限；
-//   2. 单调包络只向上：strengthFloor ≥ strengthTotal；
+//   2. 单调包络 + 第二档天花板：`min(自身, 90) ≤ strengthFloor ≤ max(自身, 90)`
+//      —— ⚠️ **不是** `floor ≥ own`：`strengthTotal` 是逐关卡两档的加权平均，某一关
+//      0 行动值、其余关不是，自身就可以落在 (90, 100)，而「没打出 0 行动值的队够不到
+//      顶格那一档」是用户 2026-10-16 第 1 条的规则 ⇒ 非顶格档在整包层也封顶 90。
+//      低过下界才是真 bug（包络在下压）。
 //   3. 复算 strengthScore == 95 × (floor/100) + 5 × addOn（顶格档按 pinched、其余按 invest）；
 //   4. 顶格档（strengthTotal ≥ 99.99）在**有数据的关卡**是否真的每一关 av 都是 0；
 //   5. 「每关都有数据且都 0 行动值」的整包是否真的被判成顶格档（漏判 = 0 行动值登不了顶）；
 //   6. 用户不变式 E6S5 ≥ E6S1 ≥ E2S1 ≥ E0S0（同角色、同锥档）的反例；
-//   7. 强度来源表可对账：Σ(权重 × envStrength) ÷ Σ全部权重 == strengthTotal。
+//   7. 强度来源表可对账：Σ(权重 × envStrength) / Σ全部权重 == strengthTotal；
+//   8. 界面「投入加成」那一格的投入档与算分同源（v4.6.113 统一后应恒为 0 条不一致）。
 //
 //   node tools/_probe-strength-audit.mjs [--rows=15]
 import {
-  SCORING, buildConclusion, eidolonTierOf, teamPoolUnits, VERSION_WINDOW,
+  SCORING, buildConclusion, coneCostOf, eidolonTierOf, teamPoolUnits, VERSION_WINDOW,
 } from '../public/scripts/advice.js';
 import { archiveFrontierAll, archiveIndex, loadI18n, zhName } from '../src/server/archive.js';
 import { conclusionEnvs } from '../src/server/conclusion.js';
@@ -56,12 +61,26 @@ console.log(`榜内 ${units.length} 条整包｜关卡权重和 ${allEnvWeight}`
 const bad = { range: [], envelope: [], formula: [], topBandEnv: [], table: [] };
 const topBandUnits = [];
 const allZeroMissed = [];
+const cappedOwn = [];   // 自身落在 (天花板, 100) → 被第二档天花板压下来（合法，见下）
 for (const u of units) {
   const score = Number(u.strengthScore);
   const own = Number(u.strengthTotal) || 0;
   const floor = Number(u.strengthFloor ?? own) || 0;
   if (!Number.isFinite(score) || score < -1e-9 || score > 100 + 1e-9) bad.range.push({ u, score });
-  if (floor + 1e-6 < own) bad.envelope.push({ u, floor, own });
+  /**
+   * ⚠️ 这一项 2026-10-16 晚**改过判据**（v4.6.113 查清）：包络只向上，但**非顶格档**
+   * 还要过一道第二档天花板（90）—— 而 `strengthTotal` 是**逐关卡**两档的加权平均，
+   * 某一关 0 行动值、其余关不是，自身就可以落在 (90, 100)。所以合法区间是
+   *   `min(自身, 天花板) ≤ strengthFloor ≤ max(自身, 天花板)`
+   * 而不是一开始写的 `floor ≥ own`。低过下界的才是真 bug（包络在下压）。
+   */
+  const cap = SCORING.strengthSecondBandCap;
+  const topBand = own >= 99.99;
+  const lo = topBand ? own : Math.min(own, cap);
+  const hi = topBand ? own : Math.max(own, cap);
+  if (floor + 1e-6 < lo) bad.envelope.push({ u, floor, own, lo });
+  if (floor - 1e-6 > hi && floor - 1e-6 > own) bad.envelope.push({ u, floor, own, lo });
+  if (!topBand && own > cap + 1e-6 && Math.abs(floor - cap) < 1e-6) cappedOwn.push({ u, own, floor });
   const invest = Math.max(0, Math.min(1, investRank(u) / SCORING.fullInvestRank));
   const top = own >= 99.99;
   const addOn = top ? Number(u.strengthPinched) || 0 : invest;
@@ -90,8 +109,14 @@ const dump = (label, list, fmt) => {
 };
 console.log('\n=== 客观一致性 ===');
 dump('1 强度分越界 / 非数', bad.range, (r) => `${cn(r.u.name)} E${r.u.eidolon}=${r.score}`);
-dump('2 包络下压（不该发生）', bad.envelope,
-  (r) => `${cn(r.u.name)} E${r.u.eidolon} floor ${r.floor.toFixed(2)} < own ${r.own.toFixed(2)}`);
+dump('2 包络越界（低于 min(自身, 天花板) 或高于 max(自身, 天花板)）', bad.envelope,
+  (r) => `${cn(r.u.name)} E${r.u.eidolon} floor ${r.floor.toFixed(2)}｜own ${r.own.toFixed(2)}`
+    + `（合法下界 ${r.lo.toFixed(2)}；own 落在 (90,100) 时被第二档天花板压到 90 是**规则本身**）`);
+console.log(`\n被第二档天花板压下来的整包 ${cappedOwn.length} 条（own ∈ (90, 100)，属两档规则）：`);
+for (const r of cappedOwn.slice(0, ROWS)) {
+  console.log(`  ${cn(r.u.name).padEnd(8)} E${r.u.eidolon}${r.u.lc ? `S${r.u.superimp}` : '  '}`
+    + ` own ${r.own.toFixed(2)} → floor ${r.floor.toFixed(2)}`);
+}
 dump('3 公式复算不符', bad.formula, (r) => `${cn(r.u.name)} E${r.u.eidolon}`
   + ` 期望 ${r.expect.toFixed(2)} 实际 ${r.score.toFixed(2)}（floor ${r.floor.toFixed(2)} addOn ${r.addOn.toFixed(3)} 顶格=${r.top}）`);
 dump('4 顶格档但并非每关 0 行动值', bad.topBandEnv, (r) => `${cn(r.u.name)} E${r.u.eidolon}`
@@ -107,16 +132,19 @@ for (const u of topBandUnits.slice(0, ROWS)) {
 }
 
 // ---- 8. 界面「投入加成」小字 vs 算分用的投入档位 --------------------------------------
-// `advice-view.js` 的 strengthSourceBlock 用 `投资 rank = min(E,6) + (lc ? superimp : 0)`；
-// 算分用 `eidolonTierOf(E) + coneRankOf`（E3~E5 折进 E2、**只有要金的光锥**才算叠影）。
-console.log('\n=== 8 界面「投入加成」小字与算分口径的差 ===');
+// ⚠️ 2026-10-16 晚（v4.6.113）界面已经改成与算分**同一把尺子**：
+// `eidolonTierOf(E) + (要金的光锥 ? 叠影 : 0)`。这里按**同一个算式**复算一遍 ——
+// 期望恒 0 条不一致；哪天界面又退回「有光锥就算叠影」，这一项会当场冒出来。
+console.log('\n=== 8 界面「投入加成」小字与算分口径的差（应恒为 0）===');
 const uiMismatch = [];
 for (const u of units) {
-  const uiRank = Math.min(Number(u.eidolon) || 0, 6) + (u.lc ? Math.max(1, Number(u.superimp) || 1) : 0);
+  const uiRank = eidolonTierOf(u.eidolon) + (u.lc && coneCostOf(u.lc, availability) > 0
+    ? Math.max(1, Math.round(Number(u.superimp) || 1)) : 0);
   const realRank = investRank(u);
   if (uiRank !== realRank) uiMismatch.push({ u, uiRank, realRank });
 }
-console.log(`不一致 ${uiMismatch.length} / ${units.length} 条整包（界面会印另一个「叠影/星魂档 → +X 分」）`);
+console.log(`不一致 ${uiMismatch.length} / ${units.length} 条整包`
+  + '（对照：v4.6.112 之前的旧写法 · 有光锥就算叠影 · 实测 52 条不一致）');
 for (const r of uiMismatch.slice(0, ROWS)) {
   console.log(`  ${cn(r.u.name).padEnd(8)} E${r.u.eidolon}`
     + `${r.u.lc ? `/${cn(r.u.lc)}S${r.u.superimp}` : '（无光锥）'}`

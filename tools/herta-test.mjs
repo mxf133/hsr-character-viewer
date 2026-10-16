@@ -951,6 +951,30 @@ check('界面源码里不许再出现「满分 / 达标 / 及格」这类自造�
     `这些行还在往界面上写模糊用语（应改走 tierTextOf()）：\n${offenders.join('\n')}`);
 });
 
+check('强度详情窗口的「叠影档」必须与算分同一把尺子（只有要金的光锥才算投入）（v4.6.113）', () => {
+  /**
+   * 源码级护栏（与上面那条「不许写满分 / 达标 / 及格」同一个路数）：详情窗口那行
+   * 「投入加成」曾经写的是 `min(E, 6) + (有光锥 ? 叠影 : 0)`，而算分用的是
+   * `eidolonTierOf(E) + coneRankOf`（**只有要金的光锥**才算叠影、E3~E5 折进 E2）。
+   * 实测 261 条整包里有 **52 条**界面印着「叠影档 5 → +2.27 分」而实际加 **0 分**
+   * （免费 / 4★ 锥）—— 正是 v4.6.102 在算分侧修过、显示侧没跟着改的那个 bug。
+   * 这条钉「那一行必须走 `coneCostOf(` 与 `eidolonTierOf(`」：回到旧写法当场红。
+   */
+  const src = readFileSync(resolve('public/scripts/advice-view.js'), 'utf8');
+  const from = src.indexOf('const strengthSourceBlock');
+  const to = src.indexOf('const versatilitySourceBlock');
+  assert.ok(from > 0 && to > from, '找不到 strengthSourceBlock / versatilitySourceBlock');
+  const block = src.slice(from, to);
+  assert.ok(block.includes('coneCostOf('),
+    '叠影档必须用 coneCostOf() 判「这把光锥要不要金」（免费 / 4★ 锥的叠影不算投入）');
+  assert.ok(block.includes('eidolonTierOf('),
+    '星魂档必须用 eidolonTierOf()（E3~E5 折进 E2，与算分同一把尺子）');
+  assert.ok(!/unit\.lc \? Math\.max\(1, Number\(unit\.superimp\)/.test(block),
+    '旧的「有光锥就算叠影档」写法不许回来');
+  assert.ok(block.includes('ownTopBand'),
+    '顶格档那 5 分是**压金度**、不是投入档 —— 这一格必须分开写');
+});
+
 /** 造一个环境：base 是 0 抽可照抄的基线，cands 里每项是 [阵容, 档位, avgAv, 配装]。 */
 const envFixture = (id, teams, extra = {}) => ({
   id,
@@ -3914,6 +3938,69 @@ check('⭐ 强度两档：打出 0 行动值 = 顶格档 100；没打出 = ≤ 9
     `av=1（没打出 0）应落第二档 ≤ ${SCORING.strengthSecondBandCap}，实际 ${strengthOf(1)}`);
   // 「顶格 > 第二档」这条主序：0 行动值哪怕配到最贵，也强过只差一点的队伍。
   assert.ok(strengthOf(0) > strengthOf(1), '顶格档必须严格高于任何第二档');
+});
+
+check('⭐ 第二档天花板对整维统一封顶，且不吃掉「投入越高不会更弱」（v4.6.113）', () => {
+  /**
+   * 用户 2026-10-16 晚「都修」的第 ② 条，**查证后定性改了**：这不是包络越权，而是
+   * **两档天花板本身**。`strengthTotal` 是**逐关卡**两档的加权平均 —— 某一关打出
+   * 0 行动值（那关 100）、其余关不是，平均下来可以落在 (90, 100)：实测缇宝 E6 91.61 /
+   * 爻光 E6 90.48 / 黄泉 E2 90.27。而「没打出 0 行动值的队伍，再好也够不到顶格那一档」
+   * 是用户 2026-10-16 第 1 条点名的规则 ⇒ 非顶格档在**整包层也封顶 90**。
+   *
+   * ⚠️ 试过「先跟自己取 max」（豁免天花板）：强度不变式当场红
+   *    `Tribbie: E1C0(87.7) > E1C1(86.4)`（951 组里翻面 1 组）—— 自身 91.84 的那档
+   *    豁免了、投入更高的那档没豁免，1.84 分的差 > 投入项那一步 0.45 分。所以这条
+   *    同时钉两件事：**封顶对所有人一视同仁** + **投入维仍然单调**。
+   */
+  const availability = {
+    characters: { Hero: { rarity: 5, limited: true } },
+    lightCones: { GoldCone: { rarity: 5, limited: true } },
+  };
+  const pack = (eidolon, withCone) => [{
+    char: 'Hero', eidolon, ...(withCone ? { lc: 'GoldCone', superimp: 1 } : {}),
+  }];
+  const envA = envFixture('aa|plight', [], {
+    mode: 'aa', stage: 'plight', season: '4.6',
+    tierLines: { perfect: 300, target: 500 },
+    frontierRows: [
+      { cost: 2, tier: 'perfect', actionValue: 0, members: pack(0, true) },
+      { cost: 4, tier: 'perfect', actionValue: 0, members: pack(2, true) },
+      { cost: 1, tier: 'perfect', actionValue: 0, members: pack(0, false) },
+    ],
+  });
+  const envB = envFixture('moc', [], {
+    mode: 'moc', stage: '', season: '4.6',
+    tierLines: { perfect: 0, target: 2, pass: 4 },
+    frontierRows: [
+      // 1 > 判据线 0 → 第二档；曲线在 av=1 处 ~0.725 → 本副本强度 ~65.25
+      { cost: 2, tier: 'perfect', actionValue: 1, members: pack(0, true) },
+      { cost: 4, tier: 'perfect', actionValue: 1, members: pack(2, true) },
+      { cost: 1, tier: 'perfect', actionValue: 0, members: pack(0, false) },
+    ],
+  });
+  const out = buildConclusion([envA, envB], { availability });
+  const packs = out.frontierPacksByChar?.Hero || [];
+  const x = packs.find((u) => u.eidolon === 0 && u.lc === 'GoldCone');
+  const z = packs.find((u) => u.eidolon === 2 && u.lc === 'GoldCone');
+  const y = packs.find((u) => !u.lc);
+  assert.ok(x && z && y, `三档整包都该在 frontierPacksByChar 里（实际 ${packs.length} 条）`);
+  // 前置条件：这三支的**自身**合计都落在那道天花板之上，否则这条用例测不到东西。
+  assert.ok(x.strengthTotal > SCORING.strengthSecondBandCap,
+    `前置条件：自身合计应 > ${SCORING.strengthSecondBandCap}，实际 ${x.strengthTotal}`);
+  // ① 封顶对整维生效（含自身）：非顶格档的 `strengthFloor` 一律 ≤ 90。
+  for (const u of [x, z]) {
+    assert.ok(u.strengthFloor <= SCORING.strengthSecondBandCap + 1e-6,
+      `非顶格档必须封顶 ${SCORING.strengthSecondBandCap}，实际 ${u.name} E${u.eidolon} `
+      + `${u.strengthFloor}（自身 ${u.strengthTotal}）`);
+    assert.equal(u.strengthFloor, SCORING.strengthSecondBandCap,
+      `自身越过天花板时应正好取天花板，实际 ${u.strengthFloor}`);
+  }
+  // ② 投入维仍然单调：E2+金光锥（投入档 3）必须**不低于** E0+金光锥（投入档 1）。
+  assert.ok(z.strengthScore > x.strengthScore + 1e-6,
+    `封顶之后投入维必须还单调：E0+锥 ${x.strengthScore} vs E2+锥 ${z.strengthScore}`);
+  // ③ 顶格档（自己每关都 0 行动值）不受天花板影响。
+  assert.equal(y.strengthFloor, 100, '顶格档自己打出 0 行动值 → 兜底就是 100');
 });
 
 check('⭐ 泛用性只看 E0/E1/E2 的平均值、固定给所有档位（E6 完全不参与）（用户 2026-10-16 第 3 条）', () => {

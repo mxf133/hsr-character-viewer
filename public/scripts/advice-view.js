@@ -50,7 +50,12 @@ import {
   eidolonsOf, lightConeRanksOf, TIER_PLACEHOLDER, tierLabelsOf, tierMoveText, tierTextOf,
   // ⚠️ `eidolonTierOf`：泛用性的**归一区间是按星魂档分组**的（用户 2026-10-14 第 1 条），
   //    详情窗口要按整包自己的档去取 `frontierExtents.versatility.byTier`，与算分同一把尺子。
-  eidolonTierOf,
+  // ⚠️ `coneCostOf`：强度详情窗口的「叠影档」要判**这把光锥要不要金**（v4.6.113）——
+  //    免费 / 4★ 锥的叠影不算投入，与算分的 `coneRankOf()` 同一把尺子（抄一份早晚分叉）。
+  eidolonTierOf, coneCostOf,
+  // 强度两档的天花板常量（`strengthSecondBandCap`）：详情窗口要把这条规则写出来
+  // （v4.6.113），必须读 `advice.js` 那一份，不许在这里另抄一个 90。
+  SCORING,
   weightInputOf, teamPlan,
   // 隐金设置（用户 2026-10-11）：五组的名单 / 文案 / 默认值都只有 advice.js 那一份，
   // 这里只负责按它画界面，绝不抄第二份名单。
@@ -3023,6 +3028,16 @@ const frontierExtentsNow = () => state.conclusion?.frontierExtents
   || state.packsFrontierExtents || null;
 
 /**
+ * 成本口径要的 `availability`（「限定 / 常驻」「稀有度」那张表）。
+ *
+ * ⚠️ 只服务**强度详情窗口的叠影档判据**（v4.6.113）：`coneCostOf()` 靠它判这把光锥
+ * 要不要金。与 `renderTeamPlan` 传给 `teamPlan()` 的是**同一份**
+ * （`state.conclusion.availability`，服务端载荷自带），不另存一份、也不猜默认值 ——
+ * 取不到时给空表，`coneCostOf` 会按「不是 `limited:false` 就是限定」兜底（与读取侧一致）。
+ */
+const availabilityNow = () => state.conclusion?.availability || {};
+
+/**
  * 由一个「查看来源」按钮找到**它控制的那一块**。
  *
  * 2026-10-15 新增。用户要求按钮与分项名**同一行**，于是分项表里的三个按钮搬进了
@@ -3368,14 +3383,24 @@ const scoreBreakdownTable = (unit) => {
  * 以及「按照已有的用户设置的关卡权重，**各自贡献**」。落地成这张表：
  *
  * ```
- *   某副本强度 = av == 0 → 100 − 5 × (1 − 最便宜满分金数 / 这次成绩的金数)   ← 段内按金数
- *                av > 0  → 95 × 判据线曲线(av)（满分线 0.80、达标线 0.45、及格线 0.20）
- *   强度原始量 = Σ(关卡权重 × 某副本强度) ÷ Σ(**全部**副本的关卡权重)
- *   强度得分   = 强度原始量（绝对刻度 0~100，不再榜内归一）
+ *   某副本强度 = av == 0 → 100                                ← 顶格档（打出来的成绩）
+ *                av > 0  → 90 × 判据线曲线(av)（0.80 / 0.45 / 0.20 三个锚点）
+ *   强度原始量 = Σ(关卡权重 × 某副本强度) / Σ(**全部**副本的关卡权重)   ← 缺副本按 0
+ *   单调兜底   = max(自身, 同角色「星魂 ≤、叠影 ≤」的整包)   ← 只向上，且 ≤ 90（除非自身顶格）
+ *   强度得分   = 95% × 兜底后的成绩 + 5% 的量（顶格档 = 压金度；其余 = 投入档位）
  * ```
+ *
+ * ⚠️ **上面那三行 2026-10-16 晚改过一次**（v4.6.110 的逐关卡口径 + v4.6.113 的兜底修正）：
+ *    这一段的旧稿写的是「av == 0 → 100 − 5 × (1 − 最便宜金数 / 这次成绩的金数)；
+ *    av > 0 → 95 × 曲线」—— 那是**把 5 分塞进逐关卡**的老口径，代码里早就搬到整包层
+ *    并且换成了「两档 + 第二维分两种」。这张表只画「打得多快」那一层，投入 / 压金
+ *    那 5 分在表下面用小字解释（见 `strengthSourceBlock` 末尾）。
  *
  * ⚠️ 分母是**全部**副本的权重和：缺副本按 0 计。改前那版除以「有数据的副本」，实测奖励
  * 了数据少的整包（绝境覆盖率 36/77 → 1/77），见 `advice.js` 里 `strengthTotal` 那段注释。
+ * ⚠️ **抽卡方案**里那条 `avSource`（行动值前沿池）的分母**故意不同**：它只对「比本队打过的
+ * 任何一关都更轻」的缺关卡免罚（v4.6.112），所以同一支队在两个榜上的强度分**不保证相等**
+ * —— 方案那张表的刻度文案里写明了这件事。
  *
  * ⚠️ 这张表**不再有**「跨版本发挥」列：新口径**不跨版本平均**（用户要的是「仅取最少
  * 行动值」那一次成绩）。该列仍然保留在**性价比**那张表里 —— 那边确实按版本加权。
@@ -3456,14 +3481,68 @@ const strengthSourceBlock = (unit) => {
       `单调兜底：该角色在**更低投入**的档位打出过更好的成绩，按「投入越高不会更弱」取 `
       + `${floor.toFixed(1)}（本档自己 ${own.toFixed(1)} → ${floor.toFixed(1)}）。`));
   }
-  // ② 投入加成：最多 5 分，按 (星魂档 + 叠影档) / 11 给。
-  const eRank = Number(unit.eidolon) || 0;
-  const sRank = unit.lc ? Math.max(1, Number(unit.superimp) || 1) : 0;
-  const investRank = Math.min(eRank, 6) + sRank;
-  box.appendChild(text('div', 'muted small advice-source-note',
-    `投入加成：星魂档 ${Math.min(eRank, 6)} + 叠影档 ${sRank} = ${investRank} / 11，`
-    + `占 5 分 → +${((5 * Math.min(1, investRank / 11))).toFixed(1)} 分；`
-    + '强度分 = 95% × 兜底后的成绩 + 这 5 分。'));
+  /**
+   * ⚠️ 反过来那一侧也要写出来：**本档自身合计被第二档天花板压下来**（v4.6.113）。
+   *
+   * `strengthTotal` 是**逐关卡**两档的加权平均 —— 某一关打出 0 行动值（那关 100）、
+   * 其余关不是，平均就可以落在 (90, 100)。而「没打出 0 行动值的队伍，再好也够不到
+   * 顶格那一档」是用户 2026-10-16 第 1 条点名的规则，所以非顶格档在整包层也封顶 90。
+   * 实测会有这种整包（缇宝 E6 91.61 / 爻光 E6 90.48 / 黄泉 E2 90.27）—— 不写这条小字，
+   * 读者拿上面表里的「本档自身合计」去对下面那个强度分就会以为算错了。
+   * ⚠️ 试过让它豁免天花板（先跟自己取 max）：强度不变式当场红（`E1C0 > E1C1`），
+   *    因为「自身 91.84 的那档豁免、投入更高的那档不豁免」会破坏投入单调 ——
+   *    详见 `advice.js` 兜底段那段注释。
+   */
+  const secondBandCap = Number(SCORING.strengthSecondBandCap) || 90;
+  if (Number.isFinite(floor) && Number.isFinite(own)
+    && own > secondBandCap + 0.05 && floor < own - 0.05) {
+    box.appendChild(text('div', 'muted small advice-source-note',
+      `第二档天花板：本档自身合计 ${own.toFixed(1)} 已超过 ${secondBandCap} —— `
+      + `非顶格档（没有**每一关**都打出 0 行动值）的上限就是 ${secondBandCap}，`
+      + `所以这 95 分按 ${floor.toFixed(1)} 算。`));
+  }
+  /**
+   * ② 那 5 分：**两种取法**（用户 2026-10-16 第 1 条）。
+   *
+   * ⚠️ 2026-10-16 晚修（v4.6.113，用户「都修」）：这一格的旧版写死「投入加成」，
+   *    用的还是 `min(E,6) + (有光锥 ? 叠影 : 0)` —— 与算分的 `investRankOf()`
+   *    （`eidolonTierOf(E) + coneRankOf`，**只有要金的光锥**才算叠影、E3~E5 折进 E2）
+   *    **不是同一把尺子**：实测 261 条整包里有 **52 条**界面印着「叠影档 5 → +2.27 分」
+   *    而实际加的是 **0 分**（免费 / 4★ 锥）—— 正是 v4.6.102 在算分侧修过、显示侧没跟着
+   *    改的那个 bug。现在三处同源：星魂档走 `eidolonTierOf`、叠影档走 `coneCostOf()`
+   *    判「要不要金」，顶格档（自身合计 ≥ 99.99）改说**压金度**（与 `advice.js` 的
+   *    `pinched` 同一个算式：该版本最便宜金数 / 本队金数，按关卡权重加权）。
+   */
+  const eTier = eidolonTierOf(unit.eidolon);
+  // 「要金的光锥」才算叠影档：口径与 `advice.js` 的 `coneRankOf()` 逐字一致。
+  const paidCone = Boolean(unit.lc) && coneCostOf(unit.lc, availabilityNow()) > 0;
+  const sRank = paidCone ? Math.max(1, Math.round(Number(unit.superimp) || 1)) : 0;
+  const investRank = eTier + sRank;
+  const ownTopBand = Number(unit.strengthTotal) >= 99.99;
+  if (ownTopBand) {
+    // 顶格档：这一维是**压金度**，不是投入（`advice.js` 的计分段注释里写了取舍）。
+    const allEnvWeight = (state.conclusion?.frontierEnvs || [])
+      .reduce((n, e) => n + (Number(e.weight) || 0), 0);
+    const pinched = allEnvWeight > 0 ? envs.reduce((n, env) => {
+      const meta = frontierEnvMeta(env.id);
+      const weight = Number(env.weight ?? meta?.weight) || 0;
+      const gold = Number(env.strengthGold ?? env.bestTeamGold) || 0;
+      const minCost = Number(env.seasonMinCost) || 0;
+      return n + ((gold > 0 && minCost > 0) ? weight * Math.min(1, minCost / gold) : 0);
+    }, 0) / allEnvWeight : null;
+    box.appendChild(text('div', 'muted small advice-source-note',
+      '这 5 分（**顶格档**）：本档在**每一关都打出了 0 行动值**，所以第二维按**压金度**给 —— '
+      + '该版本最便宜金数 / 本队金数，按关卡权重加权'
+      + (Number.isFinite(pinched)
+        ? ` → ${(5 * pinched).toFixed(1)} 分（压金度 ${pinched.toFixed(2)}）。`
+        : '。（本次载荷没带最便宜金数，所以只写规则、不写数。）')));
+  } else {
+    box.appendChild(text('div', 'muted small advice-source-note',
+      `投入加成：星魂档 ${eTier} + 叠影档 ${sRank} = ${investRank} / 11`
+      + `（叠影只算**要金的光锥**：免费 / 4★ 锥的叠影不花一抽，不记投入）`
+      + ` → +${(5 * Math.min(1, investRank / 11)).toFixed(1)} 分；`
+      + '强度分 = 95% × 兜底后的成绩 + 这 5 分。'));
+  }
   return box;
 };
 
