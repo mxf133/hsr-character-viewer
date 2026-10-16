@@ -86,6 +86,7 @@ const el = {
   layoutRecords: $('layoutRecords'),
   layoutAdvice: $('layoutAdvice'),
   appVersion: $('appVersion'),
+  topbarVersion: $('topbarVersion'),
   appUpdateCheck: $('appUpdateCheck'),
   appUpdateResult: $('appUpdateResult'),
 };
@@ -1012,6 +1013,96 @@ const revealCharacter = (id, name) => {
   return true;
 };
 
+// --------------------------------------------------- 角色列表排序（第 8 条）
+
+/**
+ * 角色列表的排序键：`/api/archive` 的 `refs.debutOrder`（`{ 英文键: 序号 }`，
+ * 序号**越大越新**）+ `refs.characters`（英文键 ↔ 中文名对照）。
+ *
+ * 排序口径全在服务端 `src/server/character-debut.js` 的 `buildDebutOrder()` 里
+ * （① 黑塔网 `firstSeen` ② wiki 实装版本 ③ avatar_id），前端**只做一次降序查表** ——
+ * 不在这里再抄一份版本比较函数（本仓库版本比较只允许有一份实现）。
+ */
+let debutOrderCache = null;
+let debutOrderPromise = null;
+const ensureDebutOrder = async () => {
+  if (debutOrderCache) return debutOrderCache;
+  if (!debutOrderPromise) {
+    debutOrderPromise = adviceOf().ensureIndex()
+      .then((index) => {
+        debutOrderCache = {
+          order: index?.refs?.debutOrder || {},
+          byId: index?.refs?.debutOrderById || {},
+          chars: index?.refs?.characters || [],
+        };
+        return debutOrderCache;
+      })
+      // 数据集还没采集 / 读取失败：退化成空表，`sortCharactersByDebut()` 会走
+      // 「按 avatar_id 升序」的固定兜底，而**不是**抛异常让整块列表消失。
+      // ⚠️ **一定要把原因印出来**（本仓库吃过的教训：`catch {}` 吞掉的异常会让一个
+      //    功能静默退化成「另一套口径」，谁也看不出哪里坏了 —— 见 `advice-view.js` 里
+      //    那个被吞了很久的 `ReferenceError`）。这里只是降级，不影响页面可用性，
+      //    所以用 `console.warn` 而不是弹 toast。
+      .catch((err) => {
+        console.warn('[角色列表] 拿不到登场版本表，退回 avatar_id 升序：', err);
+        debutOrderCache = { order: {}, byId: {}, chars: [] };
+        return debutOrderCache;
+      })
+      .finally(() => { debutOrderPromise = null; });
+  }
+  return debutOrderPromise;
+};
+
+/**
+ * 把角色列表按「**黑塔网首次登场版本降序**（最新的角色在前，旧角色在后）」排好。
+ *
+ * 用户 2026-10-16 第 8 条原话：「角色信息-角色列表要按照该角色在黑塔网首次登场的版本排序，
+ * 最新的角色在前，旧角色在后（再老的角色排序顺序固定，请参考 wiki 的登场时间排序），
+ * 且支持未来的新角色登场后自动排序在前」。
+ *
+ * 三层（与服务端 `buildDebutOrder()` 同一套，见 `refs.debutOrder`）：
+ *   ① `debutOrder[英文键]` / `debutOrderById[avatar_id]` 降序 —— 主键；数据集现算的
+ *      `firstSeen` 打平的那 51 个旧角色由 ②③（wiki 实装版本 / avatar_id）摊开，
+ *      **未来新角色**的 firstSeen 必然最新 → 自动排最前，无需改代码；
+ *   ②③ 已经在服务端的序号里了，前端看不到也不需要再算。
+ *
+ * 匹配顺序：**先 avatar_id、再中文名**。多形态角色只报一个中文名（三月七 / 开拓者），
+ * 按名字匹配会全部落进兜底；而 id 是唯一的（1001/1224、8001..8010），能精确对上。
+ *
+ * ⚠️ **兜底必须与快照返回顺序、`localeCompare` 都无关**（用户明确要求「再老的角色排序
+ * 顺序固定」）：取不到序号的角色（虚拟账号里将来可能加的人造角色、id 与名字都认不出的）
+ * 一律排到最后，组内按 **avatar_id 升序**（固定），id 也缺失时再按**稳定的原下标**保序。
+ * 这样同一份数据每次渲染的顺序完全一致，不会随数据集刷新而漂。
+ *
+ * 卡片外观与「＋ 添加/修改角色」那张尾卡**不动**（那张卡不在 `characters` 里，由调用方另加）。
+ */
+const sortCharactersByDebut = (characters, cache = {}) => {
+  if (!Array.isArray(characters) || characters.length < 2) return characters;
+  const { order = {}, byId = {}, chars = [] } = cache;
+  const cnToEn = new Map();
+  for (const row of chars) {
+    if (row?.nameCn && row?.name && !cnToEn.has(row.nameCn)) cnToEn.set(row.nameCn, row.name);
+  }
+  const idOf = (character) => {
+    const n = Number(character?.id ?? character?.avatar_id ?? character?.avatarId);
+    return Number.isFinite(n) ? n : null;
+  };
+  const rankOf = (character) => {
+    const id = idOf(character);
+    if (id !== null && byId[id] !== undefined) return Number(byId[id]);
+    // 快照的 `name` 就是中文名（`displayName` 把 `{NICKNAME}` 折成「开拓者」）。
+    const key = cnToEn.get(displayName(character?.name));
+    const rank = key !== undefined ? Number(order[key]) : NaN;
+    return Number.isFinite(rank) ? rank : -1;
+  };
+  return characters
+    .map((character, index) => ({ character, index, rank: rankOf(character) }))
+    .sort((a, b) => (b.rank - a.rank)
+      || ((idOf(a.character) ?? Number.MAX_SAFE_INTEGER) - (idOf(b.character) ?? Number.MAX_SAFE_INTEGER))
+      || (a.index - b.index))
+    .map((entry) => entry.character);
+};
+
 const renderSnapshot = (snapshot) => {
   const container = el.snapshot;
   container.innerHTML = '';
@@ -1094,6 +1185,20 @@ const renderSnapshot = (snapshot) => {
    */
   const isVirtualAccount = state.accounts
     .find((a) => a.id === state.activeAccountId)?.source === 'virtual';
+  // 排序键（用户 2026-10-16 第 8 条）：拿缓存里的直接排；缓存还没到位就先按
+  // avatar_id 固定兜底画一次，等它到位再原地重画一次（`renderSnapshot` 幂等）。
+  // ⚠️ 只在**缓存为 null** 时才触发加载：加载失败也会落成空表（见 `ensureDebutOrder`），
+  // 否则这里会反复重画。虚拟账号与真实账号共用这条路径。
+  if (!debutOrderCache) {
+    void ensureDebutOrder().then(() => {
+      // ⚠️ **不能拿 `snapshot` 做同一性判断**（`state.snapshot` 会被新的快照对象替换 ——
+      //    实测那样守卫时这次重排**永远不会发生**，角色列表就一直是 `avatar_id` 兜底顺序，
+      //    用户第 8 条的功能等于没做）。改成重画**当前**快照：`renderSnapshot` 幂等，
+      //    而且此刻 `debutOrderCache` 已非空 → 不会再触发一次加载（不会递归）。
+      if (state.snapshot) renderSnapshot(state.snapshot);
+    });
+  }
+  const orderedCharacters = sortCharactersByDebut(characters, debutOrderCache || undefined);
   if (characters.length === 0 && !isVirtualAccount) {
     container.appendChild(sectionTitle('角色列表'));
     const note = document.createElement('p');
@@ -1104,7 +1209,7 @@ const renderSnapshot = (snapshot) => {
     container.appendChild(sectionTitle(`角色列表 · ${characters.length}`));
     const grid = document.createElement('div');
     grid.className = 'char-grid';
-    for (const character of characters) {
+    for (const character of orderedCharacters) {
       grid.appendChild(characterCard(character));
     }
     // 用户 2026-10-13 第 3 条原话：「虚拟账号可在**角色列表末尾**点击添加没有的角色」。
@@ -1298,27 +1403,32 @@ const characterCard = (character) => {
 // -------------------------------------------------------------------- bootstrap
 
 /**
- * 「检查更新」——用户 2026-10-14 第 5 条。
+ * 「检查更新」——用户 2026-10-14 第 5 条；2026-10-16 第 7 条把落点搬到**顶栏标题栏**。
  *
- * 用户原话：「程序要支持与从 GitHub 比较最新版本，当版本与此项目的 GitHub 版本不同时，
- * 点击提示进行更新，当版本与 GitHub 项目相同时，提示已是最新版本，显示此程序的版本号」。
+ * 用户原话（第 5 条）：「程序要支持与从 GitHub 比较最新版本，当版本与此项目的 GitHub 版本
+ * 不同时，点击提示进行更新，当版本与 GitHub 项目相同时，提示已是最新版本，显示此程序的
+ * 版本号」。用户原话（第 7 条）：「版本号、检查更新应显示在页面上方的标题栏较为显眼的
+ * 地方，提示及时更新」。
  *
  * 三种结果分开处理（服务端已经把 `status` 判好了，界面**不**再自己比版本号 ——
  * 比版本号这件事只有 `src/server/update-check.js` 一个实现，抄一份到浏览器迟早分会叉）：
- *   * `latest`  → 「已是最新版本 v4.6.104」
- *   * `update`  → 「发现新版本 v4.6.105（当前 v4.6.104）」+ 一个**前往下载**的外链
+ *   * `latest`  → 「已是最新版本 v4.6.108」
+ *   * `update`  → 「发现新版本 v4.6.109（当前 v4.6.108）」+ 一个**前往下载**的外链，
+ *                 并给顶栏那一块加 `is-outdated`（金色高亮 + 发光）——**这就是第 7 条要的
+ *                 「提示及时更新」**：用户一眼能看见，不必去读浮层里的句子。
  *   * `ahead`   → 本地比 GitHub 还新（开发分支 / 提前打包，不是错）
- *   * `error`   → 「检查更新失败：…（当前 v4.6.104）」
+ *   * `error`   → 「检查更新失败：…（当前 v4.6.108）」
  *
- * ⚠️ 结果**留在页脚**而不是只弹一个 toast：toast 4.2 秒就没了，而这里有一个要点得开的
- *    下载链接，而且用户可能想回头再看一次。toast 照样弹一下（那是「点击的即时反馈」）。
+ * ⚠️ 结果**留在顶栏那一块下方**（绝对定位的结果气泡）而不是只弹一个 toast：toast 4.2 秒
+ *    就没了，而这里有一个要点得开的下载链接，而且用户可能想回头再看一次。toast 照样弹一下
+ *    （那是「点击的即时反馈」）。气泡**不占标题栏宽度**，长句子不会把顶栏挤坏。
  * ⚠️ 按钮在请求期间**禁用并改文案**：GitHub 直连偶尔要好几秒，没有这个反馈用户会连点，
  *    而服务端缓存只挡得住第二次之后的请求（第一次照样要等满）。
  */
 const renderUpdateResult = (data) => {
   const el2 = el.appUpdateResult;
   if (!el2) return;
-  const current = data?.current || el.appVersion?.textContent?.replace(/^ · /, '') || '';
+  const current = data?.current || el.appVersion?.textContent || '';
   const status = data?.status || 'error';
   el2.replaceChildren();
   let text2 = '';
@@ -1338,7 +1448,7 @@ const renderUpdateResult = (data) => {
     text2 = `检查更新失败：${data?.error || '未知原因'}（当前 ${current}）`;
     kind = 'is-err';
   }
-  el2.className = `footer-update-result ${kind}`;
+  el2.className = `topbar-update-result ${kind}`;
   el2.appendChild(document.createTextNode(text2));
   if (status === 'update' && data.url) {
     const a = document.createElement('a');
@@ -1350,6 +1460,21 @@ const renderUpdateResult = (data) => {
     el2.appendChild(a);
   }
   el2.hidden = false;
+  /**
+   * 「及时更新」的高亮（用户第 7 条）：有新版本时给**整块**加 `is-outdated`
+   * （`app.css` 里版本号变金色、按钮变「有新版本 vX」+ 发光），检查一次是旧版本就把
+   * 上一次的高亮撤掉。⚠️ 只在 `update` 时点亮 —— `ahead` / `error` 都不是「该更新」。
+   */
+  const flagged = status === 'update';
+  const btn = el.appUpdateCheck;
+  const flagTargets = [el.topbarVersion, btn];
+  for (const node of flagTargets) node?.classList.toggle('is-outdated', flagged);
+  if (btn && !btn.disabled) {
+    btn.textContent = flagged && data.latest ? `有新版本 v${data.latest}` : '检查更新';
+    btn.title = flagged
+      ? `GitHub 上有新版本 v${data.latest}，点「前往下载」获取（当前 ${current}）`
+      : '与 GitHub 上的最新发布比较（只有点这个按钮才会联网）';
+  }
   toast(text2.replace(/，$/, ''), status === 'error' ? 'err' : (status === 'update' ? '' : 'ok'));
 };
 
@@ -1357,17 +1482,22 @@ const checkUpdate = async () => {
   const btn = el.appUpdateCheck;
   if (!btn || btn.disabled) return;
   btn.disabled = true;
+  // 请求期间禁用并改文案（见上面的注释）。**先记住当前文案**：请求失败（没拿到
+  // `status`）时要把按钮还原成点之前的样子，而不是留在「检查中…」。
   const label = btn.textContent;
   btn.textContent = '检查中…';
+  let result = null;
   try {
     // `check=1` 是**唯一**会真的联网的形态（不带它时服务端只回本地版本号）。
-    renderUpdateResult(await api('/api/update-check?check=1'));
+    result = await api('/api/update-check?check=1');
   } catch (err) {
-    renderUpdateResult({ ok: false, status: 'error', error: err.message });
-  } finally {
-    btn.disabled = false;
-    btn.textContent = label;
+    result = { ok: false, status: 'error', error: err.message };
   }
+  // ⚠️ 顺序要紧：先把按钮恢复成**可点**，再 `renderUpdateResult()` —— 后者只在
+  // `!btn.disabled` 时才写文案与高亮（否则「有新版本 vX」会被这里还原成「检查更新」）。
+  btn.disabled = false;
+  btn.textContent = label;
+  renderUpdateResult(result);
 };
 
 const loadConfig = async () => {
@@ -1375,11 +1505,15 @@ const loadConfig = async () => {
   const data = await api('/api/config');
   state.csrfToken = data.csrfToken;
   state.accounts = data.accounts;
-  // 版本号来自服务端（src/version.js 是唯一来源）。页脚那一段是一直存在的，
-  // 只是首次拿到配置前留空——不做动画也不改高度，避免影响标题栏位置。
+  // 版本号来自服务端（src/version.js 是唯一来源）。顶栏那一块一直在（用户 2026-10-16
+  // 第 7 条把它从页脚搬到了标题栏），首次拿到配置前留空 —— 不做动画也不改高度，
+  // 避免影响标题栏与分页签的位置。
   if (el.appVersion) {
-    el.appVersion.textContent = data.versionText ? ` · ${data.versionText}` : '';
+    el.appVersion.textContent = data.versionText || '';
     el.appVersion.hidden = !data.versionText;
+    el.appVersion.title = data.versionText
+      ? `本工具版本 ${data.versionText}（点右边「检查更新」可与 GitHub 上的最新发布比较）`
+      : '';
   }
   // 「检查更新」按钮（用户 2026-10-14 第 5 条）：版本号一显示出来就给用户这个入口。
   // ⚠️ 它**不会**自己点自己 —— 外网请求只发生在用户点击之后（见 `checkUpdate()`）。

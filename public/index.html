@@ -35,6 +35,22 @@
       </div>
     </div>
     <div class="topbar-actions">
+      <!-- 版本号 + 「检查更新」（用户 2026-10-16 第 7 条原话：「版本号、检查更新应显示在
+           页面上方的标题栏较为显眼的地方，提示及时更新」）。
+           ⚠️ 这两件东西**只在这里出现**（原来在页脚，已删）—— 别在两处各放一份。
+           ⚠️ 「检查更新」是**唯一**会打 GitHub 的入口：不带 ?check=1 时那个接口只回本地
+           版本号，所以启动 / 开页面都不会产生任何站外请求（见 app.js 的 checkUpdate()）。
+           ⚠️ 检验出新版本时按钮文案会变成「有新版本 v4.6.xxx」并加高亮（`is-outdated`），
+           版本号也跟着高亮 —— 那就是「提示及时更新」的落点。 -->
+      <div class="topbar-version" id="topbarVersion">
+        <span class="topbar-version-text" id="appVersion" hidden></span>
+        <button class="topbar-update" id="appUpdateCheck" type="button" hidden
+          title="与 GitHub 上的最新发布比较（只有点这个按钮才会联网）"
+          aria-label="检查更新：与 GitHub 上的最新发布比较">检查更新</button>
+        <!-- 结果气泡：绝对定位在版本区下方，不占标题栏宽度（长句子会挤坏那一行）。 -->
+        <span class="topbar-update-result" id="appUpdateResult" hidden
+          role="status" aria-live="polite"></span>
+      </div>
       <nav class="tabs" id="tabs" role="tablist" aria-label="功能分页">
         <button class="tab is-active" id="tabRecords" type="button" role="tab"
           aria-selected="true" data-view="records">角色信息</button>
@@ -432,12 +448,6 @@
     <p>
       仅供学习与个人查询使用，数据来自米游社官方战绩接口。
       本项目与米哈游 / HoYoverse 无任何关联。
-      <span class="footer-version" id="appVersion" hidden></span>
-      <!-- 和 GitHub 上的最新发布比一比（用户 2026-10-14 第 5 条）。
-           ⚠️ 这个按钮是**唯一**会去打 GitHub 的入口 —— 不加 ?check=1 时那个接口只回
-           本地版本号，所以启动 / 开页面都不会产生任何外网请求。 -->
-      <button class="footer-update" id="appUpdateCheck" type="button" hidden>检查更新</button>
-      <span class="footer-update-result" id="appUpdateResult" hidden></span>
     </p>
   </footer>
 

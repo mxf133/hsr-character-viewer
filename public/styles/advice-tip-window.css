@@ -297,3 +297,33 @@
   padding: 4px 8px 6px;
 }
 
+/* ==== 「补金推荐分」那张卡的标题行（用户 2026-10-15 第 6 条）=========================
+   原话：「查看分数来源这个按钮应放在补金推荐分右侧，且过渡档位、次选配队均可查看分数来源」。
+
+   改前那个「查看分数来源」按钮是 `tipScoreDetails()` 造的一个独立盒子，**自己独占一行**，
+   压在等式与主表之间；现在改用内联版按钮（`tipInlineToggle()`），由 `tipBox` 的 `headExtra`
+   摆进标题行 —— 所以标题行本身要变成 flex，否则 `display: block` 的标题会把按钮挤到下一行。
+
+   `flex-wrap: wrap`：窗口窄到放不下时按钮**顺行到下一行**，而不是把标题压扁、或反过来
+   把 `.advice-tip-card` 撑宽（用户另一条硬要求就是「别把窗口撑宽」）。
+   `align-items: flex-start`：标题是大号金字、按钮是小药丸，顶对齐比居中对齐更稳。
+   `margin-bottom` 从标题挪到行容器上：`.advice-value-tip-head` 原本自带 `margin-bottom: 3px`
+   （撑开它与等式之间的间距），进了 flex 行之后由行容器统一给，避免两个间距叠在一起。 */
+.advice-value-tip-headrow {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 3px 8px;
+  margin-bottom: 3px;
+}
+.advice-value-tip-headrow .advice-value-tip-head { margin-bottom: 0; }
+.advice-value-tip-headrow .advice-detail-toggle { flex: 0 0 auto; }
+
+/* 过渡档位标题 / 次选配队那一行里的「查看来源」：与前面的文字留一点间距，别贴着。
+   这两处的内容块（`.advice-detail`）由 `.advice-plan-tip-block` / `.advice-plan-tip-alt`
+   的常规块级排版自然下移（前者是普通块，后者是 `display: grid; gap: 5px`），不需要额外规则。 */
+.advice-plan-tip-title .advice-detail-toggle.is-inline,
+.advice-plan-tip-alt-copy .advice-detail-toggle.is-inline {
+  margin-left: 6px;
+}
+

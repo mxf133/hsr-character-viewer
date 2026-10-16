@@ -14,6 +14,7 @@ import {
   VERSION_WEIGHTS, VERSION_WINDOW, envWeightOf, versionWeightOf, videoUrlOf,
 } from '../../public/scripts/advice.js';
 import { applyCharacterIdOverrides } from './character-icon-ids.js';
+import { buildDebutOrder, FORM_AVATAR_ID, DEBUT_ID_ALIASES } from './character-debut.js';
 
 const DEFAULT_DIR = resolve(process.cwd(), 'theherta');
 
@@ -341,6 +342,30 @@ const resolveModeLabels = async () => {
 };
 
 /**
+ * 「数据集英文键 → avatar_id」的查表器（角色列表排序用，见 `refs.debutOrder`）。
+ *
+ * `i18n.charactersById` 是 `id → { en, cn }`，这里反查；对**数据集分不清的多形态角色**
+ * （三月七两个命途 / 开拓者五个命途）用 `FORM_AVATAR_ID` 兜底 —— 那张表在
+ * `character-debut.js` 里，与排序模块同源，不在这里另抄一份。
+ *
+ * 反查命中与兜底都拿不到时返回 `null`，`buildDebutOrder()` 会退化到「英文键字典序」
+ * —— 那种键是数据集里新加的、还没进 i18n 表，**不该抛异常**。
+ */
+const avatarIdResolver = (i18n) => {
+  const byEn = new Map();
+  for (const [id, v] of Object.entries(i18n?.charactersById || {})) {
+    // ⚠️ 首次写入为准：`charactersById` 里 1001/1224 都写成 `March 7th`，后写会把
+    //    先写的那条挤掉 —— 反正那两条这里都用不到（走 `FORM_AVATAR_ID`）。
+    if (v?.en && !byEn.has(v.en)) byEn.set(v.en, Number(id) || null);
+  }
+  return (key) => {
+    if (FORM_AVATAR_ID[key]) return FORM_AVATAR_ID[key];
+    const id = byEn.get(key);
+    return Number.isFinite(id) ? id : null;
+  };
+};
+
+/**
  * Everything the recommendation page needs to render its dropdowns without
  * shipping the per-team breakdown.
  */
@@ -449,6 +474,55 @@ export const archiveIndex = async () => {
        * 全局 `characters` / `lightCones` 只在老数据集没有 `byMode` 时兜底。
        */
       firstSeen: data.refs?.firstSeen || { characters: {}, lightCones: {}, byMode: {} },
+      /**
+       * 角色列表的**固定排序键**（用户 2026-10-16 第 8 条）：`{ 数据集英文键: 序号 }`，
+       * 序号**越大越新**，界面按序号降序排就是「最新登场的角色在前」。
+       *
+       * 三层主次全在 `character-debut.js` 的 `buildDebutOrder()` 里（① 黑塔网 firstSeen
+       * ② wiki 实装版本 ③ avatar_id），服务端这里只负责把「英文键 → avatar_id」的查表
+       * 喂给它 —— 那张表要用 `i18n.charactersById`（id → {en, cn}）反查，加上
+       * `FORM_AVATAR_ID` 补上数据集分不清的 7 个多形态键。
+       *
+       * ⚠️ 为什么走**整数序号**而不是把版本号原样下发：前端只要一次 `a - b`，不必在浏览器里
+       * 再抄一份版本比较函数（版本比较在本仓库只允许有一份实现，见 `seasonSort`）。
+       * ⚠️ 只下发 93 个键的整数表（实测约 1 KB），不是整份 firstSeen。
+       */
+      debutOrder: buildDebutOrder({
+        firstSeen: data.refs?.firstSeen?.characters || {},
+        idOf: avatarIdResolver(i18n),
+        keys: data.refs?.characters || [],
+      }),
+      /**
+       * 同一份排序键，换成 **avatar_id → 序号**（用户 2026-10-16 第 8 条）。
+       *
+       * 为什么还要这一份：米游社快照里的角色只有**中文名 + 数字 id**，而数据集把多形态
+       * 角色拆成了带命途的英文键（`March 7th (Hunt)` 的中文名是「三月七•巡猎」，
+       * 快照里却只写「三月七」）—— 只按中文名匹配，三月七与开拓者五个命途都会落进
+       * 「取不到序号」的兜底里。**数字 id 是唯一的**（三月七 1001/1224、开拓者 8001..8010），
+       * 所以前端优先按 id 查、查不到再退回中文名。
+       *
+       * ⚠️ 开拓者的 10 个 id 先过 `DEBUT_ID_ALIASES` 收口到同一个键（快照里它只有一行，
+       * id 随当前命途变；不收口的话这一行会随玩家切命途上下乱跳，而用户要的是固定顺序）。
+       */
+      debutOrderById: (() => {
+        const idOf = avatarIdResolver(i18n);
+        const out = {};
+        for (const [key, rank] of Object.entries(
+          buildDebutOrder({
+            firstSeen: data.refs?.firstSeen?.characters || {},
+            idOf,
+            keys: data.refs?.characters || [],
+          }),
+        )) {
+          const id = idOf(key);
+          if (Number.isFinite(id)) out[id] = rank;
+        }
+        for (const [id, aliasKey] of Object.entries(DEBUT_ID_ALIASES)) {
+          const rank = out[Number(idOf(aliasKey))];
+          if (rank !== undefined) out[Number(id)] = rank;
+        }
+        return out;
+      })(),
       /**
        * 立绘与图标（角色面板的立绘、总榜每行的头像）。
        *

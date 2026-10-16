@@ -1278,43 +1278,111 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   font-size: 12px;
 }
 .footer p { margin: 0; }
-/* 版本号内联在页脚同一段里：独占一行会让页脚高度随宽度变化，
-   而页面高度一变就可能多出/少掉一条滚动条，进而改变内容宽度。 */
-.footer-version { white-space: nowrap; opacity: 0.85; }
 /* ---------------------------------------------------------------------------
-   「检查更新」（用户 2026-10-14 第 5 条）
+   版本号 + 「检查更新」（用户 2026-10-16 第 7 条）
 
-   与版本号同在页脚那一行里，做成一个**朴素的小链接按钮**：页脚是说明性文本，
-   在这里放一个实心按钮会把注意力从「这是一个本地工具」上抢走。
-   结果那一行（`.footer-update-result`）跟在按钮后面，更新时还会多一个「前往下载」外链。
+   原话：「版本号、检查更新应显示在页面上方的标题栏较为显眼的地方，提示及时更新」。
+   所以它们从页脚搬到了顶栏（`header.topbar` 的 `.topbar-actions` 第一格），页脚那两处
+   **已删除**（别在两处各放一份）。这一块必须是 `.topbar-actions` 的 flex 子项里
+   **宽度最稳**的那个：版本号是短字符串、按钮文案最多到「有新版本 v4.6.108」，
+   而分页签 + 状态胶囊 + 退出按钮在窄屏下会换行 —— 见下面 620px 那段。
+
+   更新结果不再占用标题栏的宽度：`.topbar-update-result` 绝对定位在这一块**下方**，
+   长句子（「发现新版本 …，前往下载」）不会把顶栏撑坏。
    --------------------------------------------------------------------------- */
-.footer-update {
-  margin-left: 6px;
-  padding: 0 6px;
+.topbar-version {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  /* 不参与压缩：版本号被挤成两行比换行更难看，窄屏的处置见 620px 媒体查询。 */
+  flex: none;
+}
+.topbar-version-text {
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.2px;
+}
+/* 「检查更新」：顶栏里的小按钮，比页脚那版显眼（用户要「较为显眼的地方」），
+   但仍是描边风格 —— 它是个辅助动作，不该比「角色信息 / 抽卡推荐」两个分页签还重。 */
+.topbar-update {
+  padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.03);
   color: var(--text-dim);
   font: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
+  white-space: nowrap;
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
-.footer-update:hover:not(:disabled),
-.footer-update:focus-visible {
+.topbar-update:hover:not(:disabled),
+.topbar-update:focus-visible {
   border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.07);
   color: var(--text);
 }
 /* 请求期间禁用：GitHub 直连偶尔要好几秒，不给反馈用户就会连点（见 `checkUpdate()`）。 */
-.footer-update:disabled { opacity: 0.5; cursor: default; }
-.footer-update-result { margin-left: 6px; }
-.footer-update-result.is-ok { color: var(--success); }
-.footer-update-result.is-update { color: var(--gold); }
-.footer-update-result.is-err { color: var(--danger); }
-.footer-update-result a {
+.topbar-update:disabled { opacity: 0.5; cursor: default; }
+/*
+   ⚠️「及时更新」的**高亮态**（用户第 7 条的验收点）：检查更新发现 GitHub 上有更新的
+   `status: 'update'` 时，`renderUpdateResult()` 给按钮与版本号一起加 `is-outdated`。
+   金色 + 发光是这一页里「值得立刻看一眼」的既有语汇（`.pill-wait` / `.brand-mark-glyph`
+   都用它），所以不新造颜色。`prefers-reduced-motion` 下不闪，静态高亮仍然可见。
+*/
+.topbar-version.is-outdated .topbar-version-text {
+  color: var(--gold-bright);
+  font-weight: 600;
+}
+.topbar-update.is-outdated {
+  border-color: var(--gold-bright);
+  background: rgba(240, 198, 116, 0.16);
+  color: var(--gold-bright);
+  font-weight: 600;
+  animation: topbar-update-pulse 2.4s ease-in-out infinite;
+}
+@keyframes topbar-update-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 198, 116, 0); }
+  50% { box-shadow: 0 0 12px 0 rgba(240, 198, 116, 0.55); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .topbar-update.is-outdated { animation: none; }
+}
+/* 结果气泡：挂在这一块下方、右对齐，浮在内容之上（不占标题栏高度）。
+   `min-width` 用 `fit-content` 的自然宽度即可，`max-width` 防止长句子横到屏幕外。 */
+.topbar-update-result {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  max-width: min(420px, 86vw);
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: normal;
+}
+.topbar-update-result.is-ok { color: var(--success); }
+.topbar-update-result.is-update { color: var(--gold-bright); }
+.topbar-update-result.is-err { color: var(--danger); }
+.topbar-update-result a {
   margin-left: 4px;
   color: var(--cyan);
   text-decoration: underline;
+}
+
+/* 窄屏（用户第 7 条：别把标题栏挤坏）：标题栏那一行本来就挤了分页签 + 状态胶囊 +
+   退出按钮，再塞版本区必然换行。这里让 `.topbar-actions` 允许换行、并把**品牌副标题**
+   先收起来给它们让位；版本区自己 `flex: none` 不掉行 —— 版本号与按钮始终看得见。 */
+@media (max-width: 760px) {
+  .topbar { flex-wrap: wrap; }
+  .topbar-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .brand-text p { display: none; }
 }
 
 /* ==========================================================================

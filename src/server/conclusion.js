@@ -10,7 +10,8 @@
 // 「按副本把数据取齐 + 把中文名补上」。
 import { archiveFrontierAll, archiveIndex, archiveTeams, loadI18n, zhName } from './archive.js';
 import {
-  buildConclusion, eidolonTierOf, normalizeDrawWeights, normalizeHiddenCosts, VERSION_WINDOW,
+  buildConclusion, EIDOLON_TIERS, eidolonTierOf, normalizeDrawWeights, normalizeHiddenCosts,
+  VERSION_WINDOW,
 } from '../../public/scripts/advice.js';
 
 /** 结论覆盖的副本顺序（按游戏解锁顺序）。 */
@@ -717,21 +718,26 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     // `versatilityMembers`（老字段）**保留**，取 `hit[0]` 那一档的名单 —— 它是这条接口
     // 从 v4.6.97 起的公开形状，`tools/e2e-test.mjs` 与老前端都在读它；语义退化成
     // 「最佳那条配装所属档位的名单」，而新前端一律走 `versatilityByTier`。
+    // ⚠️ **2026-10-16 起一个角色只有一份名单**（用户第 3 条：只看 E0/E1/E2 的平均值、
+    //    E6 完全不参与，并把这个结果固定成该角色的**全局泛用性**）：名单就是该角色
+    //    E0/E1/E2 三档队友的**并集**，四个档位索引到同一份 —— 与算分用的那个原始量同源。
+    //    （2026-10-14~15 它曾是「按星魂档各一份」，那一套已被第 3 条推翻；按档索引的形状
+    //    保留只为载荷兼容，界面仍按 `byTier[档] ?? 整榜` 取。）
+    //
+    // `versatilityMembers`（老字段）**保留**，取 `hit[0]` 那条的名单（现在四条完全相同）——
+    // 它是这条接口从 v4.6.97 起的公开形状，`tools/e2e-test.mjs` 与老前端都在读它。
     versatilityMembers: hit[0]?.versatilityMembers ?? null,
     versatilityByTier: (() => {
+      const unit = hit.find((u) => Array.isArray(u.versatilityMembers)) || null;
+      if (!unit) return null;
       const byTier = {};
-      for (const unit of hit) {
-        const tier = String(eidolonTierOf(unit.eidolon));
-        // 同一个档在一个角色上可能有多条配装（不同光锥）。⚠️ 2026-10-15 起原始量按
-        // 版本/关卡双重加权、随整包自己的证据走，同档不同配装不再共享同一个数 ——
-        // 取**最大**的那条（这一档攒下的最宽关系网），与 teamPlan 的档位表同一规则。
-        const raw = Number(unit.versatilityRaw);
-        if (byTier[tier] && !(raw > byTier[tier].raw)) continue;
-        const members = unit.versatilityMembers;
-        if (!Array.isArray(members)) continue;
-        byTier[tier] = { raw: Number.isFinite(raw) ? raw : members.length, members };
+      for (const tier of EIDOLON_TIERS) {
+        byTier[String(tier)] = {
+          raw: Number(unit.versatilityRaw) || 0,
+          members: unit.versatilityMembers,
+        };
       }
-      return Object.keys(byTier).length ? byTier : null;
+      return byTier;
     })(),
     // 三个分项的归一上下限：面板浮层也要写「得分 = 100 ×（原始量 − 最小）÷（最大 − 最小）」，
     // 而面板这条路上界面**可能根本没有加载过结论**（用户直接在「角色信息」页点开的）。
