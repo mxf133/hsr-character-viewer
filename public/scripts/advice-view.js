@@ -5,7 +5,9 @@
 //   ① 战斗记录（米游社官方数据）
 //   ② 综合结论 · 该抽什么
 //        · 角色总榜（**纯黑塔网投稿口径**，完全不看你的角色池）
-//        · 权重（两大类：**关卡权重** 5 个副本 + **抽卡权重** 强度/性价比）
+//        · 权重（**三大类**：关卡权重 5 个副本 + 抽卡权重 强度/性价比/泛用性
+//          + 版本权重 6 个槽位 —— 用户 2026-10-16 第 3 条加了第三类，
+//          三组各自占一行）
 //        · 抽卡方案（**队伍口径**：按你的角色池算「照抄哪支队最划算」+ 补金顺序）
 //   ③ 环境统计 · 上场率（按当前选中的副本 / 版本）
 //
@@ -25,12 +27,24 @@
 // 服务端的 `buildConclusion` 里 —— 只在浏览器里加权会让收敛选错代表整包。
 // 所以改它要重算结论（与关卡权重、隐金设置同一条路），见输入框的接线。
 //
+// ⚠️ **版本权重（最新版 / −1 版 … −5 版）是第三类权重**（用户 2026-10-16 第 3 条）：
+// 每个副本窗口里「从最新往前 6 个版本」各占多少（默认 `3:2.5:2:1.5:1:0.5`）。
+//   * 它决定服务端现算的 `seasonWeights`，客户端再拿那一份做跨版本加权 ——
+//     所以同样**必须进服务端请求**（与抽卡权重同一条路，漏传就是「界面静默显示旧结果」）；
+//   * 槽位**按下标**、不绑定版本号：黑塔网加一版就整体前移，所以界面只能写
+//     「最新版 / −1 版 / …」；而「最新版」是**逐副本**的（4.5 在混沌与异相仲裁里不是同一期）；
+//   * 它**不做「和归一到 1」**（`normalizeVersionWeights` 明确不做），界面印的是原值比例。
+//
 // 2026-10 删掉的两节：「你的补强路径」与「推荐阵容 · 按金数分档」——前者被
 // 「抽卡方案」完全覆盖，后者的信息在「性价比总榜 + 环境统计」里已经给全。
 import {
   EVIDENCE_LABEL, MODE_ORDER, ENV_WEIGHT_ROWS, envWeightDefaults,
   // 抽卡权重（用户 2026-10-12 第 2、3 条）：旋钮清单与默认值都只有 advice.js 那一份。
   DRAW_WEIGHT_ROWS, drawWeightDefaults, normalizeDrawWeights,
+  // 版本权重（用户 2026-10-16 第 3 条）：**第三类**权重 —— 每个副本窗口里「从最新往前
+  // 6 个版本」各占多少。旋钮清单（`VERSION_WEIGHT_ROWS`）、默认表与读数规则同样只有
+  // `advice.js` 那一份（服务端 `archive.js` 读的也是它，两边必须同源）。
+  VERSION_WEIGHT_ROWS, versionWeightDefaults, versionWeightValues, normalizeVersionWeights,
   formatRate, frontierFactorsOf, avLinesOf, metricShortText, metricValueText, ownedCharacters,
   ownedLightCones, perfAnchorsOf, perfLineWeightsOf, scorePercent,
   eidolonsOf, lightConeRanksOf, TIER_PLACEHOLDER, tierLabelsOf, tierMoveText, tierTextOf,
@@ -82,9 +96,12 @@ const el = {
   frontierWeightRow: $('adviceFrontierWeightRow'),
   frontierWeightsMeta: $('adviceFrontierWeightsMeta'),
   frontierWeightsReset: $('adviceFrontierWeightsReset'),
-  /** 抽卡权重那一行（强度 / 性价比，只影响抽卡方案；用户 2026-10-12 第 2、3 条）。 */
+  /** 抽卡权重那一行（强度 / 性价比 / 泛用性；用户 2026-10-12 第 2、3 条 + 2026-10-13 第 1 条）。 */
   drawWeightRow: $('adviceDrawWeightRow'),
   drawWeightsMeta: $('adviceDrawWeightsMeta'),
+  /** 版本权重那一行（6 个版本槽位；用户 2026-10-16 第 3 条）。 */
+  versionWeightRow: $('adviceVersionWeightRow'),
+  versionWeightsMeta: $('adviceVersionWeightsMeta'),
   /** 隐金设置（权重块下方的按钮 + 它旁边的状态行）。 */
   hiddenCostsOpen: $('adviceHiddenCostsOpen'),
   hiddenCostsMeta: $('adviceHiddenCostsMeta'),
@@ -123,6 +140,15 @@ const LEGACY_WEIGHTS_KEY = 'hsr.advice.weights';
  */
 const DRAW_WEIGHTS_KEY = 'hsr.advice.drawWeights';
 /**
+ * **版本权重**（每个副本窗口里最新往前 6 个版本各占多少）的本地存档键
+ * （用户 2026-10-16 第 3 条）。
+ *
+ * ⚠️ 与抽卡权重一样是**长期偏好**，必须跨会话保留；但形状是**长度 6 的数组**
+ * （下标 0 = 最新版），不是对象 —— 读回时一律过 `versionWeightValues()`（缺槽位 /
+ * 非法值按默认补、空串 = 0），所以老存档、短数组、多给的值都退化成安全形状。
+ */
+const VERSION_WEIGHTS_KEY = 'hsr.advice.versionWeights';
+/**
  * 隐金设置的本地存档键（用户 2026-10-11）。
  *
  * 与权重一样存 localStorage：这是一个**长期偏好**（「这些角色我有，别再算它们的钱」），
@@ -159,10 +185,22 @@ const state = {
    * 与算分那条链分叉：比如「两个都清空」到底算等权还是算 0）。
    */
   drawWeights: { ...drawWeightDefaults() },
+  /**
+   * **版本权重**（用户 2026-10-16 第 3 条）：长度 6 的**数组**，下标 0 = 该副本最新版。
+   *
+   * ⚠️ 存的是用户敲进去的**原值**（默认 `[3, 2.5, 2, 1.5, 1, 0.5]`），不做「和归一到 1」
+   * —— 它只有相对大小有意义，而界面上要印原值（与 `normalizeVersionWeights` 同一条
+   * 约定：整体乘个常数不改变任何结果）。
+   * ⚠️ 槽位**不绑定具体版本号**：黑塔网加一版之后整张表前移（下标 0 从 4.6 变成 4.7），
+   * 所以界面只能写「最新版 / −1 版 / …」。
+   */
+  versionWeights: versionWeightDefaults(),
   /** 权重输入的防抖计时器。 */
   weightsTimer: null,
   /** 抽卡权重的防抖计时器（与副本权重分开：改一个不该取消另一个的重算）。 */
   drawWeightsTimer: null,
+  /** 版本权重的防抖计时器（同上：三类旋钮各一个，改一个不该取消另一个的重算）。 */
+  versionWeightsTimer: null,
   /**
    * 隐金设置（用户 2026-10-11）：五个布尔，`{ gift, giftCone, exchange, exchangeCone, standard }`。
    *
@@ -1065,10 +1103,14 @@ const conclusionKey = () => {
     `hidden[${hiddenCostsSignature()}]`,
     // 抽卡权重（用户 2026-10-13 第 2 条起它进服务端请求，所以必须进这个键）。
     `draw[${drawWeightsSignature()}]`,
+    // 版本权重（用户 2026-10-16 第 3 条）：它决定每个副本的 `seasonWeights`，而那是
+    // 服务端现算、客户端做跨版本加权的输入 —— 漏进这个键就是「改了旋钮、界面静默显示
+    // 旧结果」（v4.6.93 那类 bug）。
+    `ver[${versionWeightsSignature()}]`,
   ].join('|');
 };
 
-// ------------------------------------------------- 权重（两大类：关卡权重 / 抽卡权重）
+// ------------------------------------ 权重三大类（关卡 / 抽卡 / 版本，三组各占一行）
 
 /**
  * **关卡权重**那一类的标题、网格与说明节点（`scope` 恒为 `frontier`，见 WEIGHT_SCOPE）。
@@ -1190,11 +1232,13 @@ const renderWeightRow = (scope) => {
  *
  * ⚠️ 2026-10-11 起**副本权重只有一套**（用户第 10 轮「去掉方案权重那一行」）：角色总榜
  * 与抽卡方案的强度侧都吃这一套。参数 `scope` 保留是为了不改调用点，值恒为 `'frontier'`。
- * 抽卡权重是**另一类**（`renderDrawWeightRow`），它与副本权重一起被「恢复默认」清掉。
+ * 抽卡权重是**另一类**（`renderDrawWeightRow`），它与副本权重一起被「恢复默认」清掉；
+ * 版本权重是**第三类**（`renderVersionWeightRow`，用户 2026-10-16 第 3 条），同进同出。
  */
 const renderWeightRows = (scope = 'frontier') => {
   renderWeightRow(scope);
   renderDrawWeightRow();
+  renderVersionWeightRow();
 };
 
 // ------------------------------------------------- 抽卡权重（强度 / 性价比）
@@ -1283,7 +1327,7 @@ const renderDrawWeightsMeta = () => {
 
 /**
  * 画抽卡权重的**三个**输入框（用户 2026-10-12 第 2 条 + 2026-10-13 第 1 条：
- * 权重分两大类，这是第二类）。
+ * 权重分三类，这是第二类）。
  *
  * 旋钮清单来自 `advice.js` 的 `DRAW_WEIGHT_ROWS`（**只有那一份**），所以再加旋钮
  * 依然只改那一张表。输入框的值是**用户敲的原值**，比例由 `renderDrawWeightsMeta()` 印。
@@ -1313,6 +1357,130 @@ const renderDrawWeightRow = () => {
   }
   renderDrawWeightsMeta();
 };
+
+// ------------------------------------------------- 版本权重（最新版 / −1 版 … −5 版）
+
+/**
+ * 读版本权重的 6 个输入框 → **长度 6 的数组**（原值，不归一化）。
+ *
+ * ⚠️ 边界规则与 `weightInputOf` / `versionWeightValues` **同一套**：空串 = 0
+ * （用户把某一版清空 = 那一版不进窗口）、非法值忽略并保留默认。默认值直接取
+ * `advice.js` 的 `versionWeightDefaults()`（与另外两组同一个形状），界面**不抄第二份表**。
+ *
+ * 返回数组而不是对象：`state.versionWeights` 与请求体、服务端的
+ * `normalizeVersionWeights()` 都是数组形状（下标即槽位）。
+ */
+const readVersionWeights = (grid) => {
+  const out = versionWeightDefaults();
+  if (!grid) return out;
+  for (const input of grid.querySelectorAll('input.advice-version-weight')) {
+    const row = VERSION_WEIGHT_ROWS.find((r) => r.key === input.dataset.key);
+    if (!row) continue;
+    // 空串 = 用户清空了输入框 → 0（与 `weightInputOf` 同一条约定）。
+    const n = weightInputOf(input.value);
+    if (n !== null) out[row.index] = n;
+  }
+  return out;
+};
+
+/**
+ * 从 localStorage 恢复版本权重（没有存档 / 字段不合法 → 默认表）。
+ *
+ * ⚠️ 存档形状是数组，但**老存档可能是别的形状**（对象 `{'0':3}`、只有 3 个槽位的短
+ * 数组、甚至一个数字）—— 一律交给 `versionWeightValues()` 判：它两种形状都收、
+ * 缺的按默认补、非法的忽略。所以这里不做任何自己的校验，避免与算分那一份分叉。
+ */
+const loadVersionWeights = () => {
+  let parsed = null;
+  try { parsed = JSON.parse(localStorage.getItem(VERSION_WEIGHTS_KEY) || 'null'); } catch { parsed = null; }
+  if (parsed === null || parsed === undefined) return versionWeightDefaults();
+  return versionWeightValues(parsed);
+};
+
+const saveVersionWeights = () => {
+  try {
+    localStorage.setItem(VERSION_WEIGHTS_KEY, JSON.stringify(state.versionWeights || []));
+  } catch {
+    // 隐私模式 / 配额满：记不住就记不住，不影响本次会话（与 saveWeights 同一条理由）。
+  }
+};
+
+/**
+ * 版本权重那行状态：印**实际生效的值**（用户只有相对大小可调，所以光看输入框里的原值
+ * 看不出「谁占多少」——这里印的是过了 `normalizeVersionWeights()` 之后的生效值）。
+ *
+ * ⚠️ 与另外两组不同，这里不印百分比而印 `最新版 3 : −1 版 2.5 : …` 这种**比值串**
+ * —— 因为它**不做归一到 1**（`normalizeVersionWeights` 明确不做），百分比会误导用户
+ * 以为总和是 100。标签逐槽位印（来自 `VERSION_WEIGHT_ROWS`，不抄第二份），
+ * 这样「哪一版是 0」一眼可见。
+ *
+ * ⚠️ 措辞必须点明「**每个副本算各自的**」：`4.5` 在混沌与异相仲裁里不是同一期，
+ * 所以「最新版」是逐副本的（槽位按下标、不绑定版本号）。
+ */
+const renderVersionWeightsMeta = () => {
+  const meta = el.versionWeightsMeta;
+  if (!meta) return;
+  const value = normalizeVersionWeights(state.versionWeights || []);
+  const defaults = versionWeightDefaults();
+  const changed = value.some((v, i) => Math.abs(v - (defaults[i] ?? 0)) > 1e-9);
+  // 逐个槽位印「标签 原值」（与另外两组同一个形状：**印生效的那个数**，不让用户拿输入框
+  // 里的原值自己脑补）。旋钮清单来自 `VERSION_WEIGHT_ROWS`，所以标签也**不抄第二份**。
+  const parts = VERSION_WEIGHT_ROWS
+    .map((row) => `${row.label} ${formatWeight(value[row.index])}`)
+    .join(' : ');
+  meta.textContent = `每个副本各自算：${parts}`
+    + (changed ? '' : '（默认）')
+    + '；某版设 0 = 那一版不进窗口。改它会重算总榜。';
+};
+
+/**
+ * 画版本权重的**六个**输入框（用户 2026-10-16 第 3 条：第三类权重）。
+ *
+ * 旋钮清单来自 `advice.js` 的 `VERSION_WEIGHT_ROWS`（**只有那一份**）—— 它同时被服务端
+ * `archive.js` 读，所以标签与槽位在这里绝不会与生效的那张表分叉。输入框的值是用户敲的
+ * 原值（不做归一），比例由 `renderVersionWeightsMeta()` 印。
+ */
+const renderVersionWeightRow = () => {
+  const grid = el.versionWeightRow;
+  if (!grid) return;
+  const defaults = versionWeightDefaults();
+  const current = state.versionWeights || [];
+  grid.innerHTML = '';
+  for (const row of VERSION_WEIGHT_ROWS) {
+    const label = document.createElement('label');
+    label.className = 'field field-inline advice-weight-field';
+    label.appendChild(text('span', '', row.label));
+    const input = document.createElement('input');
+    input.className = 'advice-version-weight';
+    input.type = 'number';
+    input.min = '0';
+    input.max = '99';
+    input.step = '0.25';
+    input.inputMode = 'decimal';
+    input.dataset.key = row.key;
+    input.value = String(current[row.index] ?? defaults[row.index] ?? 0);
+    // ⚠️ 标题写清「距**该副本**最新版第 N 版」：槽位是按下标的，「最新版」逐副本不同
+    // （4.5 在混沌与异相仲裁里不是同一期），写死版本号第二天就会说假话。
+    input.setAttribute('aria-label', `${row.label}（版本权重）`);
+    input.title = `距**该副本**最新版${row.index === 0 ? '' : `第 ${row.index} 版`}（每个副本各有一套版本号）`;
+    label.appendChild(input);
+    grid.appendChild(label);
+  }
+  renderVersionWeightsMeta();
+};
+
+/**
+ * 版本权重的签名（进 `conclusionKey`、角色面板的缓存键与请求）。
+ *
+ * ⚠️ 它**必须进 `conclusionKey`**：`normalizeVersionWeights` 虽然不做归一到 1，但它
+ * 决定每个副本的 `seasonWeights`（服务端现算），而总榜/详情窗口的跨版本加权都吃它 ——
+ * 漏进这个键就是「改了旋钮、界面静默显示旧结果」那类 bug（v4.6.93 踩过）。
+ *
+ * 用**生效后**的值（`normalizeVersionWeights`）签名：全 0 与默认表是同一份生效结果，
+ * 不该触发两次重算。
+ */
+const versionWeightsSignature = () => normalizeVersionWeights(state.versionWeights || [])
+  .map((v) => Number(v).toFixed(4)).join(',');
 
 // ------------------------------------------------- 隐金设置（总榜权重下方那个按钮）
 //
@@ -2420,11 +2588,16 @@ const fetchPacks = async (charKey) => {
   // ⚠️ **抽卡权重也必须进**（用户 2026-10-13 第 2 条）：面板给的是**角色得分**，
   // 而它是「三个分项按抽卡权重加权的**榜内归一分**」—— 归一用的极值取自整张表，
   // 权重不同，同一个整包的面板分就会与徽标分不一致。
+  //
+  // ⚠️ **版本权重同理**（用户 2026-10-16 第 3 条）：面板里的「跨版本发挥」那一列
+  // 按 `seasonWeights` 算，而它是服务端拿版本权重现算的 —— 漏进缓存键时用户改了版本
+  // 权重、总榜重算了，点开角色详情却仍是旧权重那一份分（与上面两类完全同一个症状）。
   const weights = activeWeights('frontier');
   const wSig = Object.entries(weights).sort().map(([k, v]) => `${k}=${v}`).join(',');
   const hSig = hiddenCostsSignature();
   const dSig = drawWeightsSignature();
-  const cacheKey = `${key}|${wSig}|${hSig}|${dSig}`;
+  const vSig = versionWeightsSignature();
+  const cacheKey = `${key}|${wSig}|${hSig}|${dSig}|${vSig}`;
   const hit = packsCache.get(cacheKey);
   if (hit) return hit;
   try {
@@ -2437,6 +2610,16 @@ const fetchPacks = async (charKey) => {
     // 抽卡权重：接口默认 = 三等分，所以界面这把也**总是带**（它一定有值），
     // 免得用户调过之后面板仍按默认权重算（这类「权重没带过去」的 bug 修过两次）。
     params.set('drawWeights', JSON.stringify(normalizeDrawWeights(state.drawWeights || {})));
+    // 版本权重（用户 2026-10-16 第 3 条）：接口默认 = 默认表，界面这把**总是带**
+    // （它一定有值）—— 同上一条的理由，这类「权重没带过去」的 bug 已经修过两次。
+    // ⚠️ 形状是**数组**（`normalizeVersionWeights` 返回长度 6 的数组），别发成对象。
+    // ⚠️ **服务端 `/api/archive/packs` 那条路目前还不解析这个查询参数**（只有
+    //    `/api/archive/conclusion` 吃它，见 `src/server/app.js`）。所以面板里的
+    //    「跨版本发挥」仍按默认表算 —— 界面这条线已经发到位，缺的是路由那三行
+    //    （解析 `versionWeights` → 透传 `archiveCharacterPacks` → `archiveFrontierAll`）。
+    //    在那之前**缓存键仍然必须带它**：否则用户改完版本权重、点开角色详情，
+    //    看到的是上一个权重的缓存，连「服务端没吃」这个事实都看不出来。
+    params.set('versionWeights', JSON.stringify(normalizeVersionWeights(state.versionWeights || [])));
     const res = await fetch(`/api/archive/packs?${params.toString()}`,
       { headers: { Accept: 'application/json' } });
     const data = await res.json().catch(() => null);
@@ -4518,6 +4701,10 @@ const loadConclusion = async () => {
         // 而总榜的「每角色只留一条」收敛在服务端 —— 所以**必须显式发**。
         // 服务端会回显归一化后的那一份（`data.drawWeights`），界面据此印比例。
         drawWeights: { ...(state.drawWeights || {}) },
+        // 版本权重（用户 2026-10-16 第 3 条）：6 个槽位的**数组**（下标 0 = 每个副本
+        // 自己的最新版）。服务端按它现算每个副本的 `seasonWeights`，客户端再拿那份
+        // 做跨版本加权 —— 所以**必须显式发**（不传 = 默认表）。
+        versionWeights: [...(state.versionWeights || [])],
       }),
     });
     const data = await res.json().catch(() => null);
@@ -4767,9 +4954,11 @@ export const mountAdviceView = (options = {}) => {
   // 角色面板浮层（战斗记录里点角色）：关闭 / 背景 / ESC
   wireRecordPanel();
 
-  // 权重两大类：先恢复用户上次定下的倾向（关卡权重 + 抽卡权重），再把输入框画出来。
+  // 权重三大类：先恢复用户上次定下的倾向（关卡权重 + 抽卡权重 + 版本权重），再把
+  // 三组输入框画出来（用户 2026-10-16 第 3 条起是三类，三组各占一行）。
   state.weights = loadWeights();
   state.drawWeights = loadDrawWeights();
+  state.versionWeights = loadVersionWeights();
   renderWeightRows();
 
   // 隐金设置（用户 2026-10-11）：先读存档（没有存档 = 五项全勾），再画状态行、
@@ -4797,7 +4986,7 @@ export const mountAdviceView = (options = {}) => {
     state.season = el.season.value;
     loadStats();
   });
-  // 权重两大类之一：**关卡权重**输入 → 存本地 → 防抖后请服务端按新权重重算。
+  // 权重三大类之一：**关卡权重**输入 → 存本地 → 防抖后请服务端按新权重重算。
   //
   // ⚠️ 2026-10-11 起**只有 frontier 这一套**（用户第 10 轮「去掉方案权重那一行」）：
   // 角色总榜与抽卡方案的「强度得分」都吃它，所以这一行会同时改两块 —— 这是口径使然
@@ -4828,7 +5017,7 @@ export const mountAdviceView = (options = {}) => {
       });
     }
   }
-  // 权重两大类之二：**抽卡权重**输入（用户 2026-10-12 第 2、3、4 条 + 2026-10-13 第 1、2 条）。
+  // 权重三大类之二：**抽卡权重**输入（用户 2026-10-12 第 2、3、4 条 + 2026-10-13 第 1、2 条）。
   //
   // ⚠️ 它**现在也进服务端请求**（v4.6.95 起，与 v4.6.94 那版相反）：用户 2026-10-13 第 2 条
   // 要求角色总榜受三个权重影响，而总榜的「每角色只留一条」收敛在服务端
@@ -4856,26 +5045,58 @@ export const mountAdviceView = (options = {}) => {
       });
     }
   }
+  // 权重三大类之三：**版本权重**输入（用户 2026-10-16 第 3 条）。
+  //
+  // ⚠️ 它与抽卡权重一样**进服务端请求**：它决定每个副本窗口里「最新往前 6 个版本」
+  // 各占多少，而服务端在当前请求里现算 `seasonWeights`，客户端再拿那一份做跨版本加权
+  // （总榜的整包分、详情窗口的「跨版本发挥」都是这条链的下游）。
+  // 所以走的还是同一条路：防抖 → `packsCache.clear()` → `loadConclusion()` 重算。
+  {
+    const grid = el.versionWeightRow;
+    if (grid) {
+      grid.addEventListener('input', () => {
+        state.versionWeights = readVersionWeights(grid);
+        saveVersionWeights();
+        renderVersionWeightsMeta();
+        const meta = el.versionWeightsMeta;
+        if (meta) meta.classList.add('is-pending');
+        clearTimeout(state.versionWeightsTimer);
+        state.versionWeightsTimer = setTimeout(async () => {
+          // 三处旋钮做**逐字一致**的一件事（关卡权重 / 抽卡权重那两处也一样）：
+          // 角色面板那份「全部配队」是按三类权重 + 隐金缓存的，旋钮一变就必须作废 ——
+          // 否则同一个角色会一直吃旧权重算出来的分（v4.6.69 / v4.6.93 修的就是这一类）。
+          packsCache.clear();
+          if (state.index) await loadConclusion();
+          else if (state.conclusion) renderTeamPlan(state.conclusion);
+          if (meta) meta.classList.remove('is-pending');
+        }, WEIGHTS_DEBOUNCE);
+      });
+    }
+  }
   /**
-   * 「恢复默认」= 清掉**两大类**权重（关卡权重回到 `envWeightDefaults()`、抽卡权重回到
-   * `drawWeightDefaults()`）。
+   * 「恢复默认」= 清掉**三大类**权重（关卡权重回到 `envWeightDefaults()`、抽卡权重回到
+   * `drawWeightDefaults()`、版本权重回到 `versionWeightDefaults()`）。
    *
-   * 为什么一个按钮管两块：它们本来就是一张卡里的同一件事（用户第 2 条：「权重分为两大类」），
-   * 而恢复默认是「我调乱了、回到起点」的动作 —— 分成两个按钮只会让人以为还有第三类。
+   * 为什么一个按钮管三块：它们本来就是一张卡里的同一件事（用户第 2 条：「权重分为两大类」，
+   * 2026-10-16 第 3 条又加了第三类），而恢复默认是「我调乱了、回到起点」的动作 ——
+   * 分成三个按钮只会让人以为它们是三件互不相关的事。
    */
   const resetWeights = async (scope) => {
     state.weights[scope] = {};
     state.drawWeights = { ...drawWeightDefaults() };
+    state.versionWeights = versionWeightDefaults();
     saveWeights();
     saveDrawWeights();
+    saveVersionWeights();
     renderWeightRow(scope);
     renderDrawWeightRow();
-    // ⚠️ **和两个输入框处理器做同一件事**（用户 2026-10-13 第 10 条那类 bug）：这一下同样
-    // 换掉了「关卡权重 + 抽卡权重」两个缓存键里的旋钮，所以角色面板 / 角色得分详情那份
-    // 「该角色的全部配队」缓存必须一起作废。漏了它的症状与关卡权重那条一模一样
+    renderVersionWeightRow();
+    // ⚠️ **和三个输入框处理器做同一件事**（用户 2026-10-13 第 10 条那类 bug）：这一下同样
+    // 换掉了「关卡权重 + 抽卡权重 + 版本权重」三个缓存键里的旋钮，所以角色面板 / 角色得分
+    // 详情那份「该角色的全部配队」缓存必须一起作废。漏了它的症状与关卡权重那条一模一样
     // ——「点了恢复默认、总榜回去了，点开角色详情还是刚才那组自定义权重算出来的分」，
-    // 而且这个按钮是**两套权重一起清**，漏掉时错得更久。
-    // 旧注释里只写了「清掉两大类权重」，没人提缓存，所以这里把理由写下来（避免下次又漏）。
+    // 而且这个按钮是**三套权重一起清**，漏掉时错得更久。
+    // 2026-10-16 加上版本权重时这条注释同样适用，所以把「三」一起改掉（避免下次又漏）。
     packsCache.clear();
     if (state.index) await loadConclusion();
   };

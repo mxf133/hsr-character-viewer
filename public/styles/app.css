@@ -2962,12 +2962,16 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.025);
 }
-/* 两大类：宽屏并排两列，窄屏自动换成一列（`auto-fit`，与 `.advice-weights-grid` 同套路）。 */
+/* 三大类：**每组各占一行**（用户 2026-10-16 第 3 条：「关卡权重/抽卡权重/版本权重，
+   这 3 列分别换行，让用户输入」）。
+   ⚠️ 改前是 `repeat(auto-fit, minmax(320px, 1fr))` —— 宽屏会把前两组并排成两列，
+   用户看到的「关卡权重 / 抽卡权重」是左右并排而不是上下三行。现在固定单列，
+   三组**永远竖排**（不跟随宽度变化，窄屏也不会退化成别的形状）。 */
 .advice-weights-groups {
   grid-area: grid;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 12px 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
   min-width: 0;
 }
 /* 每一类自己是「小标题 / 输入框网格 / 摘要」三行；组内的 `.advice-weights-grid` 必须
@@ -3002,11 +3006,22 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   background: var(--cyan);
   vertical-align: middle;
 }
-.advice-weights .advice-weights-group:last-child .advice-weights-subtitle::before {
+/* 三个组的圆点各自一色（用户 2026-10-16 起是**三组**）：关卡 = 青、抽卡 = 紫、
+   版本 = 金。⚠️ 改前是 `:last-child` 一条（那时只有两组，第二条自然是最后一条），
+   加了第三组之后它会落到**版本**那一组上、抽卡退回默认青色 —— 所以改成按下标点名。 */
+.advice-weights .advice-weights-group:nth-child(2) .advice-weights-subtitle::before {
   background: var(--violet);
+}
+.advice-weights .advice-weights-group:nth-child(3) .advice-weights-subtitle::before {
+  background: var(--gold);
 }
 /* 抽卡权重只有两个旋钮，按两列摊开（不要跟着关卡权重那五列走）。 */
 .advice-weights-grid.is-draw { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* 版本权重六个旋钮（最新版 / −1 版 … −5 版）：六个窄输入框**一行放下**（用户 2026-10-16
+   第 3 条）。标签本身很短（`−3 版`），所以六列比关卡权重那五列还窄也行 ——
+   窄屏（≤900px）由 media 里的 `auto-fit` 列数兜底。输入框宽度写在下面
+   （**必须在 `.is-compact .field-inline input` 之后**，见那一处的注释）。 */
+.advice-weights-grid.is-version { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 /* 紧凑版：标题 / 五个输入框 / 恢复默认挤在同一行，「已改」摘要单独一行。
    摘要用 100% flex-basis 固定换行 —— 让行数只由「改没改」决定，不会因为
    文案长短一会儿一行一会儿两行（页面高度会跟着抖）。 */
@@ -3088,6 +3103,13 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+/* 版本权重那六个框再窄一点（46px）：六列摊在同一行，`0.5` / `2.5` 都放得下。
+   ⚠️ 这条**必须**排在上面 `.is-compact .field-inline input`（含 `flex`/`width`）之后，
+   否则被那条的 `flex: 0 0 54px` 覆盖掉（同类特异性下后来者胜）。 */
+.advice-weights.is-compact .advice-weights-grid.is-version input {
+  flex: 0 0 46px;
+  width: 46px;
+}
 .advice-weights input[type='number'],
 #adviceBudget {
   -moz-appearance: textfield;
@@ -3133,6 +3155,12 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
       "meta meta";
   }
   .advice-weights-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  /* ⚠️ 版本权重那六列在窄屏**允许换行**（`.is-version` 的特异性高于上面那条，
+     media query 本身不加特异性 —— 所以必须在这里再写一次，否则窄屏仍是硬 6 列、
+     每个框被压到几十像素）。下限 108px = 格内 18px 内边距 + 标签（`−3 版` ≈ 34px）
+     + 8px 间距 + 46px 输入框 —— 再窄标签就会被 `text-overflow: ellipsis` 吃掉字。
+     宽屏 6 个一行、窄屏自动折成两行。 */
+  .advice-weights-grid.is-version { grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); }
 }
 @media (max-width: 560px) {
   .advice-weights.is-compact {

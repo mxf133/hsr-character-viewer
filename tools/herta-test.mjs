@@ -3876,11 +3876,44 @@ check('⭐ 强度只看「这一关最佳证据那一支队」的行动值，不
   const e = hero.envs[0];
   assert.equal(e.actionValue, 450, '最佳证据那一支队的行动值（卡片上印的就是它）');
   assert.equal(e.avBest, 450, '强度口径必须与卡片上那个行动值**同源**（改前它会取到 0）');
-  const expected = 100 * Math.min(1, perfFactorOf(450, env.tierLines, true, 'target',
-    SCORING.strengthLineWeights));
+  // 450 落在**第二档**（没打出 0 行动值）：本副本强度 = `strengthSecondBandCap × 曲线`。
+  // 顶格档（0 行动值）才给满 100，见下面那条「两档」用例。
+  const expected = SCORING.strengthSecondBandCap * Math.min(1, perfFactorOf(450, env.tierLines,
+    true, 'target', SCORING.strengthLineWeights));
   assert.ok(Math.abs(e.envStrength - expected) < 1e-6,
-    `本副本强度应是 450 行动值折算出来的 ${expected}，实际 ${e.envStrength}`);
-  assert.ok(e.envStrength < 100, `450 > 满分线 300，不该拿满分（实际 ${e.envStrength}）`);
+    `第二档的本副本强度应是 ${SCORING.strengthSecondBandCap} × 曲线(450) = ${expected}，实际 ${e.envStrength}`);
+  assert.ok(e.envStrength < SCORING.strengthSecondBandCap + 1e-9,
+    `450 > 满分线 300，属第二档，不该够到顶格（实际 ${e.envStrength}）`);
+});
+
+check('⭐ 强度两档：打出 0 行动值 = 顶格档 100；没打出 = ≤ 90（用户 2026-10-16 第 1 条）', () => {
+  // 用户原话：「应该是 **29 金 0 行动值 > 48 金 0 行动值 > 其他不足 0 行动值**的队伍，
+  // 也就是**先看行动值，再看是否压金**」。所以「打没打出 0 行动值」必须先于其它比较
+  // 定档：顶格 = 该关 100，第二档 = 上限 90（曲线在 0 附近太平，不隔开会被噪声翻面）。
+  // 夹具：同一个 Hero E0 两支满配队都打出 0 行动值（29 金 / 48 金）→ 都该顶格 100；
+  //       另设一支只差一点点（av=1）的 → 落第二档（< 100）。
+  const availability = {
+    characters: { Hero: { rarity: 5, limited: true } },
+    lightCones: {},
+  };
+  const mk = (cost, av) => ({
+    cost, tier: 'perfect', actionValue: av, season: '4.6',
+    members: [{ char: 'Hero', eidolon: 0 }],
+  });
+  // 每个整包只有一条证据行（各自 av），逐个查它这一关的 envStrength。
+  const strengthOf = (av) => {
+    const out = buildConclusion([envFixture('aa|plight', [], {
+      mode: 'aa', stage: 'plight', season: '4.6',
+      tierLines: { perfect: 300, target: 500 },
+      frontierRows: [mk(29, av)],
+    })], { availability });
+    return out.frontierUnits.find((u) => u.name === 'Hero').envs[0].envStrength;
+  };
+  assert.equal(strengthOf(0), 100, '0 行动值 → 顶格档，本副本强度 100');
+  assert.ok(strengthOf(1) <= SCORING.strengthSecondBandCap + 1e-9,
+    `av=1（没打出 0）应落第二档 ≤ ${SCORING.strengthSecondBandCap}，实际 ${strengthOf(1)}`);
+  // 「顶格 > 第二档」这条主序：0 行动值哪怕配到最贵，也强过只差一点的队伍。
+  assert.ok(strengthOf(0) > strengthOf(1), '顶格档必须严格高于任何第二档');
 });
 
 check('⭐ 泛用性只看 E0/E1/E2 的平均值、固定给所有档位（E6 完全不参与）（用户 2026-10-16 第 3 条）', () => {

@@ -11,7 +11,8 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
-  VERSION_WEIGHTS, VERSION_WINDOW, envWeightOf, versionWeightOf, videoUrlOf,
+  VERSION_WEIGHTS, VERSION_WINDOW, envWeightOf, normalizeVersionWeights, versionWeightOf,
+  videoUrlOf,
 } from '../../public/scripts/advice.js';
 import { applyCharacterIdOverrides } from './character-icon-ids.js';
 import { buildDebutOrder, FORM_AVATAR_ID, DEBUT_ID_ALIASES } from './character-debut.js';
@@ -604,8 +605,16 @@ export const archiveFrontier = async (mode, options = {}) => {
   const idx = seasons.indexOf(wanted);
   const recent = seasons.slice(Math.max(0, idx - windowSize + 1), idx + 1);
   const recentDesc = [...recent].reverse();
-  // 版本权重 = 按下标查表（下标 0 = 该副本最新的版本，权重 3）。见 VERSION_WEIGHTS。
-  const weightOf = (s) => versionWeightOf(recentDesc.indexOf(s));
+  /**
+   * 版本权重 = 按下标查表（下标 0 = 该副本最新的版本）。
+   *
+   * 用户 2026-10-16：这张表**用户自己也能设**（界面上「版本权重」那一行），默认仍是
+   * `VERSION_WEIGHTS`（3 : 2.5 : 2 : 1.5 : 1 : 0.5）。传进来的原值在这里过一次
+   * `normalizeVersionWeights()`（缺的/非法的按默认补齐、全 0 退回默认），**不归一化**
+   * —— 它只有相对大小有意义，整体乘个常数不影响任何结果。
+   */
+  const vWeights = normalizeVersionWeights(options.versionWeights);
+  const weightOf = (s) => versionWeightOf(recentDesc.indexOf(s), vWeights);
 
   // 旧的差距/星魂强度口径仍然只看满分；目标档只进入新的性价比总榜。
   const rows = [];
@@ -618,11 +627,11 @@ export const archiveFrontier = async (mode, options = {}) => {
   // 版本权重（用户第 7 条）：客户端算总榜的「按版本加权」时**必须**用这一份，
   // 不要自己再写一遍 `3:2.5:2:1.5:1:0.5` —— 版本一更新（黑塔网加了新版本），
   // 这张表整体前移，客户端抄一份就会对不上。
-  const seasonWeights = Object.fromEntries(recentDesc.map((s, i) => [s, versionWeightOf(i)]));
+  const seasonWeights = Object.fromEntries(recentDesc.map((s, i) => [s, versionWeightOf(i, vWeights)]));
   const empty = {
     ok: true, pool: 0, merged: 0, seasons: recent,
     versionWindow: VERSION_WINDOW, seasonWeights,
-    characters: {}, eidolons: {}, raw: {}, rawEidolons: {}, frontierRows: [],
+    characters: {}, eidolons: {}, raw: {}, rawEidolons: {}, frontierRows: [], avTeams: [],
   };
   if (!rows.length) return empty;
   // 2) 池 = 窗口内**全部**前沿行（v4.6.78：不再按成本截断「最便宜的那一批」）
@@ -764,6 +773,9 @@ export const archiveFrontierAll = async (envs, options = {}) => {
       // 见 `conclusion.js` 的 `listEnvs` 注释（v4.6.48 修：砂金•戏浪 #14 → #2）。
       season: env.frontierSeason ?? env.season, stage: env.stage || '',
       window: options.window,
+      // 用户自定义的版本权重（2026-10-16）：透传给 `archiveFrontier`，它按这张表
+      // 现算 `seasonWeights`（客户端再拿它做跨版本加权）。不传 = 用默认表。
+      versionWeights: options.versionWeights,
       // ⚠️ v4.6.78 起不再传 `tierLines` / `lowerIsBetter`：它们只服务
       // `observedPackScores`（估算机器），而那套已随「池=全部成绩」一起删除。
     });
@@ -862,6 +874,59 @@ const resolveScope = (data, mode, season, options = {}) => {
 };
 
 /**
+ * 「**行动值前沿**」—— 本关卡最近一版行动值最好的几支队伍（用户 2026-10-16 第 2 条）。
+ *
+ * ## 为什么需要它
+ *
+ * 抽卡推荐的候选池（逐档榜 ∪ 总榜）里的队伍全是**各整包的性价比证据队**。实测那 242 支
+ * 队伍里**没有任何一支**打出过 0 行动值（绝境的 `av` 最低 16、p50 295）—— 因为 0 行动值
+ * 的投稿只出现在 32~48 金的「四 6+5」满配队里，而那些队**永远不会**成为谁的证据队
+ * （它们太贵，性价比轮不到它们）。于是用户要的「抽卡推荐里**各种 0 行动值队伍登顶**」
+ * 根本无从发生：池里压根没有这类队伍。
+ *
+ * 所以这些队伍必须作为候选**单独补进来**：每个关卡按行动值升序取前 `AV_TEAMS_PER_ENV` 支。
+ *
+ * ## 口径
+ *
+ *   * 用**最近一版**的行动值（`newestAv`），不是「跨版本取最小」—— 后者会让两三版前的
+ *     旧 0 行动值一直霸榜（v4.6.104 修过的「吃旧版本红利」）。
+ *   * 版本**窗口**与版本**权重**仍然生效：窗口外的版本根本不在 `recent` 里，
+ *     权重为 0 的版本也不贡献 `historyWeight`（见 `weightOf`）。
+ *   * 同一个阵容（四人配装完全一致）只留一次，取它行动值最低的那一版。
+ *
+ * @returns {Array<{cost:number, av:number, tier:string|null, season:string|null,
+ *                  members:Array<object>}>} 按行动值升序，最多 `AV_TEAMS_PER_ENV` 条。
+ */
+const AV_TEAMS_PER_ENV = 8;
+const buildAvTeams = (frontierByBuild) => {
+  const rosterKeyOf = (members) => (members || [])
+    .map((m) => `${m.char}|${Number(m.eidolon) || 0}|${m.lc || '-'}|${Number(m.superimp) || 1}`)
+    .sort().join('~');
+  const rows = [...frontierByBuild.values()]
+    .filter((r) => Number.isFinite(Number(r.newestAv)) && (r.members || []).length)
+    .sort((a, b) => Number(a.newestAv) - Number(b.newestAv) || Number(a.cost) - Number(b.cost));
+  const out = [];
+  const seen = new Set();
+  for (const r of rows) {
+    const key = rosterKeyOf(r.members);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      cost: Number(r.cost) || 0,
+      av: Number(r.newestAv),
+      tier: r.newestTier || r.tier || null,
+      season: r.newestSeason || null,
+      members: r.members,
+    });
+    if (out.length >= AV_TEAMS_PER_ENV) break;
+  }
+  return out;
+};
+
+/**
+ * `aggregateTeams` —— 一个「模式 × 关卡」的阵容聚合（早期口径，现在服务抽卡方案的
+ * 阵容表与「和主流强阵的差距」）。
+/**
  * 近 N 个版本的阵容 → 跨版本聚合的阵容表。
  *
  * 只把版本当成权重来源，不按版本分别出结论：玩家要用一个账号横跨多个版本。
@@ -923,10 +988,19 @@ const aggregateTeams = (scope, i18n, options = {}) => {
             historyWeight: seasonWeight,
             seasonCount: 1,
             newestSeason: s,
+            // 「最近版本那一次」的行动值（用户 2026-10-16 第 2 条：行动值前沿要用它，
+            // 不能用「跨版本取最小」——那正是 v4.6.104 修掉的「吃旧版本红利」）。
+            // `recent` 是**升序**遍历，所以每遇到更新的版本直接覆盖即可。
+            newestAv: actionValue,
+            newestTier: tier,
           });
         } else {
           previous.historyWeight += seasonWeight;
           previous.seasonCount += 1;
+          if (actionValue !== null) {
+            previous.newestAv = actionValue;
+            previous.newestTier = tier;
+          }
           if (!previous.newestSeason || seasonSort(previous.newestSeason, s) < 0) {
             previous.newestSeason = s;
           }
@@ -1134,6 +1208,9 @@ const aggregateTeams = (scope, i18n, options = {}) => {
     seasonRuns,
     windowRuns,
     frontierRows: withFrontier ? [...frontierByBuild.values()] : undefined,
+    // 「行动值前沿」：本关卡**最近一版**行动值最好的几支队伍（用户 2026-10-16 第 2 条）。
+    // 见 `buildAvTeams` 的注释 —— 它服务「抽卡推荐里各种 0 行动值队伍要能登顶」。
+    avTeams: withFrontier ? buildAvTeams(frontierByBuild) : undefined,
   };
 };
 
@@ -1151,7 +1228,7 @@ export const archiveTeams = async (mode, options = {}) => {
   const i18n = await loadI18n();
   const scope = resolveScope(data, mode, options.season, options);
   if (!scope.ok) return scope;
-  const { teams, seasonRuns, windowRuns, frontierRows } = aggregateTeams(scope, i18n, {
+  const { teams, seasonRuns, windowRuns, frontierRows, avTeams } = aggregateTeams(scope, i18n, {
     withEidoPerf: options.withEidoPerf === true,
     withFrontier: options.withFrontier === true,
   });
@@ -1180,7 +1257,8 @@ export const archiveTeams = async (mode, options = {}) => {
     dist: wantedSeason.dist || null,
     reliable: wantedSeason.reliable !== false,
     teams,
-    ...(options.withFrontier === true ? { frontierRows: frontierRows || [] } : {}),
+    ...(options.withFrontier === true
+      ? { frontierRows: frontierRows || [], avTeams: avTeams || [] } : {}),
   };
 };
 

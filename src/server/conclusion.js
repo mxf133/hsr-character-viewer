@@ -136,6 +136,10 @@ export const conclusionEnvs = async (index, options = {}) => {
       dist: data.dist || null,
       teams: data.teams,
       frontierRows: data.frontierRows,
+      // 「行动值前沿」：本关卡最近一版行动值最好的几支队伍（用户 2026-10-16 第 2 条）——
+      // 抽卡推荐的候选池要靠它把「各种 0 行动值队伍」补进去（见 archive.js 的
+      // `buildAvTeams` 注释：实测候选池里一支都没有）。
+      avTeams: data.avTeams || [],
     });
   }
   return { envs, skipped, window };
@@ -644,7 +648,7 @@ const slimCharacterPack = (unit, i18n, maps) => ({
  *
  * @param {string} name 角色英文数据集键**或**中文名
  * @param {{window?:string, frontierWeights?:object, hiddenCosts?:object,
- *          drawWeights?:object}} options
+ *          drawWeights?:object, versionWeights?:number[]}} options
  */
 export const archiveCharacterPacks = async (name, options = {}) => {
   const raw = String(name || '').trim();
@@ -671,6 +675,10 @@ export const archiveCharacterPacks = async (name, options = {}) => {
   const frontierAll = await archiveFrontierAll(envs, {
     window: VERSION_WINDOW,
     ...(options.frontierWeights ? { weights: options.frontierWeights } : {}),
+    // 版本权重（用户 2026-10-16）：面板与总榜**必须同一份** —— 否则同一个整包在
+    // 详情窗口里印的「跨版本发挥」与榜上那个对不上（与 frontierWeights / hiddenCosts
+    // / drawWeights 同一类坑，v4.6.69 修过一次）。
+    versionWeights: options.versionWeights,
   });
   const result = buildConclusion(envs, {
     availability: index.refs?.availability || {},
@@ -687,6 +695,8 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     // 抽卡权重（用户 2026-10-13 第 2 条）：角色得分 = 三个分项按它加权，所以面板
     // **必须**与总榜用同一份，否则同一个整包在两个地方显示两个「角色得分」。
     drawWeights: options.drawWeights,
+    // 版本权重（2026-10-16）：同上，夹具路也吃它。
+    versionWeights: options.versionWeights,
   });
   // ⚠️ 键不区分大小写地兜一次：形态角色（开拓者各形态、丹恒•腾荒这类）在两边
   // 的大小写/空格写法可能不一致。
@@ -984,6 +994,9 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     // 按请求走 —— 它服务抽卡方案的阵容表，改它会连带改方案的口径。
     const all = await archiveFrontierAll(envs, {
       window: VERSION_WINDOW, weights: options.frontierWeights,
+      // 用户自定义的版本权重（2026-10-16）：只影响「按版本加权」那一层
+      // （`seasonWeights` 现算 + 客户端跨版本加权）。不传 = 默认 `VERSION_WEIGHTS`。
+      versionWeights: options.versionWeights,
     });
     frontier = Object.fromEntries(all.map((f) => [f.env, f]));
   } catch (err) {
@@ -1003,6 +1016,8 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     frontier,
     // 「够得着的强阵」允许差几金（用户在界面上自己定，见 advice-view 的「可及预算」）
     gapMaxPulls: options.gapMaxPulls,
+    // 用户自定义的版本权重（2026-10-16）：没有服务端前沿表的夹具路也吃它。
+    versionWeights: options.versionWeights,
     // 用户自定义的副本权重：**两套**（用户 2026-10 要求相互独立）。
     //   planWeights     → 抽卡方案 / 差距榜 / 星魂榜
     //   frontierWeights → 性价比总榜

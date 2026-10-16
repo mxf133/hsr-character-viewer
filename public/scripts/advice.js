@@ -1231,6 +1231,21 @@ export const SCORING = {
    */
   fullInvestRank: 11,
   strengthLineWeights: { perfect: 0.8, target: 0.45, pass: 0.2 },
+  /**
+   * **强度分两档的分界线**（用户 2026-10-16 第 1 条）。
+   *
+   *   顶格档 = 这一档自己在**每个有数据的关卡**都打出 0 行动值（这一关「越小越好」时）
+   *            → 该关卡强度 100；
+   *   第二档 = 其余 → 该关卡强度 = **本常量 × 强度曲线(av)**，所以上限就是 90。
+   *
+   * 留 10 分空档的理由：曲线在 0 附近几乎是平的（0 与 1 行动值只差 0.3 分），
+   * 而用户要的是「**先看行动值**，再看是否压金」—— 也就是「打没打出 0 行动值」
+   * 必须先于一切比较定下来，不能被 0.3 分的噪声翻面。
+   *
+   * ⚠️ 它同时是**单调兜底的天花板**（见 `frontierBoard` 的兜底段）：
+   *    没自己打出 0 行动值的整包，不许被低投入档位的成绩兜进顶格档。
+   */
+  strengthSecondBandCap: 90,
 };
 
 /** 性价比的显示值：内部比值 × 100，四舍五入到整数（总榜与抽卡方案共用）。
@@ -1534,8 +1549,66 @@ export const VERSION_WEIGHTS = [3, 2.5, 2, 1.5, 1, 0.5];
 /** 版本窗口 = 权重表的长度（6 个版本）。 */
 export const VERSION_WINDOW = VERSION_WEIGHTS.length;
 
-/** 距最新版本第 `index` 个（0 = 最新）的版本权重；超出表长给 0（不进窗口）。 */
-export const versionWeightOf = (index) => VERSION_WEIGHTS[index] ?? 0;
+/**
+ * 版本权重的**旋钮清单**（用户 2026-10-16：版本权重也要能自己设）。
+ *
+ * 6 个槽位 = 版本窗口的 6 个版本，**下标 0 = 最新版**。
+ *
+ * ⚠️ 槽位是**按下标**的、不绑定具体版本号 —— 黑塔网加了新版本之后整张表自动前移
+ * （下标 0 从 4.6 变成 4.7），所以界面上只能写「最新版 / −1 版 / −2 版 …」，
+ * 写死「4.6 / 4.5 …」第二天就会说假话。
+ * ⚠️ 每个副本各有一套版本号（混沌 4.5 与异相仲裁 4.5 不是同一期），所以「最新版」
+ * 是**逐副本**的 —— 界面脚注要说清这一点。
+ */
+export const VERSION_WEIGHT_ROWS = VERSION_WEIGHTS.map((value, index) => ({
+  index,
+  // 键用**槽位下标**：`versionWeightValues()` 两种形状都认（数组 / `{'0': 3}` 这种对象）。
+  key: String(index),
+  label: index === 0 ? '最新版' : `−${index} 版`,
+}));
+
+/** 版本权重的默认值（= `VERSION_WEIGHTS`）。形状是**数组**，下标即槽位。 */
+export const versionWeightDefaults = () => VERSION_WEIGHTS.slice();
+
+/**
+ * 读版本权重的**原值**（未归一化，缺的/非法的按默认值补齐）。边界规则与
+ * `drawWeightValues` 完全同一套：
+ *   * 缺的槽位（老存档只有 3 个版本、或者根本没存过）→ 按**默认表**补齐；
+ *   * 空串 = 用户清空了输入框 → 按 **0** 算（那一版不进窗口）；
+ *   * 非法值（负数 / NaN）→ 忽略，退回默认。
+ *
+ * ⚠️ 入参两种形状都收：**数组**（界面直接发 6 个框）与**对象**（`{'0': 3, '1': 2.5}`）。
+ */
+export const versionWeightValues = (input) => VERSION_WEIGHT_ROWS.map((row) => {
+  const fallback = VERSION_WEIGHTS[row.index] ?? 0;
+  const raw = Array.isArray(input) ? input[row.index] : input?.[row.key];
+  if (raw === null || raw === undefined) return fallback;
+  const text = String(raw).trim();
+  const n = text === '' ? 0 : Number(text);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+});
+
+/**
+ * 归一化版本权重 → **长度 6 的数组**（下标 0 = 最新版）。
+ *
+ * ⚠️ 与抽卡权重不同，这里**不做「归一到和为 1」**：版本权重直接当加权平均的 `w` 用
+ *    （分子分母同除同一个和），整体乘个常数不改变任何结果，而界面脚注要印出用户敲的
+ *    **原值**（「3 : 2.5 : 2 : 1.5 : 1 : 0.5」）。
+ * ⚠️ 全 0 → 退回**默认表**（用户把 6 个框全清空显然不是「哪个版本都别算」，
+ *    与抽卡权重全清空退回等权是同一条约定）。
+ */
+export const normalizeVersionWeights = (input) => {
+  const value = versionWeightValues(input);
+  return value.some((v) => v > 0) ? value : versionWeightDefaults();
+};
+
+/**
+ * 距最新版本第 `index` 个（0 = 最新）的版本权重；超出表长给 0（不进窗口）。
+ *
+ * ⚠️ 第二个参数是**用户自定义权重表**（用户 2026-10-16 第 3 条：版本权重也能自己设）。
+ *    不传 = 用默认的 `VERSION_WEIGHTS` —— 工具、探针与本地夹具的历史行为不变。
+ */
+export const versionWeightOf = (index, weights = VERSION_WEIGHTS) => weights?.[index] ?? 0;
 
 /** 把 tierLines 换算成行动值空间的三条线。 */
 export const avLinesOf = (tierLines, lowerIsBetter = true) => {
@@ -3821,6 +3894,14 @@ const buildConclusionInner = (envs, options = {}) => {
   const trace = Array.isArray(options.trace) ? options.trace : null;
   const perEnvCandidates = Math.max(1, Number(options.perEnvCandidates) || 6);
   const avWeight = Number.isFinite(options.avWeight) ? Number(options.avWeight) : AV_WEIGHT;
+  /**
+   * 版本权重表（用户 2026-10-16：版本权重也可以自己设）。
+   *
+   * ⚠️ 生产载荷里每个副本都自带 `seasonWeights`（服务端按用户设的权重现算，见
+   *    `archiveFrontier`），所以下面那条 `seasonWeightOfRow` 走的是服务端那一份；
+   *    这个变量只服务**没有服务端的路**（本地夹具 / 探针直接调 `buildConclusion`）。
+   */
+  const versionWeights = normalizeVersionWeights(options.versionWeights);
 
   const envResults = [];
   const units = new Map();
@@ -4021,7 +4102,7 @@ const buildConclusionInner = (envs, options = {}) => {
           const fromServer = frontier[id]?.seasonWeights?.[s];
           if (Number.isFinite(Number(fromServer))) return Number(fromServer);
           const idx = seasonOrder.indexOf(String(s));
-          return idx >= 0 ? versionWeightOf(idx) : 1;
+          return idx >= 0 ? versionWeightOf(idx, versionWeights) : 1;
         };
         /**
          * 整包累计：`整包键 -> { …, bySeason: Map(版本 -> 该版本最好的一条证据) }`。
@@ -5439,9 +5520,14 @@ const buildConclusionInner = (envs, options = {}) => {
         //
         //   ① `avBest` = **这一关最佳证据那一支队伍**的行动值（`evidence.actionValue`，
         //      与卡片上写出来的那一行同一个数）。
-        //   ② 本副本强度 = 100 × 强度曲线(av)（`strengthLineWeights`：顶点 0 行动值 → 1.00、
-        //      满分线 → 0.80、达标线 → 0.45、及格线 → 0.20）。**没有成本项** ——
-        //      省金归性价比，强度的第二维是投入（见计分段的「95 分给行动值 + 5 分给投入」）。
+        //   ② 本副本强度分两档（用户 2026-10-16 第 1 条：「**先看行动值**」）：
+        //        · **顶格档**：`av == 0` 且这一关越小越好 → **100**（0 行动值 / 0T 通关，
+        //          这是打出来的最好成绩，谁也越不过去）；
+        //        · 其余：`90 × 强度曲线(av)`（`strengthLineWeights`：顶点 0.80、达标 0.45、
+        //          及格 0.20）—— 乘 90 是为了**把两档隔开**：没打出 0 行动值的队伍，
+        //          再好也够不到顶格那一档（否则「29 金 0 行动值 vs 一个 1 行动值的队」
+        //          只差 0.3 分，排序会随噪声翻面）。
+        //      **没有成本项** —— 省金在顶格档里按「压金」体现（见计分段），其余照旧走投入。
         //   ③ 整包行动值表现 = Σ(权重 × 本副本强度) ÷ Σ(**全部**副本的权重) ——
         //      缺副本按 0 计，「按关卡权重各自贡献」的落地，也是「投稿少的整包占便宜」
         //      那个反向激励的根治点（见 `strengthTotal` 那段注释）。
@@ -5472,6 +5558,21 @@ const buildConclusionInner = (envs, options = {}) => {
         const isPerfect = tierLines
           && Number.isFinite(perfectAv) && Number.isFinite(avBest)
           && avBest <= perfectLine + 1e-9;
+        /**
+         * **顶格**：这一关的行动值 = 0（且这一关是「越小越好」）。
+         *
+         * 用户 2026-10-16 第 1 条：「应该是 29 金 0 行动值 > 48 金 0 行动值 > **其他不足
+         * 0 行动值**的队伍，也就是**先看行动值**，再看是否压金」。所以 0 行动值必须是
+         * 一个**独立的最高档**，不是曲线上的一个点 —— 曲线在 0 附近太平（0 与 1 行动值
+         * 只差 0.3 分），顶格与否会被噪声盖过去。
+         *
+         * ⚠️ **不要拿 `lowerIsBetter` 当额外的门槛**：数据里的 `actionValue` **一律是
+         *    「越小越好」的那个数**（末日幻影的积分也已经在建库侧换算过，实测该副本
+         *    窗口内 av ∈ [0, 300] 而判据线 {4000, 3700, 3400} 由 `avLinesOf` 同样换算），
+         *    所以 `av == 0` 在**每个副本**里都是理论最好成绩。
+         *    （`lowerIsBetter` 只用于把判据线换到同一个方向，见 `avLinesOf`。）
+         */
+        const isTopBand = Number.isFinite(avBest) && avBest === 0;
         let envStrengthNew;
         if (!tierLines) {
           // 判据取不到（老数据集 / 合成夹具）：退回「该副本最好的那一版表现分」，
@@ -5486,7 +5587,9 @@ const buildConclusionInner = (envs, options = {}) => {
           // 逐副本的强度来源表当场自相矛盾。
           const perf = perfFactorOf(avBest, tierLines, lowerIsBetter,
             evidence.tier, SCORING.strengthLineWeights);
-          envStrengthNew = 100 * Math.max(0, Math.min(1, perf));
+          envStrengthNew = isTopBand
+            ? 100
+            : 90 * Math.max(0, Math.min(1, perf));
         }
         unit.envs.push({
           id: envId,
@@ -5880,30 +5983,68 @@ const buildConclusionInner = (envs, options = {}) => {
         const v = (Number(other.strengthTotal) || 0) / 100;
         if (v > floor) floor = v;
       }
+      /**
+       * ⚠️ **兜底不许把「自己没打出 0 行动值」的整包抬进顶格档**（用户 2026-10-16 第 1 条）。
+       *
+       * 顶格档（100 分）是「这一档自己在**每个有数据的关卡**都打出了 0 行动值」——
+       * 那是**打出来的**成绩，不是从别人身上推出来的。不夹这一刀的话，包络会让
+       * 「同角色一个低投入档位打出过 0 行动值」把高投入档位整档抬到 100，
+       * 于是「0 行动值队伍」与「没打出 0 行动值的贵队」又搅在一起 ——
+       * 用户 2026-10-16 上午报的那条（「仅仅只是存在一个 6+5 的角色而已」）正是这个病。
+       * 夹到 90 = 非顶格档的天花板（见上面 `envStrengthNew` 的两档），
+       * 所以这条只砍掉「越档」的那部分，档内的兜底一字不动。
+       */
+      const ownTopBand = (Number(unit.strengthTotal) || 0) >= 99.99;
+      if (!ownTopBand && floor * 100 > SCORING.strengthSecondBandCap) {
+        floor = SCORING.strengthSecondBandCap / 100;
+      }
       // 只往上兜底：`strengthFloor` 可能 > `strengthTotal`（稀疏数据被下面几档救回来）。
       unit.strengthFloor = Number((floor * 100).toFixed(4));
     }
     for (const unit of all) {
       /**
-       * 强度分 = **95 分给行动值 + 5 分给投入**（用户 2026-10-14 的两条要求合起来）：
+       * 强度分 = **95 分给行动值 + 5 分给「第二维」**，第二维分两种（用户 2026-10-16 第 1 条）：
        *
        * ```
-       *   行动值那 95 分：该角色在「星魂 ≤、叠影 ≤」的范围内达到过的**最好**行动值表现
-       *                   （`strengthFloor`，单调包络 —— 高投入档位至少和低投入一样强）
-       *   投入那 5 分：  这个整包**自己**的投入占比（`rawGold / 12`，不算隐金）
+       *   行动值那 95 分：`strengthFloor / 100`（单调包络 —— 高投入档位至少和低投入一样强），
+       *                   其中「每关都 0 行动值」= 100（顶格档），其余 ≤ 90（第二档）
+       *   第二维那 5 分： · 顶格档（自己打出了 0 行动值）→ **压金度**
+       *                 · 其余                        → **投入档位**（E6S5 > E6S1 那条不变式）
        * ```
        *
-       * 为什么要拆成两段：`E6S5 > E6S1 > E2S1 > E0S0` 是用户点名的不变式，而**投稿是稀疏的**
-       * —— 实测同一角色各档常常拿到**完全相同的最好行动值**（都 0 行动值通关），
-       * 那时「行动值」这一维已经饱和、分不出高低，必须由**投入**来分（E6S5 的 5 分拿满、
-       * E6S1 拿 8/12）。反过来，行动值那 95 分的量级远大于 5 分，所以「行动值越低越强」
-       * 这条主序不受影响。
+       * **为什么第二维要分两种**（用户两句话的取舍，都写在这里免得以后互相打架）：
+       *   * 用户 2026-10-14：「若达成 **0 行动值通关**，则**成本越低越强**」+
+       *     用户 2026-10-16：「应该是 **29 金 0 行动值 > 48 金 0 行动值** > 其他不足 0 行动值
+       *     的队伍，也就是**先看行动值，再看是否压金**」—— 0 行动值那一档内按**金数**排。
+       *   * 用户 2026-10-14（另一句）：「强度权重必须 E6S5 > E6S1 > E2S1 > E0S0」——
+       *     这说的是「同一档内、行动值打平时，投入越高越强」，所以**没顶格**的那一档保留投入分。
+       *   * 两句话在「都 0 行动值」时直接冲突（压金会让 E6S1 高于 E6S5）。这里按**最新的那句**
+       *     实现：**顶格档按压金、其余按投入**。想全局改按压金，只需把下面 `addOn` 那一行
+       *    的 `invest` 换成 `pinched`。
+       *
+       * `压金度` = `min(1, 该关卡该版本最便宜金数 ÷ 本次成绩的队伍金数)`（按关卡权重加权）——
+       * 与性价比的金数项同一个形状，但**只用在顶格档里**，不参与其余档位。
        */
       const invest = Math.max(0, Math.min(1,
         investRankOf(unit) / SCORING.fullInvestRank));
+      const pinched = (() => {
+        let acc = 0;
+        for (const e of unit.envs || []) {
+          const gold = Number(e.bestTeamGold) || 0;
+          const minCost = Number(e.seasonMinCost) || 0;
+          if (!(gold > 0) || !(minCost > 0)) continue;
+          acc += e.weight * Math.min(1, minCost / gold);
+        }
+        return allEnvWeight > 0 ? acc / allEnvWeight : 0;
+      })();
+      const ownTopBand = (Number(unit.strengthTotal) || 0) >= 99.99;
+      const addOn = ownTopBand ? pinched : invest;
       const avPart = (Number(unit.strengthFloor ?? unit.strengthTotal) || 0) / 100;
       unit.strengthScore = Number(((100 - SCORING.investWeight) * avPart
-        + SCORING.investWeight * invest).toFixed(4));
+        + SCORING.investWeight * addOn).toFixed(4));
+      // 给界面 / 探针看的中间量（「为什么这一档是顶格」才解释得清）。
+      unit.strengthTopBand = ownTopBand;
+      unit.strengthPinched = Number(pinched.toFixed(4));
       // 性价比分项就是老口径的 `total`（含金数项）归一后的值 —— 口径一字未改，
       // 只是**进了加权**、并且界面上那个数改叫「角色得分」。
       unit.costScore = Number((100 * spanOf(

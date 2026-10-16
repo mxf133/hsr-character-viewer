@@ -14,7 +14,7 @@ const conclusion = buildConclusion(envs, {
   frontier: Object.fromEntries(frontierAll.map((f) => [f.env, f])),
 });
 const units = teamPoolUnits(conclusion);
-const top = units.filter((u) => Number(u.strengthScore) >= 95)
+const top = units.filter((u) => Number(u.strengthScore) >= 88)
   .sort((a, b) => Number(b.strengthScore) - Number(a.strengthScore));
 console.log(`榜内 ${units.length} 条，强度 ≥95 有 ${top.length} 条（≥99.5 有 ${units.filter((u) => Number(u.strengthScore) >= 99.5).length} 条）`);
 console.log('角色       档位     强度    自身    兜底   绝境av 绝境强度  满分线');

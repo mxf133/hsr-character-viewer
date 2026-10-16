@@ -287,11 +287,14 @@
           </p>
           <div class="advice-weights is-compact" id="adviceFrontierWeights">
             <span class="advice-weights-title">权重</span>
-            <span class="advice-weights-hint muted small">两大类：<strong>关卡权重</strong>决定
+            <span class="advice-weights-hint muted small"><strong>三大类</strong>：<strong>关卡权重</strong>决定
               哪些副本算数（角色总榜与抽卡方案都吃它，调成 0 = 这个副本不进榜）；
               <strong>抽卡权重</strong>决定角色总榜与抽卡方案里<strong>强度 / 性价比 / 泛用性</strong>
               各占多少（强度越高越推<strong>行动值低、投入高</strong>的强队，
-              性价比越高越推<strong>你还要补得越少</strong>的队伍）。两组都只有<strong>相对大小</strong>有意义。</span>
+              性价比越高越推<strong>你还要补得越少</strong>的队伍）；
+              <strong>版本权重</strong>决定每个副本窗口里<strong>从最新往前 6 个版本</strong>各占多少
+              （越旧被稀释得越厉害，某一版设 0 = 那一版不进窗口）。
+              三组都只有<strong>相对大小</strong>有意义，改任一组都会重算总榜。</span>
             <button type="button" id="adviceFrontierWeightsReset" class="btn btn-ghost btn-sm">恢复默认</button>
             <div class="advice-weights-groups">
               <div class="advice-weights-group">
@@ -303,6 +306,11 @@
                 <span class="advice-weights-subtitle">抽卡权重</span>
                 <div class="advice-weights-grid is-draw" id="adviceDrawWeightRow"></div>
                 <span class="muted small advice-weights-meta" id="adviceDrawWeightsMeta"></span>
+              </div>
+              <div class="advice-weights-group">
+                <span class="advice-weights-subtitle">版本权重</span>
+                <div class="advice-weights-grid is-version" id="adviceVersionWeightRow"></div>
+                <span class="muted small advice-weights-meta" id="adviceVersionWeightsMeta"></span>
               </div>
             </div>
           </div>
