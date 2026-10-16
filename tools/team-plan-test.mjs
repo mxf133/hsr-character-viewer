@@ -14,7 +14,8 @@ import assert from 'node:assert/strict';
 import { createApp } from '../src/server/app.js';
 import {
   DEFAULT_HIDDEN_COSTS, NO_HIDDEN_COSTS, SCORING, eidolonTierOf, eidolonsOf, lightConeRanksOf,
-  normalizeDrawWeights, ownedCharacters, setHiddenCosts, teamPlan, teamPoolUnits, unitPullsOf,
+  normalizeDrawWeights, ownedCharacters, perfFactorOf, setHiddenCosts, teamPlan, teamPoolUnits,
+  unitPullsOf,
 } from '../public/scripts/advice.js';
 
 let passed = 0;
@@ -236,6 +237,121 @@ check('⭐ 展示条数（maxRows）**不参与任何计算**：改条数不改�
   const bestFirst = [...full.rows].sort((a, b) => b.total - a.total).map((r) => r.key);
   assert.deepEqual(one.rows.map((r) => r.key), bestFirst.slice(0, 1), 'maxRows=1 应回总分最高的那条');
   assert.deepEqual(two.rows.map((r) => r.key), bestFirst.slice(0, 2), 'maxRows=2 应回总分前两条');
+});
+
+section('A0. 行动值前沿池（用户 2026-10-16 第 2 条：0 行动值队伍登顶）');
+
+/**
+ * 专用夹具：两个副本各挂 `avTeams`（真实载荷里每关 8 支，由服务端
+ * `src/server/archive.js` 的 `buildAvTeams` 按「权重最高的有数据版本」选行）。
+ * 这里装 4 支队，分别钉四件事：
+ *
+ *   ① `avZero`    只在 env1 打出 0 行动值（绝境-only 满配队的典型形态）——
+ *                 强度 ① 必须是 **97.5**（95 顶格 + 5×压金），**不能**被你没投稿的
+ *                 env2 稀释（「缺副本按 0 计」那条规矩只属于总榜，见 `teamPlan` 注释）；
+ *   ② `avMixed`   env1 av=0 + env2 av=320 —— **副本权重必须生效**：按两关权重摊薄，
+ *                 严格低于顶格档（期望值用 `perfFactorOf` 现算，不写死数字）；
+ *   ③ `avZeroGap` 0 行动值但**全部已有**（补金 0）→ 照样剔除（第 3 条）；
+ *   ④ 与证据池**去重**：同一支队不会出现两次，强度走原来那条路（见下面的 dup 夹具）。
+ *
+ * ⚠️ `minCostBySeason` 是压金度的分母（该副本该版本的最便宜金数，与总榜
+ *    `seasonMinCost` 同源）—— 缺了它顶格档的第二维只能拿 0 分。
+ */
+const AV_TIER_LINES = { perfect: 300, target: 350, pass: 400 };
+const AV_ZERO_MEMBERS = [member('charA'), member('charB'), member('charX')];
+const AV_MIXED_MEMBERS = [member('charA'), member('charB'), member('charY')];
+const avConclusion = {
+  frontierEnvs: [
+    {
+      id: 'env1', label: '测试副本', weight: 1, tierLines: AV_TIER_LINES,
+      avLo: 0, avHi: 400, lowerIsBetter: true,
+      minCostBySeason: { '4.2': 5, '4.4': 4 },
+      avTeams: [
+        { cost: 10, av: 0, tier: 'perfect', season: '4.2', members: AV_ZERO_MEMBERS },
+        { cost: 12, av: 0, tier: 'perfect', season: '4.2', members: AV_MIXED_MEMBERS },
+        { cost: 2, av: 0, tier: 'perfect', season: '4.2',
+          members: [member('charA'), member('freeC')] },
+      ],
+    },
+    {
+      id: 'env2', label: '测试副本二', weight: 1, tierLines: AV_TIER_LINES,
+      avLo: 0, avHi: 400, lowerIsBetter: true,
+      minCostBySeason: { '4.4': 4 },
+      avTeams: [
+        { cost: 12, av: 320, tier: 'target', season: '4.4', members: AV_MIXED_MEMBERS },
+      ],
+    },
+  ],
+  frontierUnits: [],
+};
+const avPlan = teamPlan(avConclusion, accountFixture, { availability });
+const avRowOf = (members) => avPlan.rows.find((r) => r.members.length === members.length
+  && members.every((m) => r.members.some((x) => x.char === m.char)));
+
+check('行动值前沿：只在 env1 打出 0 行动值的队**进得了池**（证据池里一支都没有）', () => {
+  // 证据池这条路上 `frontierUnits` 是空的 —— 没有 `avTeams` 这个来源就一支候选都没有。
+  assert.equal(avPlan.pool, 0 + 2, `补金 > 0 的应剩 2 支（0 行动值两支），实际 ${avPlan.pool}`);
+  assert.equal(avPlan.poolAv, 3, `前沿池应装配 3 支（含补金 0 的那支），实际 ${avPlan.poolAv}`);
+  assert.equal(avPlan.poolAll, 3, `去重后应 3 支，实际 ${avPlan.poolAll}`);
+  const row = avRowOf(AV_ZERO_MEMBERS);
+  assert.ok(row, '0 行动值队应当出现在下发批次里');
+  assert.equal(row.avSource, true, '这一支必须标记为行动值前沿来源');
+  // 「登顶」：它的强度分必须压过其它前沿行（另一支是混合成绩）。
+  assert.ok(row.strengthPct > avRowOf(AV_MIXED_MEMBERS).strengthPct, '顶格档必须高于混合成绩');
+});
+
+check('行动值前沿：0 行动值 = 顶格档 95 + 5×压金，**不被没投稿的副本稀释**', () => {
+  const row = avRowOf(AV_ZERO_MEMBERS);
+  // 只有 env1 有数据（av=0）：缺副本按 0 计的老规矩会把 (1×100)÷(1+1) 摊成 50
+  // → 强度 47.5。用户要的是「登顶」，所以这一池按**本队有数据的关卡**归一。
+  assert.equal(row.strengthPct, 97.5,
+    `① 应为 95 + 5×min(1, 5/10) = 97.5，实际 ${row.strengthPct}`);
+  // 最佳证据 = 这支队自己最快的那一关（行动值并列时取关卡权重高的）。
+  assert.equal(row.bestEnv.label, '测试副本');
+  assert.equal(row.bestEnv.bestTeamGold, 10, '最佳证据金数取 avTeams 的 cost');
+  assert.equal(row.bestEnv.actionValue, 0);
+  assert.equal(row.bestEnv.season, '4.2');
+  assert.equal(row.teamGold, 10);
+  assert.equal(row.envCount, 1, '证据广度 = 有数据的关数');
+});
+
+check('行动值前沿：混合成绩按**副本权重**摊薄（0 与非 0 各占一关）', () => {
+  const row = avRowOf(AV_MIXED_MEMBERS);
+  // 期望值现算：env1 av=0 → 100；env2 av=320 → 90 × 强度曲线(320)。
+  const perf = perfFactorOf(320, AV_TIER_LINES, true, 'target', SCORING.strengthLineWeights);
+  const env2Strength = SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
+  const total = (1 * 100 + 1 * env2Strength) / 2;     // 两关权重都是 1
+  // 没有顶格 → 第二维按投入档位；三个 E0 不装光锥 → 0。
+  const expect = (100 - SCORING.investWeight) * (total / 100) + SCORING.investWeight * 0;
+  assert.ok(near(row.strengthPct, expect),
+    `① 应为 ${expect.toFixed(4)}（副本权重加权），实际 ${row.strengthPct}`);
+  assert.ok(row.strengthPct < 97.5, '混合成绩必须低于顶格档');
+  assert.ok(row.strengthPct > 50, '也不该被稀释到「只有一关数据」那么低');
+});
+
+check('行动值前沿：0 行动值但**补金 0** 的队照样剔除（第 3 条）', () => {
+  const row = avRowOf([member('charA'), member('freeC')]);
+  assert.equal(row, undefined, '全部已有的队不该出现（无抽卡必要）');
+  assert.equal(avPlan.pool, 2, `池里应只剩 2 支，实际 ${avPlan.pool}`);
+});
+
+check('行动值前沿：与证据池**去重**（同一支队不重复，强度走原来那条路）', () => {
+  // 派生夹具：在证据池的副本上挂一条 avTeams，阵容与 `TEAMS.coneGap` 完全相同。
+  const dupConclusion = {
+    ...conclusionFixture,
+    frontierEnvs: [
+      { ...conclusionFixture.frontierEnvs[0], tierLines: AV_TIER_LINES,
+        avTeams: [{ cost: 9, av: 0, tier: 'perfect', season: '4.2', members: TEAMS.coneGap }] },
+      conclusionFixture.frontierEnvs[1],
+    ],
+  };
+  const plan = teamPlan(dupConclusion, accountFixture, { availability });
+  assert.equal(plan.poolAv, 0, '证据池里已有的队不该再进前沿池');
+  const rows = plan.rows.filter((r) => r.members.some((m) => m.char === 'charA' && m.lc === 'coneA'));
+  assert.equal(rows.length, 1, '同一支队只能出现一次');
+  assert.equal(rows[0].avSource, false, '去重后走证据池那条路（不标 avSource）');
+  assert.equal(rows[0].strengthPct, 30,
+    `① 必须仍是代表整包自己的强度分 30（前沿口径会给 ~97.5），实际 ${rows[0].strengthPct}`);
 });
 
 section('A1. 抽卡权重（强度 / 性价比，用户 2026-10-12 第 3、4、8 条）');
@@ -773,6 +889,29 @@ check('真载荷上补金顺序单调（每抽收益降序，被载体约束插�
   }
 });
 
+check('真载荷上：0 行动值队伍经「行动值前沿」进池并登顶（用户 2026-10-16 第 2 条）', () => {
+  const plan = teamPlan(livePayload, {
+    owned: new Set(), eidolons: new Map(), cones: new Map(),
+  }, { availability: livePayload.availability });
+  // 服务端每关带 8 支前沿队（`archiveTeams().avTeams`）→ 载荷带到 → 池里真的多一个来源。
+  assert.ok(plan.poolAv > 0, `行动值前沿应贡献候选，实际 ${plan.poolAv}`);
+  assert.ok(plan.poolAll >= plan.poolAv + 50,
+    `去重后应有几百支（证据池 + 前沿 ${plan.poolAv}），实际 ${plan.poolAll}`);
+  const avRows = plan.rows.filter((r) => r.avSource);
+  // 「登顶」的实测形态：0 行动值队（① = 顶格档 95~100）占据下发批次的前排。
+  // ⚠️ 这不是恒等式 —— 是这条钉的**当前数据集**实测（绝境 0 行动值全在 29~48 金
+  //    满配队里，② 把它们压到后段；前排是各关 0T 的便宜队）。哪天真翻面了，
+  //    先查是不是缺副本稀释 / 副本权重改动，再决定要不要放宽这条。
+  assert.ok(avRows.length > 0, '下发批次里应见到行动值前沿来的队');
+  assert.equal(plan.rows[0].avSource, true, '总分第一名应是 0 行动值队（用户要的「登顶」）');
+  assert.ok(avRows.every((r) => r.bestEnv && Number(r.bestEnv.actionValue) === 0),
+    '前沿行的「最佳证据」必须都是 0 行动值（前沿池按行动值升序选行）');
+  // ① 必须落在顶格档附近（95 + 压金 ≤ 5）：若退回「缺副本按 0 计 ÷ 全部关卡」，
+  // 只在绝境有数据的队会被稀释到 ~55.6，这一条会当场红。
+  assert.ok(avRows.every((r) => r.strengthPct >= 95),
+    `前沿行① 应 ≥ 95（顶格档），实际最低 ${Math.min(...avRows.map((r) => r.strengthPct))}`);
+});
+
 check('界面现算的差额 = 服务端口径（同一份 availability、同一批持有状态）', () => {
   // 服务端的 `units`（旧清单）用的是同一条 `marginalCostOf`；这里改成直接对
   // 「队伍成员 + 空账号」复算一遍，验证界面与服务端读到的是同一张成本表：
@@ -847,7 +986,11 @@ check('⭐ 真载荷：① = **代表整包自己**的 `strengthScore`（绝对�
     repOf.set(key, { total, strength: Number(unit.strengthScore) || 0 });
   }
   let borrowed = 0;
-  for (const r of whole.rows.slice(0, 40)) {
+  // ⚠️ 只量**证据池**那条路的行（用户 2026-10-16 第 2 条起的「行动值前沿」池是另一条
+  //    口径：① = 本队自己各关行动值的加权，没有「代表整包」可复算 —— 那条路由 A0 段
+  //    与 B 段的前沿断言各钉各的）。当前数据集下前沿行占据前排，所以这里必须滤掉，
+  //    否则会拿前景口径去复算后景口径、必然对不上。
+  for (const r of whole.rows.slice(0, 40).filter((r) => !r.avSource)) {
     const rep = repOf.get(r.key);
     assert.ok(rep, `${r.key}: 应当能复算出代表整包`);
     assert.ok(Math.abs(Number(r.strengthPct) - rep.strength) < 1e-3,

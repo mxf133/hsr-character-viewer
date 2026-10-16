@@ -2057,7 +2057,11 @@ if (!tipTarget) {
   //    最少」，而是取**最近版本**的那一次 —— 所以列名从「最少行动值」改成「**最近版本行动值**」，
   //    而且那一格下面必须带版本小字（否则读者分不清是哪个版本的成绩）。
   //    改这组列名必须同时改 `advice-view.js` 的 `strengthSourceBlock()`（两边是同一份契约）。
-  const STRENGTH_HEADERS = ['关卡', '最近版本行动值', '本副本强度', '权重', '贡献'];
+  // ⚠️ **2026-10-16 再改一处**（用户：「一个队伍的强度得分和此队伍的实际行动值有关」）：
+  //    行动值不再取「该整包在这个副本里任意一支队伍的最快成绩」，而是取**这一关最佳证据
+  //    那一支队自己的**行动值 —— 所以列名写成「行动值（这支队自己）」，与卡片上那个数同源。
+  //    改这组列名必须同时改 `advice-view.js` 的 `strengthSourceBlock()`（两边是同一份契约）。
+  const STRENGTH_HEADERS = ['关卡', '行动值（这支队自己）', '本副本强度', '权重', '贡献'];
   const strengthSourceOk = Boolean(tipReport)
     && JSON.stringify(tipReport.strengthHeaders) === JSON.stringify(STRENGTH_HEADERS)
     && tipReport.strengthRowCount > 0
@@ -2994,8 +2998,17 @@ if (teamPlanProbe.missing) {
         //    折叠之后那张表虽然还在 DOM 里（hidden 只是不显示），但 .advice-plan-tip-block
         //    那两条判据、以及「分数来源表是几行」都会量错对象 —— 见下面的 is-score-scale。
         const toggles = [ ...card.querySelectorAll('.advice-detail-toggle') ];
+        // ⚠️ 必须与 advice-view.js 的 detailOf() 用**同一套**找法：优先按按钮自己的
+        //    aria-controls 取，取不到才退回「同一个容器里找」。2026-10-15（用户第 6 条）起
+        //    「补金推荐分」那个按钮搬到了**标题行**（与标题同一行），过渡档位 / 次选配队的
+        //    按钮也各自住在**标题行 / 「补金推荐分 xx｜补金 n 金」那一行**里，而它们控制的内容
+        //    仍在**紧跟其后的折叠块**里 —— 两者不在同一棵子树，只看 parentElement 会恒拿到
+        //    null，「默认全收起」这组判据于是全部静默变红，看起来像折叠功能坏了。
+        //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+        const detailOfNode = (b) => document.getElementById(b.getAttribute('aria-controls') || '')
+          || b.parentElement?.querySelector('.advice-detail') || null;
         const collapsed = toggles.map((b) => {
-          const d = b.parentElement?.querySelector('.advice-detail');
+          const d = detailOfNode(b);
           return { expanded: b.getAttribute('aria-expanded'), hidden: d ? d.hidden : null };
         });
         for (const b of toggles) b.click();
@@ -3027,6 +3040,14 @@ if (teamPlanProbe.missing) {
           text: card.textContent || '',
           blocks,
           alts: card.querySelectorAll('.advice-plan-tip-alt').length,
+          // 用户 2026-10-15 第 6 条：主按钮必须住在**标题行**（与「补金推荐分 +N」同一行），
+          // 且过渡档位 / 每一支次选配队各有一个自己的按钮。
+          // ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+          headToggle: Boolean(card.querySelector('.advice-value-tip-headrow > .advice-detail-toggle')),
+          headLabel: card.querySelector('.advice-value-tip-headrow .advice-detail-inline-label')
+            ?.textContent || '',
+          midToggles: card.querySelectorAll('.advice-plan-tip-title .advice-detail-toggle').length,
+          altToggles: card.querySelectorAll('.advice-plan-tip-alt-copy .advice-detail-toggle').length,
           toggles: toggles.length,
           collapsed,
           expandedNow,
@@ -3055,6 +3076,18 @@ if (teamPlanProbe.missing) {
         + `${JSON.stringify((scoreTip?.collapsed || []).map((d) => `${d.expanded}/${d.hidden}`))}`
         + ` → 点击后 ${JSON.stringify(scoreTip?.expandedNow || [])}`
         + `${tipScoreOk ? '' : `：${(scoreTip?.blocks || []).map((b) => b.slice(0, 18)).join(' / ') || '（空）'}`}）`);
+      // ⚠️ 用户 2026-10-15 第 6 条：主按钮住在**标题行**、与「补金推荐分 +N」同一行；
+      //    过渡档位各有一个按钮；**每一支**次选配队也各有一个按钮（`altToggles === alts`）。
+      const toggleSpotOk = Boolean(scoreTip)
+        && scoreTip.headToggle === true
+        && scoreTip.headLabel === '查看分数来源'
+        && scoreTip.midToggles >= 1
+        && scoreTip.altToggles === (scoreTip.alts || 0);
+      if (!toggleSpotOk) failures += 1;
+      console.log(`  ${toggleSpotOk ? '✓' : '✗'} 「查看分数来源」住在补金推荐分右侧`
+        + `（标题行 ${scoreTip?.headToggle ? '✓' : '✗'}「${scoreTip?.headLabel || ''}」），`
+        + `过渡档位按钮 ${scoreTip?.midToggles ?? 0} 个、`
+        + `次选配队按钮 ${scoreTip?.altToggles ?? 0} 个 / 次选 ${scoreTip?.alts ?? 0} 支`);
       // ⚠️ 用户 2026-10-12 第 6 条：分数来源**只有真实生效的那几个刻度**，
       //    且不许再出现「压金度 / 性价比得分」。2026-10-13 第 3 条（泛用性也进补金推荐）
       //    之后是**三行** —— v4.6.95/96 时这里钉的是两行。
@@ -3068,11 +3101,17 @@ if (teamPlanProbe.missing) {
       // ⚠️ 2026-10-15 换 ① 口径时**新加**的判据：那一格的「刻度」必须写「绝对刻度」，
       //    而取值那一格必须是**强度分**（不再是「队分」——旧口径印的是含金数项的整包分，
       //    池内 min-max 之后第一必然 100 分，用户 2026-10-15 报的就是那个数）。
+      // ⚠️ 2026-10-16（用户第 2 条「行动值前沿」池）起有两套**都正确**的措辞，
+      //    取决于点开的是哪张卡：
+      //      * 证据池的卡：「强度分 X」+「0 ~ 100（绝对刻度）」—— ① = 代表整包自己的分；
+      //      * 前沿池的卡（0 行动值队，当前数据集下占据前排）：「本队行动值强度 X」+
+      //        「0 ~ 100（本队各关行动值，0 行动值 = 100）」—— ① = 本队自己行动值的加权。
+      //    两种都是绝对刻度、都不印「队分」；探针点开的是**第一张卡**，所以两种都要认。
       const strengthRow = (scoreTip?.cells || []).find((c) => (c[0] || '') === '强度得分');
       const strengthAbsOk = Boolean(strengthRow)
-        && (strengthRow[1] || '').includes('强度分')
+        && (/强度分|行动值强度/).test(strengthRow[1] || '')
         && !(strengthRow[1] || '').includes('队分')
-        && (strengthRow[2] || '').includes('绝对刻度');
+        && (/绝对刻度|本队各关行动值/).test(strengthRow[2] || '');
       if (!strengthAbsOk) failures += 1;
       console.log(`  ${strengthAbsOk ? '✓' : '✗'} 「强度得分」那一行写的是绝对刻度`
         + `（实际取值 ${JSON.stringify(strengthRow?.[1] || '')}`

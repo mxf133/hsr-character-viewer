@@ -1278,43 +1278,111 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   font-size: 12px;
 }
 .footer p { margin: 0; }
-/* 版本号内联在页脚同一段里：独占一行会让页脚高度随宽度变化，
-   而页面高度一变就可能多出/少掉一条滚动条，进而改变内容宽度。 */
-.footer-version { white-space: nowrap; opacity: 0.85; }
 /* ---------------------------------------------------------------------------
-   「检查更新」（用户 2026-10-14 第 5 条）
+   版本号 + 「检查更新」（用户 2026-10-16 第 7 条）
 
-   与版本号同在页脚那一行里，做成一个**朴素的小链接按钮**：页脚是说明性文本，
-   在这里放一个实心按钮会把注意力从「这是一个本地工具」上抢走。
-   结果那一行（`.footer-update-result`）跟在按钮后面，更新时还会多一个「前往下载」外链。
+   原话：「版本号、检查更新应显示在页面上方的标题栏较为显眼的地方，提示及时更新」。
+   所以它们从页脚搬到了顶栏（`header.topbar` 的 `.topbar-actions` 第一格），页脚那两处
+   **已删除**（别在两处各放一份）。这一块必须是 `.topbar-actions` 的 flex 子项里
+   **宽度最稳**的那个：版本号是短字符串、按钮文案最多到「有新版本 v4.6.108」，
+   而分页签 + 状态胶囊 + 退出按钮在窄屏下会换行 —— 见下面 620px 那段。
+
+   更新结果不再占用标题栏的宽度：`.topbar-update-result` 绝对定位在这一块**下方**，
+   长句子（「发现新版本 …，前往下载」）不会把顶栏撑坏。
    --------------------------------------------------------------------------- */
-.footer-update {
-  margin-left: 6px;
-  padding: 0 6px;
+.topbar-version {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  /* 不参与压缩：版本号被挤成两行比换行更难看，窄屏的处置见 620px 媒体查询。 */
+  flex: none;
+}
+.topbar-version-text {
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: 0.2px;
+}
+/* 「检查更新」：顶栏里的小按钮，比页脚那版显眼（用户要「较为显眼的地方」），
+   但仍是描边风格 —— 它是个辅助动作，不该比「角色信息 / 抽卡推荐」两个分页签还重。 */
+.topbar-update {
+  padding: 4px 10px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.03);
   color: var(--text-dim);
   font: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
+  white-space: nowrap;
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
-.footer-update:hover:not(:disabled),
-.footer-update:focus-visible {
+.topbar-update:hover:not(:disabled),
+.topbar-update:focus-visible {
   border-color: var(--border-strong);
+  background: rgba(255, 255, 255, 0.07);
   color: var(--text);
 }
 /* 请求期间禁用：GitHub 直连偶尔要好几秒，不给反馈用户就会连点（见 `checkUpdate()`）。 */
-.footer-update:disabled { opacity: 0.5; cursor: default; }
-.footer-update-result { margin-left: 6px; }
-.footer-update-result.is-ok { color: var(--success); }
-.footer-update-result.is-update { color: var(--gold); }
-.footer-update-result.is-err { color: var(--danger); }
-.footer-update-result a {
+.topbar-update:disabled { opacity: 0.5; cursor: default; }
+/*
+   ⚠️「及时更新」的**高亮态**（用户第 7 条的验收点）：检查更新发现 GitHub 上有更新的
+   `status: 'update'` 时，`renderUpdateResult()` 给按钮与版本号一起加 `is-outdated`。
+   金色 + 发光是这一页里「值得立刻看一眼」的既有语汇（`.pill-wait` / `.brand-mark-glyph`
+   都用它），所以不新造颜色。`prefers-reduced-motion` 下不闪，静态高亮仍然可见。
+*/
+.topbar-version.is-outdated .topbar-version-text {
+  color: var(--gold-bright);
+  font-weight: 600;
+}
+.topbar-update.is-outdated {
+  border-color: var(--gold-bright);
+  background: rgba(240, 198, 116, 0.16);
+  color: var(--gold-bright);
+  font-weight: 600;
+  animation: topbar-update-pulse 2.4s ease-in-out infinite;
+}
+@keyframes topbar-update-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(240, 198, 116, 0); }
+  50% { box-shadow: 0 0 12px 0 rgba(240, 198, 116, 0.55); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .topbar-update.is-outdated { animation: none; }
+}
+/* 结果气泡：挂在这一块下方、右对齐，浮在内容之上（不占标题栏高度）。
+   `min-width` 用 `fit-content` 的自然宽度即可，`max-width` 防止长句子横到屏幕外。 */
+.topbar-update-result {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  max-width: min(420px, 86vw);
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: normal;
+}
+.topbar-update-result.is-ok { color: var(--success); }
+.topbar-update-result.is-update { color: var(--gold-bright); }
+.topbar-update-result.is-err { color: var(--danger); }
+.topbar-update-result a {
   margin-left: 4px;
   color: var(--cyan);
   text-decoration: underline;
+}
+
+/* 窄屏（用户第 7 条：别把标题栏挤坏）：标题栏那一行本来就挤了分页签 + 状态胶囊 +
+   退出按钮，再塞版本区必然换行。这里让 `.topbar-actions` 允许换行、并把**品牌副标题**
+   先收起来给它们让位；版本区自己 `flex: none` 不掉行 —— 版本号与按钮始终看得见。 */
+@media (max-width: 760px) {
+  .topbar { flex-wrap: wrap; }
+  .topbar-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .brand-text p { display: none; }
 }
 
 /* ==========================================================================
@@ -2894,12 +2962,16 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.025);
 }
-/* 两大类：宽屏并排两列，窄屏自动换成一列（`auto-fit`，与 `.advice-weights-grid` 同套路）。 */
+/* 三大类：**每组各占一行**（用户 2026-10-16 第 3 条：「关卡权重/抽卡权重/版本权重，
+   这 3 列分别换行，让用户输入」）。
+   ⚠️ 改前是 `repeat(auto-fit, minmax(320px, 1fr))` —— 宽屏会把前两组并排成两列，
+   用户看到的「关卡权重 / 抽卡权重」是左右并排而不是上下三行。现在固定单列，
+   三组**永远竖排**（不跟随宽度变化，窄屏也不会退化成别的形状）。 */
 .advice-weights-groups {
   grid-area: grid;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 12px 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
   min-width: 0;
 }
 /* 每一类自己是「小标题 / 输入框网格 / 摘要」三行；组内的 `.advice-weights-grid` 必须
@@ -2934,11 +3006,22 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   background: var(--cyan);
   vertical-align: middle;
 }
-.advice-weights .advice-weights-group:last-child .advice-weights-subtitle::before {
+/* 三个组的圆点各自一色（用户 2026-10-16 起是**三组**）：关卡 = 青、抽卡 = 紫、
+   版本 = 金。⚠️ 改前是 `:last-child` 一条（那时只有两组，第二条自然是最后一条），
+   加了第三组之后它会落到**版本**那一组上、抽卡退回默认青色 —— 所以改成按下标点名。 */
+.advice-weights .advice-weights-group:nth-child(2) .advice-weights-subtitle::before {
   background: var(--violet);
+}
+.advice-weights .advice-weights-group:nth-child(3) .advice-weights-subtitle::before {
+  background: var(--gold);
 }
 /* 抽卡权重只有两个旋钮，按两列摊开（不要跟着关卡权重那五列走）。 */
 .advice-weights-grid.is-draw { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* 版本权重六个旋钮（最新版 / −1 版 … −5 版）：六个窄输入框**一行放下**（用户 2026-10-16
+   第 3 条）。标签本身很短（`−3 版`），所以六列比关卡权重那五列还窄也行 ——
+   窄屏（≤900px）由 media 里的 `auto-fit` 列数兜底。输入框宽度写在下面
+   （**必须在 `.is-compact .field-inline input` 之后**，见那一处的注释）。 */
+.advice-weights-grid.is-version { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 /* 紧凑版：标题 / 五个输入框 / 恢复默认挤在同一行，「已改」摘要单独一行。
    摘要用 100% flex-basis 固定换行 —— 让行数只由「改没改」决定，不会因为
    文案长短一会儿一行一会儿两行（页面高度会跟着抖）。 */
@@ -3020,6 +3103,13 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+/* 版本权重那六个框再窄一点（46px）：六列摊在同一行，`0.5` / `2.5` 都放得下。
+   ⚠️ 这条**必须**排在上面 `.is-compact .field-inline input`（含 `flex`/`width`）之后，
+   否则被那条的 `flex: 0 0 54px` 覆盖掉（同类特异性下后来者胜）。 */
+.advice-weights.is-compact .advice-weights-grid.is-version input {
+  flex: 0 0 46px;
+  width: 46px;
+}
 .advice-weights input[type='number'],
 #adviceBudget {
   -moz-appearance: textfield;
@@ -3065,6 +3155,12 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
       "meta meta";
   }
   .advice-weights-grid { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  /* ⚠️ 版本权重那六列在窄屏**允许换行**（`.is-version` 的特异性高于上面那条，
+     media query 本身不加特异性 —— 所以必须在这里再写一次，否则窄屏仍是硬 6 列、
+     每个框被压到几十像素）。下限 108px = 格内 18px 内边距 + 标签（`−3 版` ≈ 34px）
+     + 8px 间距 + 46px 输入框 —— 再窄标签就会被 `text-overflow: ellipsis` 吃掉字。
+     宽屏 6 个一行、窄屏自动折成两行。 */
+  .advice-weights-grid.is-version { grid-template-columns: repeat(auto-fit, minmax(108px, 1fr)); }
 }
 @media (max-width: 560px) {
   .advice-weights.is-compact {

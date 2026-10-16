@@ -5,7 +5,9 @@
 //   ① 战斗记录（米游社官方数据）
 //   ② 综合结论 · 该抽什么
 //        · 角色总榜（**纯黑塔网投稿口径**，完全不看你的角色池）
-//        · 权重（两大类：**关卡权重** 5 个副本 + **抽卡权重** 强度/性价比）
+//        · 权重（**三大类**：关卡权重 5 个副本 + 抽卡权重 强度/性价比/泛用性
+//          + 版本权重 6 个槽位 —— 用户 2026-10-16 第 3 条加了第三类，
+//          三组各自占一行）
 //        · 抽卡方案（**队伍口径**：按你的角色池算「照抄哪支队最划算」+ 补金顺序）
 //   ③ 环境统计 · 上场率（按当前选中的副本 / 版本）
 //
@@ -25,12 +27,24 @@
 // 服务端的 `buildConclusion` 里 —— 只在浏览器里加权会让收敛选错代表整包。
 // 所以改它要重算结论（与关卡权重、隐金设置同一条路），见输入框的接线。
 //
+// ⚠️ **版本权重（最新版 / −1 版 … −5 版）是第三类权重**（用户 2026-10-16 第 3 条）：
+// 每个副本窗口里「从最新往前 6 个版本」各占多少（默认 `3:2.5:2:1.5:1:0.5`）。
+//   * 它决定服务端现算的 `seasonWeights`，客户端再拿那一份做跨版本加权 ——
+//     所以同样**必须进服务端请求**（与抽卡权重同一条路，漏传就是「界面静默显示旧结果」）；
+//   * 槽位**按下标**、不绑定版本号：黑塔网加一版就整体前移，所以界面只能写
+//     「最新版 / −1 版 / …」；而「最新版」是**逐副本**的（4.5 在混沌与异相仲裁里不是同一期）；
+//   * 它**不做「和归一到 1」**（`normalizeVersionWeights` 明确不做），界面印的是原值比例。
+//
 // 2026-10 删掉的两节：「你的补强路径」与「推荐阵容 · 按金数分档」——前者被
 // 「抽卡方案」完全覆盖，后者的信息在「性价比总榜 + 环境统计」里已经给全。
 import {
   EVIDENCE_LABEL, MODE_ORDER, ENV_WEIGHT_ROWS, envWeightDefaults,
   // 抽卡权重（用户 2026-10-12 第 2、3 条）：旋钮清单与默认值都只有 advice.js 那一份。
   DRAW_WEIGHT_ROWS, drawWeightDefaults, normalizeDrawWeights,
+  // 版本权重（用户 2026-10-16 第 3 条）：**第三类**权重 —— 每个副本窗口里「从最新往前
+  // 6 个版本」各占多少。旋钮清单（`VERSION_WEIGHT_ROWS`）、默认表与读数规则同样只有
+  // `advice.js` 那一份（服务端 `archive.js` 读的也是它，两边必须同源）。
+  VERSION_WEIGHT_ROWS, versionWeightDefaults, versionWeightValues, normalizeVersionWeights,
   formatRate, frontierFactorsOf, avLinesOf, metricShortText, metricValueText, ownedCharacters,
   ownedLightCones, perfAnchorsOf, perfLineWeightsOf, scorePercent,
   eidolonsOf, lightConeRanksOf, TIER_PLACEHOLDER, tierLabelsOf, tierMoveText, tierTextOf,
@@ -82,9 +96,12 @@ const el = {
   frontierWeightRow: $('adviceFrontierWeightRow'),
   frontierWeightsMeta: $('adviceFrontierWeightsMeta'),
   frontierWeightsReset: $('adviceFrontierWeightsReset'),
-  /** 抽卡权重那一行（强度 / 性价比，只影响抽卡方案；用户 2026-10-12 第 2、3 条）。 */
+  /** 抽卡权重那一行（强度 / 性价比 / 泛用性；用户 2026-10-12 第 2、3 条 + 2026-10-13 第 1 条）。 */
   drawWeightRow: $('adviceDrawWeightRow'),
   drawWeightsMeta: $('adviceDrawWeightsMeta'),
+  /** 版本权重那一行（6 个版本槽位；用户 2026-10-16 第 3 条）。 */
+  versionWeightRow: $('adviceVersionWeightRow'),
+  versionWeightsMeta: $('adviceVersionWeightsMeta'),
   /** 隐金设置（权重块下方的按钮 + 它旁边的状态行）。 */
   hiddenCostsOpen: $('adviceHiddenCostsOpen'),
   hiddenCostsMeta: $('adviceHiddenCostsMeta'),
@@ -123,6 +140,15 @@ const LEGACY_WEIGHTS_KEY = 'hsr.advice.weights';
  */
 const DRAW_WEIGHTS_KEY = 'hsr.advice.drawWeights';
 /**
+ * **版本权重**（每个副本窗口里最新往前 6 个版本各占多少）的本地存档键
+ * （用户 2026-10-16 第 3 条）。
+ *
+ * ⚠️ 与抽卡权重一样是**长期偏好**，必须跨会话保留；但形状是**长度 6 的数组**
+ * （下标 0 = 最新版），不是对象 —— 读回时一律过 `versionWeightValues()`（缺槽位 /
+ * 非法值按默认补、空串 = 0），所以老存档、短数组、多给的值都退化成安全形状。
+ */
+const VERSION_WEIGHTS_KEY = 'hsr.advice.versionWeights';
+/**
  * 隐金设置的本地存档键（用户 2026-10-11）。
  *
  * 与权重一样存 localStorage：这是一个**长期偏好**（「这些角色我有，别再算它们的钱」），
@@ -159,10 +185,22 @@ const state = {
    * 与算分那条链分叉：比如「两个都清空」到底算等权还是算 0）。
    */
   drawWeights: { ...drawWeightDefaults() },
+  /**
+   * **版本权重**（用户 2026-10-16 第 3 条）：长度 6 的**数组**，下标 0 = 该副本最新版。
+   *
+   * ⚠️ 存的是用户敲进去的**原值**（默认 `[3, 2.5, 2, 1.5, 1, 0.5]`），不做「和归一到 1」
+   * —— 它只有相对大小有意义，而界面上要印原值（与 `normalizeVersionWeights` 同一条
+   * 约定：整体乘个常数不改变任何结果）。
+   * ⚠️ 槽位**不绑定具体版本号**：黑塔网加一版之后整张表前移（下标 0 从 4.6 变成 4.7），
+   * 所以界面只能写「最新版 / −1 版 / …」。
+   */
+  versionWeights: versionWeightDefaults(),
   /** 权重输入的防抖计时器。 */
   weightsTimer: null,
   /** 抽卡权重的防抖计时器（与副本权重分开：改一个不该取消另一个的重算）。 */
   drawWeightsTimer: null,
+  /** 版本权重的防抖计时器（同上：三类旋钮各一个，改一个不该取消另一个的重算）。 */
+  versionWeightsTimer: null,
   /**
    * 隐金设置（用户 2026-10-11）：五个布尔，`{ gift, giftCone, exchange, exchangeCone, standard }`。
    *
@@ -1065,10 +1103,14 @@ const conclusionKey = () => {
     `hidden[${hiddenCostsSignature()}]`,
     // 抽卡权重（用户 2026-10-13 第 2 条起它进服务端请求，所以必须进这个键）。
     `draw[${drawWeightsSignature()}]`,
+    // 版本权重（用户 2026-10-16 第 3 条）：它决定每个副本的 `seasonWeights`，而那是
+    // 服务端现算、客户端做跨版本加权的输入 —— 漏进这个键就是「改了旋钮、界面静默显示
+    // 旧结果」（v4.6.93 那类 bug）。
+    `ver[${versionWeightsSignature()}]`,
   ].join('|');
 };
 
-// ------------------------------------------------- 权重（两大类：关卡权重 / 抽卡权重）
+// ------------------------------------ 权重三大类（关卡 / 抽卡 / 版本，三组各占一行）
 
 /**
  * **关卡权重**那一类的标题、网格与说明节点（`scope` 恒为 `frontier`，见 WEIGHT_SCOPE）。
@@ -1190,11 +1232,13 @@ const renderWeightRow = (scope) => {
  *
  * ⚠️ 2026-10-11 起**副本权重只有一套**（用户第 10 轮「去掉方案权重那一行」）：角色总榜
  * 与抽卡方案的强度侧都吃这一套。参数 `scope` 保留是为了不改调用点，值恒为 `'frontier'`。
- * 抽卡权重是**另一类**（`renderDrawWeightRow`），它与副本权重一起被「恢复默认」清掉。
+ * 抽卡权重是**另一类**（`renderDrawWeightRow`），它与副本权重一起被「恢复默认」清掉；
+ * 版本权重是**第三类**（`renderVersionWeightRow`，用户 2026-10-16 第 3 条），同进同出。
  */
 const renderWeightRows = (scope = 'frontier') => {
   renderWeightRow(scope);
   renderDrawWeightRow();
+  renderVersionWeightRow();
 };
 
 // ------------------------------------------------- 抽卡权重（强度 / 性价比）
@@ -1283,7 +1327,7 @@ const renderDrawWeightsMeta = () => {
 
 /**
  * 画抽卡权重的**三个**输入框（用户 2026-10-12 第 2 条 + 2026-10-13 第 1 条：
- * 权重分两大类，这是第二类）。
+ * 权重分三类，这是第二类）。
  *
  * 旋钮清单来自 `advice.js` 的 `DRAW_WEIGHT_ROWS`（**只有那一份**），所以再加旋钮
  * 依然只改那一张表。输入框的值是**用户敲的原值**，比例由 `renderDrawWeightsMeta()` 印。
@@ -1313,6 +1357,130 @@ const renderDrawWeightRow = () => {
   }
   renderDrawWeightsMeta();
 };
+
+// ------------------------------------------------- 版本权重（最新版 / −1 版 … −5 版）
+
+/**
+ * 读版本权重的 6 个输入框 → **长度 6 的数组**（原值，不归一化）。
+ *
+ * ⚠️ 边界规则与 `weightInputOf` / `versionWeightValues` **同一套**：空串 = 0
+ * （用户把某一版清空 = 那一版不进窗口）、非法值忽略并保留默认。默认值直接取
+ * `advice.js` 的 `versionWeightDefaults()`（与另外两组同一个形状），界面**不抄第二份表**。
+ *
+ * 返回数组而不是对象：`state.versionWeights` 与请求体、服务端的
+ * `normalizeVersionWeights()` 都是数组形状（下标即槽位）。
+ */
+const readVersionWeights = (grid) => {
+  const out = versionWeightDefaults();
+  if (!grid) return out;
+  for (const input of grid.querySelectorAll('input.advice-version-weight')) {
+    const row = VERSION_WEIGHT_ROWS.find((r) => r.key === input.dataset.key);
+    if (!row) continue;
+    // 空串 = 用户清空了输入框 → 0（与 `weightInputOf` 同一条约定）。
+    const n = weightInputOf(input.value);
+    if (n !== null) out[row.index] = n;
+  }
+  return out;
+};
+
+/**
+ * 从 localStorage 恢复版本权重（没有存档 / 字段不合法 → 默认表）。
+ *
+ * ⚠️ 存档形状是数组，但**老存档可能是别的形状**（对象 `{'0':3}`、只有 3 个槽位的短
+ * 数组、甚至一个数字）—— 一律交给 `versionWeightValues()` 判：它两种形状都收、
+ * 缺的按默认补、非法的忽略。所以这里不做任何自己的校验，避免与算分那一份分叉。
+ */
+const loadVersionWeights = () => {
+  let parsed = null;
+  try { parsed = JSON.parse(localStorage.getItem(VERSION_WEIGHTS_KEY) || 'null'); } catch { parsed = null; }
+  if (parsed === null || parsed === undefined) return versionWeightDefaults();
+  return versionWeightValues(parsed);
+};
+
+const saveVersionWeights = () => {
+  try {
+    localStorage.setItem(VERSION_WEIGHTS_KEY, JSON.stringify(state.versionWeights || []));
+  } catch {
+    // 隐私模式 / 配额满：记不住就记不住，不影响本次会话（与 saveWeights 同一条理由）。
+  }
+};
+
+/**
+ * 版本权重那行状态：印**实际生效的值**（用户只有相对大小可调，所以光看输入框里的原值
+ * 看不出「谁占多少」——这里印的是过了 `normalizeVersionWeights()` 之后的生效值）。
+ *
+ * ⚠️ 与另外两组不同，这里不印百分比而印 `最新版 3 : −1 版 2.5 : …` 这种**比值串**
+ * —— 因为它**不做归一到 1**（`normalizeVersionWeights` 明确不做），百分比会误导用户
+ * 以为总和是 100。标签逐槽位印（来自 `VERSION_WEIGHT_ROWS`，不抄第二份），
+ * 这样「哪一版是 0」一眼可见。
+ *
+ * ⚠️ 措辞必须点明「**每个副本算各自的**」：`4.5` 在混沌与异相仲裁里不是同一期，
+ * 所以「最新版」是逐副本的（槽位按下标、不绑定版本号）。
+ */
+const renderVersionWeightsMeta = () => {
+  const meta = el.versionWeightsMeta;
+  if (!meta) return;
+  const value = normalizeVersionWeights(state.versionWeights || []);
+  const defaults = versionWeightDefaults();
+  const changed = value.some((v, i) => Math.abs(v - (defaults[i] ?? 0)) > 1e-9);
+  // 逐个槽位印「标签 原值」（与另外两组同一个形状：**印生效的那个数**，不让用户拿输入框
+  // 里的原值自己脑补）。旋钮清单来自 `VERSION_WEIGHT_ROWS`，所以标签也**不抄第二份**。
+  const parts = VERSION_WEIGHT_ROWS
+    .map((row) => `${row.label} ${formatWeight(value[row.index])}`)
+    .join(' : ');
+  meta.textContent = `每个副本各自算：${parts}`
+    + (changed ? '' : '（默认）')
+    + '；某版设 0 = 那一版不进窗口。改它会重算总榜。';
+};
+
+/**
+ * 画版本权重的**六个**输入框（用户 2026-10-16 第 3 条：第三类权重）。
+ *
+ * 旋钮清单来自 `advice.js` 的 `VERSION_WEIGHT_ROWS`（**只有那一份**）—— 它同时被服务端
+ * `archive.js` 读，所以标签与槽位在这里绝不会与生效的那张表分叉。输入框的值是用户敲的
+ * 原值（不做归一），比例由 `renderVersionWeightsMeta()` 印。
+ */
+const renderVersionWeightRow = () => {
+  const grid = el.versionWeightRow;
+  if (!grid) return;
+  const defaults = versionWeightDefaults();
+  const current = state.versionWeights || [];
+  grid.innerHTML = '';
+  for (const row of VERSION_WEIGHT_ROWS) {
+    const label = document.createElement('label');
+    label.className = 'field field-inline advice-weight-field';
+    label.appendChild(text('span', '', row.label));
+    const input = document.createElement('input');
+    input.className = 'advice-version-weight';
+    input.type = 'number';
+    input.min = '0';
+    input.max = '99';
+    input.step = '0.25';
+    input.inputMode = 'decimal';
+    input.dataset.key = row.key;
+    input.value = String(current[row.index] ?? defaults[row.index] ?? 0);
+    // ⚠️ 标题写清「距**该副本**最新版第 N 版」：槽位是按下标的，「最新版」逐副本不同
+    // （4.5 在混沌与异相仲裁里不是同一期），写死版本号第二天就会说假话。
+    input.setAttribute('aria-label', `${row.label}（版本权重）`);
+    input.title = `距**该副本**最新版${row.index === 0 ? '' : `第 ${row.index} 版`}（每个副本各有一套版本号）`;
+    label.appendChild(input);
+    grid.appendChild(label);
+  }
+  renderVersionWeightsMeta();
+};
+
+/**
+ * 版本权重的签名（进 `conclusionKey`、角色面板的缓存键与请求）。
+ *
+ * ⚠️ 它**必须进 `conclusionKey`**：`normalizeVersionWeights` 虽然不做归一到 1，但它
+ * 决定每个副本的 `seasonWeights`（服务端现算），而总榜/详情窗口的跨版本加权都吃它 ——
+ * 漏进这个键就是「改了旋钮、界面静默显示旧结果」那类 bug（v4.6.93 踩过）。
+ *
+ * 用**生效后**的值（`normalizeVersionWeights`）签名：全 0 与默认表是同一份生效结果，
+ * 不该触发两次重算。
+ */
+const versionWeightsSignature = () => normalizeVersionWeights(state.versionWeights || [])
+  .map((v) => Number(v).toFixed(4)).join(',');
 
 // ------------------------------------------------- 隐金设置（总榜权重下方那个按钮）
 //
@@ -2062,9 +2230,25 @@ const tipTable = (headers, rows, foot, extraClass) => {
  *     （`td { border-bottom: 1px solid rgba(255,255,255,.05) }`）；
  *   * 第 5 条「从属」左细线（`.advice-value-tip-sub`）保留 —— 那是另一件事。
  */
-const tipBox = ({ head, eq, headers, rows, foot, pre, extra, notes, tableClass }) => {
+const tipBox = ({ head, eq, headers, rows, foot, pre, extra, notes, tableClass, headExtra }) => {
   const tip = text('span', 'advice-value-tip');
-  tip.appendChild(text('span', 'advice-value-tip-head', head));
+  // ⚠️ `headExtra`（2026-10-15）：把「查看分数来源」那个折叠按钮摆到标题**同一行**、
+  //    紧跟「补金推荐分 +N.1」之后（用户要求「放在补金推荐分右侧」）。有它时把标题包进一个
+  //    行容器 `.advice-value-tip-headrow`（flex）—— 不包的话 `.advice-value-tip-head` 是
+  //    `display: block`，按钮会被挤到**下一行**，正是用户要改掉的形态。
+  //    ⚠️ 只有传了 `headExtra` 才建这一层：角色总榜那个窗口（`frontierTip`）不传，
+  //       它的 DOM 与样式一字不变（没必要时不引入新层级）。
+  //    ⚠️ 按钮**不能**直接塞进 `.advice-value-tip-head`：那个节点是写标题栏的文字来源
+  //       （`wireValueTips()` 的 openTip 用它的 `textContent` 当窗口标题），里面多一个
+  //       「查看分数来源▾」会让标题栏印出那段按钮文字。
+  if (headExtra) {
+    const headRow = text('span', 'advice-value-tip-headrow');
+    headRow.appendChild(text('span', 'advice-value-tip-head', head));
+    headRow.appendChild(headExtra);
+    tip.appendChild(headRow);
+  } else {
+    tip.appendChild(text('span', 'advice-value-tip-head', head));
+  }
   const sub = text('span', 'advice-value-tip-sub');
   if (eq) sub.appendChild(text('span', 'advice-value-tip-eq', eq));
   // ⚠️ `pre`（用户 2026-10-13）：插在等式与主表**之间**。三个分项那张表必须在这里 ——
@@ -2404,11 +2588,16 @@ const fetchPacks = async (charKey) => {
   // ⚠️ **抽卡权重也必须进**（用户 2026-10-13 第 2 条）：面板给的是**角色得分**，
   // 而它是「三个分项按抽卡权重加权的**榜内归一分**」—— 归一用的极值取自整张表，
   // 权重不同，同一个整包的面板分就会与徽标分不一致。
+  //
+  // ⚠️ **版本权重同理**（用户 2026-10-16 第 3 条）：面板里的「跨版本发挥」那一列
+  // 按 `seasonWeights` 算，而它是服务端拿版本权重现算的 —— 漏进缓存键时用户改了版本
+  // 权重、总榜重算了，点开角色详情却仍是旧权重那一份分（与上面两类完全同一个症状）。
   const weights = activeWeights('frontier');
   const wSig = Object.entries(weights).sort().map(([k, v]) => `${k}=${v}`).join(',');
   const hSig = hiddenCostsSignature();
   const dSig = drawWeightsSignature();
-  const cacheKey = `${key}|${wSig}|${hSig}|${dSig}`;
+  const vSig = versionWeightsSignature();
+  const cacheKey = `${key}|${wSig}|${hSig}|${dSig}|${vSig}`;
   const hit = packsCache.get(cacheKey);
   if (hit) return hit;
   try {
@@ -2421,6 +2610,16 @@ const fetchPacks = async (charKey) => {
     // 抽卡权重：接口默认 = 三等分，所以界面这把也**总是带**（它一定有值），
     // 免得用户调过之后面板仍按默认权重算（这类「权重没带过去」的 bug 修过两次）。
     params.set('drawWeights', JSON.stringify(normalizeDrawWeights(state.drawWeights || {})));
+    // 版本权重（用户 2026-10-16 第 3 条）：接口默认 = 默认表，界面这把**总是带**
+    // （它一定有值）—— 同上一条的理由，这类「权重没带过去」的 bug 已经修过两次。
+    // ⚠️ 形状是**数组**（`normalizeVersionWeights` 返回长度 6 的数组），别发成对象。
+    // ⚠️ **服务端 `/api/archive/packs` 那条路目前还不解析这个查询参数**（只有
+    //    `/api/archive/conclusion` 吃它，见 `src/server/app.js`）。所以面板里的
+    //    「跨版本发挥」仍按默认表算 —— 界面这条线已经发到位，缺的是路由那三行
+    //    （解析 `versionWeights` → 透传 `archiveCharacterPacks` → `archiveFrontierAll`）。
+    //    在那之前**缓存键仍然必须带它**：否则用户改完版本权重、点开角色详情，
+    //    看到的是上一个权重的缓存，连「服务端没吃」这个事实都看不出来。
+    params.set('versionWeights', JSON.stringify(normalizeVersionWeights(state.versionWeights || [])));
     const res = await fetch(`/api/archive/packs?${params.toString()}`,
       { headers: { Accept: 'application/json' } });
     const data = await res.json().catch(() => null);
@@ -2912,9 +3111,12 @@ const tipScoreDetails = ({ id, label, node, extraClass }) => {
  * @param {string} options.title `title` 与 `aria-label`（三项都叫「查看来源」时，
  *   读屏软件与悬停提示得说清是哪一项 —— 光看那四个字分不出强度还是泛用性）。
  * @param {string} [options.extraClass] 给按钮补的类（按分项分色，见 .css）。
+ * @param {string} [options.label] 按钮文字，默认「查看来源」。
+ *   2026-10-15 起「补金推荐分」那张卡的按钮摆在标题行、旁边就是「补金推荐分 +N.1」，
+ *   写「查看来源」会含糊（看哪个来源？），所以那一处传「查看分数来源」。
  * @returns {HTMLButtonElement}
  */
-const tipInlineToggle = ({ id, title, extraClass }) => {
+const tipInlineToggle = ({ id, title, extraClass, label = '查看来源' }) => {
   const btn = text('button',
     `advice-detail-toggle is-inline${extraClass ? ` ${extraClass}` : ''}`);
   // ⚠️ `type="button"`：不写的话按钮在 `<form>` 里的默认类型是 `submit`（同 `tipScoreDetails`）。
@@ -2926,7 +3128,7 @@ const tipInlineToggle = ({ id, title, extraClass }) => {
   btn.setAttribute('aria-controls', `${id}-detail`);
   // 文字在前、插入符在后 —— 用 `▾` 一个字符而不是图标字体（项目无依赖）。
   // 朝向由 CSS 按 `[aria-expanded]` 旋转，这里不存第二份状态。
-  btn.appendChild(text('span', 'advice-detail-inline-label', '查看来源'));
+  btn.appendChild(text('span', 'advice-detail-inline-label', label));
   btn.appendChild(text('span', 'advice-detail-caret', '▾'));
   return btn;
 };
@@ -2954,6 +3156,31 @@ const tipInlineDetailRow = ({ id, node, colSpan }) => {
   cell.appendChild(box);
   row.appendChild(cell);
   return row;
+};
+
+/**
+ * 内联版折叠块的**普通块外壳**（不是表格）：`<span class="advice-detail-box">
+ * <div class="advice-detail" hidden>…</div></span>`。
+ *
+ * 与 `tipInlineDetailRow()` 是**同一套折叠机制**的两副外壳，区别只有外壳形状：
+ *   * `tipInlineDetailRow()` —— 造 `<tr class="advice-detail-row">`，专供「住在表格里」
+ *     的分项按钮（内容要 `colspan` 撑满整表，否则会被第一列挤成一团）。
+ *   * 本函数 —— 造一个普通块，专供**不在表格里**的按钮：补金推荐分那张卡的标题行、
+ *     以及过渡档位 / 次选配队这几处（它们本身就是 `<div>` 排版，没有 `<tr>` 可用）。
+ *
+ * ⚠️ 两者产生的内容块结构**逐字相同**（`.advice-detail-box > .advice-detail[hidden]`，
+ *    id = `${id}-detail`）：委托监听器、`detailOf()`、`.css` 的 `[hidden]` 压 display、
+ *    以及 `check-advice-layout.mjs` 的探针都按同一个结构认 —— 少一层就会「探针说没折叠块、
+ *    CSS 的内边距落空」。默认 **`hidden`**（用户第 8 条：「节省界面的空间」）。
+ */
+const tipInlineDetailBlock = ({ id, node }) => {
+  const box = text('span', 'advice-detail-box');
+  const detail = text('div', 'advice-detail');
+  detail.id = `${id}-detail`;
+  detail.hidden = true;
+  detail.appendChild(node);
+  box.appendChild(detail);
+  return box;
 };
 
 const scoreBreakdownTable = (unit) => {
@@ -3026,19 +3253,21 @@ const scoreBreakdownTable = (unit) => {
   const rows = [];
   const details = [];
   for (const [name, why, raw, score, weight, key, integer] of [
-    // ⚠️ 强度的 `why` 是**新口径**（2026-10-14 定、2026-10-15 改过一次取数版本问题）：
-    //    不再是「打出来的成绩」这种含糊说法，而是「各副本取**最近版本**那一次行动值 →
+    // ⚠️ 强度的 `why` 是**新口径**（2026-10-14 定；2026-10-16 把「哪一次成绩」改成
+    //    「这一关最佳证据那一支队自己的行动值」，见 `advice.js` 的 `avBest` 注释）：
+    //    不再是「打出来的成绩」这种含糊说法，而是「各关卡取该队自己的行动值 →
     //    按关卡权重加权平均」。这一格会被探针按文本判等（`check-advice-layout.mjs` 的
     //    `splitHeaders` / `tipFactor`），改它要同步那边。
-    ['强度', '各副本最近版本的行动值 → 按关卡权重加权平均', unit.strengthTotal, unit.strengthScore,
+    ['强度', '各关卡取该队自己的行动值 → 按关卡权重加权平均', unit.strengthTotal, unit.strengthScore,
       w.strength, 'strength', false],
     ['性价比', '同成绩下金数越少越高', unit.total, unit.costScore, w.cost, 'cost', false],
-    // ⚠️ 用户 2026-10-14 第 1 条之后这个「为什么」必须写明**是这一档的**：
-    //    改前泛用性是角色级的（E0 与 E6 共用一份），现在每个星魂档各算各的。
-    // ⚠️ 2026-10-15 起原始量是**双重加权**的（关卡权重 × 版本权重，缺投稿版本计 0），
-    //    不再是整数并集 —— 那份并集名单在「泛用性来源」折叠块里（versatilityMembers）。
-    ['泛用性', '本星魂档不同队友数，按关卡与版本权重加权', unit.versatilityRaw, unit.versatilityScore,
-      w.versatility, 'versatility', false],
+    // ⚠️ 2026-10-16 第 3 条之后这个「为什么」必须写成**角色级的一个数**：
+    //    「只看 E0/E1/E2、取平均、固定给所有档位」—— 改前写的是「本星魂档」（2026-10-14
+    //    的「不同星魂各自比较」已被第 3 条推翻）。
+    // ⚠️ 原始量仍是**双重加权**的（关卡权重 × 版本权重，缺投稿版本计 0），不再是整数并集
+    //    —— 那份并集名单在「泛用性来源」折叠块里（`versatilityMembers`）。
+    ['泛用性', 'E0/E1/E2 平均（限定的不同队友数，按关卡与版本权重加权）',
+      unit.versatilityRaw, unit.versatilityScore, w.versatility, 'versatility', false],
   ]) {
     const e = extentOf(key, unit);
     // ⚠️ 强度是**绝对刻度**（0~100 就是原始量本身），没有榜内归一那一步 —— 对它写
@@ -3198,9 +3427,10 @@ const strengthSourceBlock = (unit) => {
   });
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
-    '强度来源：逐关卡取该整包**最近版本**的那一次成绩（版本内取最少行动值），再按你设的关卡权重各自贡献'));
+    '强度来源：逐关卡取**这一关最佳证据那一支队**最近的行动值（同一支队里取最快的一次），'
+    + '再按你设的关卡权重各自贡献'));
   box.appendChild(tipTable(
-    ['关卡', '最近版本行动值', '本副本强度', '权重', '贡献'],
+    ['关卡', '行动值（这支队自己）', '本副本强度', '权重', '贡献'],
     rows,
     // 合计 = `strengthTotal`（三个分项表里「强度」那一行的**原始量**），不是角色得分。
     // 单副本时它就是那一列本身，不必再写一行（与性价比表同一条约定）。
@@ -3212,8 +3442,8 @@ const strengthSourceBlock = (unit) => {
     'is-strength-source',
   ));
   box.appendChild(text('div', 'muted small advice-source-note',
-    '上表是**这一档自己**打出来的成绩（每格 = 该副本**最近版本**那一次行动值 → 该副本强度，'
-    + '再按关卡权重加权平均；行动值下面那行小字就是它的版本）。'
+    '上表**每一格都是这一档自己那支队的成绩**（行动值 → 该副本强度，再按关卡权重加权平均；'
+    + '行动值下面那行小字就是它的版本）。'
     // ⚠️ 这一段是本轮补的：榜上/列表里那个「强度分」与上表的合计**不是同一个数** ——
     //    强度分还过了一道「投入越高不更弱」的兜底与 5 分投入加成。不写出来读者会以为算错了
     //    （实测用户就是拿着两档的合计在比，看到「装了光锥反而更低」来报 bug）。
@@ -3241,14 +3471,14 @@ const strengthSourceBlock = (unit) => {
  * 「**泛用性**」这一项的完整来源（用户 2026-10-13 第 3 条 + 2026-10-14 第 1 条）。
  *
  * 这一项的原始量不是分数而是一个**集合的大小**，所以它的「来源」就是把那个集合**列出来**：
- * 这个整包**那个星魂档**在**能通关**队伍里出现过的**不同队友**。再补一句归一换算，
- * 读者就能从名单一路验算到榜上那个 0~100 的分。
+ * 这个角色在**能通关**队伍里出现过的**不同队友**（不含「不用抽就有」的那些）。再补一句
+ * 归一换算，读者就能从名单一路验算到榜上那个 0~100 的分。
  *
- * ⚠️ **口径 2026-10-14 改过**（用户原话：「泛用性需要关联到具体的星魂，一个角色的 E0 的
- *    泛用性和 E6 的泛用性其实关系不大，不同星魂需要各自比较泛用性」）：改前它是
- *    **角色级**的（同一个角色的 E0 包与 E6 包共用一份名单），现在**按星魂档各算各的** ——
- *    所以标题必须把档位写出来，否则读者会以为这是「这个角色的泛用性」。
- *    归一区间也换成**该档自己那一把尺子**（`versatility.byTier`），与算分同源。
+ * ⚠️ **口径 2026-10-16 第 3、5 条改过**（用户：「仅参考该角色 E0/1/2 的泛用性的平均值，
+ *    完全不考虑 E6 的泛用性，将这一结果固定为该角色的**全局泛用性**」+「分子分母都不应当
+ *    考虑常驻角色（考虑大隐金）」）：改前它**按星魂档各一份**（2026-10-14~15），
+ *    现在**一个角色只有一份** —— 名单是 E0/E1/E2 三档队友的并集，与算分用的那个原始量同源。
+ *    所以标题不再写「E{档}」。
  * ⚠️ 名单只对**前 `FRONTIER_DETAIL_ROWS` 条**下发（`slimFrontierUnit` 里那一段）：
  * 排后面的条目这里拿不到名单，**如实返回 null**（那一格不画），不要伪造一行「—」。
  * ⚠️ 开拓者各命途在数据集里是**不同的英文键**，原样列出来会看到 5 个开拓者 ——
@@ -3256,21 +3486,18 @@ const strengthSourceBlock = (unit) => {
  */
 const versatilitySourceBlock = (unit) => {
   const tier = eidolonTierOf(unit.eidolon);
-  // ⚠️ 名单要取**这个整包自己那一档**那份（`enrichTipDetail` 已经把它写成
-  //    `unit.versatilityMembers`；`versatilityByTier` 是同一份数据、留着当兜底 ——
-  //    面板那条路可能还没跑过 `enrichTipDetail` 就直接渲染）。
+  // ⚠️ 2026-10-16 起四条档位的名单是**同一份**（口径使然），这里仍按档取一次只为兼容
+  //    老载荷（那时按档分份）；`enrichTipDetail` 会把结果写进 `unit.versatilityMembers`。
   const mine = unit.versatilityByTier?.[String(tier)];
   const members = Array.isArray(mine?.members) ? mine.members : unit.versatilityMembers;
   if (!Array.isArray(members) || !members.length) return null;
-  // ⚠️ **验算公式必须用整包自己的原始量**（`unit.versatilityRaw`，2026-10-15 起按
-  // 版本/关卡双重加权、随整包自己的证据走）；`mine.raw` 是**这一档最大**的那条
-  // （`versatilityByTier` 只按档索引，同档不同配装不再共享同一个数），拿它验算
-  // 会算出别人的分。名单（并集）与原始量（加权）现在是两个量纲，标题分开说。
+  // ⚠️ **验算公式必须用整包自己的原始量**（`unit.versatilityRaw`，现在四条档位同值）。
+  // 名单（并集）与原始量（加权）是两个量纲，标题分开说。
   const whole = frontierExtentsNow()?.versatility;
   const e = whole?.byTier?.[String(tier)] ?? whole;
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
-    `泛用性来源：**E${tier}** 这一档在**能通关**的队伍里出现过的不同队友（并集 ${members.length} 个）`));
+    `泛用性来源：这个角色在**能通关**的队伍里搭配过的不同队友（E0/E1/E2 并集 ${members.length} 个）`));
   // 名单做成**一个个 span**（不是一整串文本）：① 分隔符不会与名字里的「•」混在一起；
   // ② CDP 探针可以按元素数数，不必去猜分隔符（实测角色名里确实有「•」这种点）。
   const list = text('div', 'advice-vtip-members');
@@ -3298,7 +3525,9 @@ const versatilitySourceBlock = (unit) => {
         + '（榜内最小 ~ 最大就是这一项的全部刻度）'
       : '（本次载荷没带榜内区间，所以只能看上面的原始量。）'));
   box.appendChild(text('div', 'muted small advice-source-note',
-    '开拓者的各命途算**同一个人**（否则一个开拓者会被数成 5 个不同队友）。'));
+    '开拓者的各命途算**同一个人**（否则一个开拓者会被数成 5 个不同队友）；'
+    + '**不用抽就有**的角色（4★ 之外的常驻 5★ / 开拓者 / 大隐金）不算队友 —— '
+    + '谁都能配的组合量不出「百搭」；名单是 E0/E1/E2 三档的并集，E6 完全不参与。'));
   return box;
 };
 
@@ -3650,11 +3879,130 @@ const teamPlanTip = (row, plan) => {
    * 找不到时退回空串 —— id 里少一段只是退化，不会让 `aria-controls` 指错人。
    */
   const cardNo = Math.max(0, (plan?.rows || []).indexOf(row));
+  /**
+   * 「分数来源」那张刻度表：**分项 / 本队取值 / 刻度 / 折算**。
+   *
+   * ⚠️ 抽成函数供**本方案**与每支**次选配队**共用：次选配队的「补金推荐分怎么来的」与本方案
+   *    是**同一把尺子、同一套公式**，只是取值不同 —— 抄第二份必然会分叉。
+   * ⚠️ `r` 上必须有 `strengthPct / gapPct / versatilityPct / versatilityRaw / gap / gold`
+   *    这几个**由 `teamPlan()` 下发**的字段（次选配队那几项见 `advice.js` 的 `alternatives`
+   *    映射，2026-10-15 补齐）；界面不自己算任何一个数，缺字段就是缺，不补默认值。
+   * ⚠️ `extraClass` 让每张表带自己的 class：探针按 `.is-score-scale` 认**本方案**那一张，
+   *    次选配队那几张用 `.is-alt-scale` —— 不区分的话探针会量到第一张、行数与合计判据漂移。
+   */
+  const planScaleTable = (r, extraClass) => tipTable(
+    ['分项', '本队取值', '刻度', '折算'],
+    [
+      // ⚠️ 2026-10-15 起「本队取值」是**角色总榜那一列的强度分**（绝对 0~100）——
+      // 与总榜同一把尺子：围绕行动值 + 投入单调（E6S5 > E6S1 > E2S1 > E0S0），
+      // **不含金数项**（省金是 ② 的事，用户 2026-10-14 第 10 条）。
+      // 所以刻度那一格写死「0 ~ 100（绝对刻度）」：这一档**不做池内归一**，
+      // 换账号 / 换展示条数都不变 —— 旧口径（含金数项的整包分按池内 min-max）见
+      // `teamPlan()` 里那段历史注释。
+      // ⚠️ `r.avSource`（用户 2026-10-16 第 2 条的「行动值前沿」池）那一行的取值
+      //    不是角色总榜的强度分，而是**本队自己**各关行动值的加权 —— 分开写，
+      //    否则读者会拿总榜那一列的数字来对，对不上还以为是算错了。
+      r.avSource
+        ? ['强度得分', `本队行动值强度 ${num(r.strengthPct)}`,
+          '0 ~ 100（本队各关行动值，0 行动值 = 100）',
+          `${num(r.strengthPct)} × ${ws}`]
+        : ['强度得分', `强度分 ${num(r.strengthPct)}`,
+          '0 ~ 100（绝对刻度）',
+          `${num(r.strengthPct)} × ${ws}`],
+      // ② 只有这一个刻度（用户 2026-10-12 第 6 条）。「账面 N 金」放在「本队取值」里当
+      // 参考信息，**不进公式** —— 它已经不参与任何折算（想让它参与就是 v4.6.87 那个
+      // 被用户否掉的「压金度」）。
+      // ⚠️ 刻度那一格必须写出**曲线指数**（用户 2026-10-12 第 9 条「削减一点」）：
+      //    否则读者按线性去算会与右边的折算对不上（补 10 金时 28.6 → 15.3）。
+      ['性价比', `补金 ${r.gap} 金｜账面 ${r.gold} 金`,
+        // ⚠️ 分位必须**现取** `plan.gapCapPct`（2026-10-15 修）：这里原来写死「池内 p75」，
+        //    而常量早就被调到 p60 了 —— 界面于是在说假话。值域也写出来（可负）。
+        `(1 − 补金 ÷ ${plan.gapMax} 金)^${gapPower}`
+        + `（池内 p${Math.round((Number(plan.gapCapPct) || 0.6) * 100)} 分位封顶；`
+        + '正好到封顶值 = 0 分，**超过就转负分**，最低 −100）',
+        `${num(r.gapPct)} × ${wc}`],
+      // ③ 泛用性（用户 2026-10-13 第 3 条；**2026-10-16 第 3、5 条改了每人那个数**）：
+      // 队内成员**各自**的**全局泛用性**（= 该角色 E0/E1/E2 的平均值，不含常驻 / 大隐金）
+      // 按**成本占比**加权，再按候选池归一。刻度是「个队友」，所以写清楚单位 ——
+      // 否则读者会把它当成一个百分比。
+      ['泛用性', `成本加权 ${vers(r.versatilityRaw)} 个队友`,
+        `${vers(plan.versatilityLo)} ~ ${vers(plan.versatilityHi)} 个（池内现算）`,
+        `${num(r.versatilityPct)} × ${wv}`],
+    ],
+    null,
+    extraClass,
+  );
+  /**
+   * 「过渡档位」的**来源**（用户 2026-10-15 第 6 条：过渡档位也要能查看它自己的来源）。
+   *
+   * ⚠️ 过渡档位**不是另一套评分**：`advice.js` 的 `teamPlan()` 在它身上只下发「切分结果」
+   *    （`items` / `gold` / `rest` / 四个人的过渡状态），**没有分项分数**。所以这里**只摆它
+   *    真实有的数** —— 凭空给它编一个分数就是假口径，会在界面上印出一个不存在的刻度。
+   *   * 覆盖的那几笔取自 `row.fill` 的前 `mid.items` 项：`mid` 就是按这个顺序切出来的
+   *     （`advice.js` 里 `mid` 由 `t.fill` 现算，`row.fill` 是同一份）。
+   *   * `gold + rest` 恒等于本方案总补金 `row.gap` —— 这是切分规则的自洽性，写出来读者能自查。
+   */
+  const midSourceNode = () => {
+    const mid = row.mid;
+    const fill = row.fill || [];
+    const head = fill.slice(0, mid.items);
+    // ⚠️ 用 `fillItemName` / `fillItemText`（与卡片上「补金顺序」同一套写法）—— 同一个
+    //    笔在两处写法必须一致，否则读者会以为说a的是两件事。
+    const boughtText = head.map((it) => `${fillItemName(it)} ${fillItemText(it)}`
+      + `（${Math.max(0, Math.round(Number(it.pulls) || 0))} 金）`).join('、') || '—';
+    const box = text('span', 'advice-plan-tip-scale');
+    // ⚠️ 只有两列、且**金数放最后一列**：`tipTable()` 会把最后一列打成 `is-val`（金色加粗），
+    //    那是给「值」准备的 —— 把一大串「含哪几笔」放在最后会变成一整片金色粗字，很难看。
+    box.appendChild(tipTable(
+      ['阶段', '金数'],
+      [
+        [`本方案（补齐后，共 ${fill.length} 笔）`, `${row.gap} 金`],
+        [`过渡档位（先补前 ${mid.items} 笔）`, `${mid.gold} 金`],
+        ['再补到本方案（后半）', `${mid.rest} 金`],
+      ],
+      null,
+      'is-mid-scale',
+    ));
+    box.appendChild(text('span', 'advice-value-tip-note',
+      `过渡档位要先补的这几笔：${boughtText}`));
+    box.appendChild(text('span', 'advice-value-tip-note',
+      '⚠️ 过渡档位是**补金顺序上的一个中间档位、不是另一套评分**：它按补金顺序把本方案的'
+      + '总差额一切两半（前半累计金数不超过总差额的一半，至少 1 笔、至多少 1 笔），'
+      + '所以要买的每一项都是本方案的子集 —— **成本完全下位**，补金顺序也天然先到它。'));
+    box.appendChild(text('span', 'advice-value-tip-note',
+      `前半 ${mid.gold} 金 + 后半 ${mid.rest} 金 = 本方案 ${row.gap} 金；`
+      + '四个人的过渡状态见上面那行（待补的那一项退回你账号的现状，所以可能仍标「缺」）。'));
+    return box;
+  };
+  /**
+   * 「次选配队」一支的**来源**（用户 2026-10-15 第 6 条）。
+   *
+   * ⚠️ 它与本方案是**同一把尺子**：`alt.total` 同样是
+   *    `强度得分 × ws + 性价比 × wc + 泛用性 × wv`，所以来源直接复用 `planScaleTable()`，
+   *    再把「凭什么算次选」（与本队共享几名成员）写出来。
+   * ⚠️ 三个分项（`strengthPct` / `gapPct` / `versatilityPct` / `versatilityRaw` / `gold`）
+   *    是 **2026-10-15 在 `advice.js` 的 `alternatives` 映射里补下发的** —— 界面不重算。
+   */
+  const altSourceNode = (alt) => {
+    const box = text('span', 'advice-plan-tip-scale');
+    box.appendChild(text('span', 'advice-value-tip-note',
+      `这支与**本队共享 ${alt.shared} 名成员**`
+      + '（「类似」的判据就是共享 ≥ 2 人，最多列 3 支）；'
+      + `补金推荐分 ${Number(alt.total).toFixed(1)} = 下面三个分项按抽卡权重加权：`));
+    box.appendChild(planScaleTable(alt, 'is-alt-scale'));
+    return box;
+  };
   const extra = [];
   if (row.mid) {
+    // 用户 2026-10-15 第 6 条：过渡档位也要能看**它自己的**来源 —— 按钮与标题同一行
+    // （同一个 `tipInlineToggle()`），内容收在紧跟其后的折叠块里、默认 hidden。
+    const midId = `advicePlanMid-${cardNo}`;
     const box = text('div', 'advice-plan-tip-block');
-    box.appendChild(text('strong', 'advice-plan-tip-title',
-      `过渡档位：先补前 ${row.mid.items} 笔（${row.mid.gold} 金）`));
+    const title = text('strong', 'advice-plan-tip-title',
+      `过渡档位：先补前 ${row.mid.items} 笔（${row.mid.gold} 金）`);
+    title.appendChild(tipInlineToggle({ id: midId, title: '查看过渡档位的来源' }));
+    box.appendChild(title);
+    box.appendChild(tipInlineDetailBlock({ id: midId, node: midSourceNode() }));
     box.appendChild(text('div', 'muted small', midStateText(row.mid)));
     box.appendChild(planTipTeam(row.mid.members, 'is-transition'));
     box.appendChild(text('div', 'muted small', `再补 ${row.mid.rest} 金 → 本方案`));
@@ -3664,62 +4012,31 @@ const teamPlanTip = (row, plan) => {
     const box = text('div', 'advice-plan-tip-block');
     box.appendChild(text('strong', 'advice-plan-tip-title',
       `次选配队（与本队共享 ${row.alternatives[0].shared} 名成员，最多 3 支）`));
-    for (const alt of row.alternatives) {
+    row.alternatives.forEach((alt, j) => {
+      // 用户 2026-10-15 第 6 条：每支次选配队也要能看各自的来源。id 里带序号 —— 一次最多
+      // 3 支，`cardNo` 保证 15 张卡之间不重名，`j` 保证同一张卡内的三支不重名。
+      const altId = `advicePlanAlt-${cardNo}-${j}`;
       const item = text('div', 'advice-plan-tip-alt');
-      item.appendChild(text('div', 'advice-plan-tip-alt-copy',
-        `补金推荐分 ${Number(alt.total).toFixed(1)}｜补金 ${alt.gap} 金`));
+      const copy = text('div', 'advice-plan-tip-alt-copy',
+        `补金推荐分 ${Number(alt.total).toFixed(1)}｜补金 ${alt.gap} 金`);
+      copy.appendChild(tipInlineToggle({ id: altId, title: `查看第 ${j + 1} 支次选配队的来源` }));
+      item.appendChild(copy);
+      item.appendChild(tipInlineDetailBlock({ id: altId, node: altSourceNode(alt) }));
       item.appendChild(planTipTeam(alt.members));
       box.appendChild(item);
-    }
+    });
     extra.push(box);
   }
-  // ⚠️ 用户 2026-10-13 第 8 条：这一节（原先是 `headers` + `rows` 直接铺在窗口正文里）
-  // 被整个收进一个**默认收起**的折叠块，按钮文字写「分数来源」—— 与角色总榜那三个分项
-  // 的做法一致（同一个 `tipScoreDetails()`），这样两个窗口的交互是同一套。
+  // ⚠️ 用户 2026-10-15 第 6 条：这张刻度表由 `planScaleTable()` 统一产出（本方案与每支
+  // 次选配队共用同一套列与口径，见上面那个函数）。它仍然收在**默认收起**的折叠块里，
+  // 只是那个折叠块的**按钮已经搬到标题行**（`tipBox` 的 `headExtra`）—— 与角色总榜那三个
+  // 分项的做法一致（同一个 `tipInlineToggle()`），两个窗口的交互仍是同一套。
   //
   // 「那两块来源」是哪些：这张表就是**分数的组成**（三个分项各自的取值、池内刻度、折算），
-  // 而下面那几段说明里有两段专门讲**它每一项的原始出处**（强度得分 `N1`、泛用性 `N2`），
+  // 而下面那两段说明专门讲**它每一项的原始出处**（强度得分 `N1`、泛用性 `N2`），
   // 它们也一并收进来 —— 收起来时窗口只剩「摘要 + 等式 + 过渡档位 + 次选配队 + 那几条
   // 与来源无关的脚注」，正是用户要的「节省界面的空间」。
-  const scoreTable = tipTable(
-    ['分项', '本队取值', '刻度', '折算'],
-    [
-      // ⚠️ 2026-10-15 起「本队取值」是**角色总榜那一列的强度分**（绝对 0~100）——
-      // 与总榜同一把尺子：围绕行动值 + 投入单调（E6S5 > E6S1 > E2S1 > E0S0），
-      // **不含金数项**（省金是 ② 的事，用户 2026-10-14 第 10 条）。
-      // 所以刻度那一格写死「0 ~ 100（绝对刻度）」：这一档**不做池内归一**，
-      // 换账号 / 换展示条数都不变 —— 旧口径（含金数项的整包分按池内 min-max）见
-      // `teamPlan()` 里那段历史注释。
-      ['强度得分', `强度分 ${num(row.strengthPct)}`,
-        '0 ~ 100（绝对刻度）',
-        `${num(row.strengthPct)} × ${ws}`],
-      // ② 只有这一个刻度（用户 2026-10-12 第 6 条）。「账面 N 金」放在「本队取值」里当
-      // 参考信息，**不进公式** —— 它已经不参与任何折算（想让它参与就是 v4.6.87 那个
-      // 被用户否掉的「压金度」）。
-      // ⚠️ 刻度那一格必须写出**曲线指数**（用户 2026-10-12 第 9 条「削减一点」）：
-      //    否则读者按线性去算会与右边的折算对不上（补 10 金时 28.6 → 15.3）。
-      ['性价比', `补金 ${row.gap} 金｜账面 ${row.gold} 金`,
-        // ⚠️ 分位必须**现取** `plan.gapCapPct`（2026-10-15 修）：这里原来写死「池内 p75」，
-        //    而常量早就被调到 p60 了 —— 界面于是在说假话。值域也写出来（可负）。
-        `(1 − 补金 ÷ ${plan.gapMax} 金)^${gapPower}`
-        + `（池内 p${Math.round((Number(plan.gapCapPct) || 0.6) * 100)} 分位封顶；`
-        + '正好到封顶值 = 0 分，**超过就转负分**，最低 −100）',
-        `${num(row.gapPct)} × ${wc}`],
-      // ③ 泛用性（用户 2026-10-13 第 3 条 + **2026-10-14 第 1 条改口径**）：队内成员
-      // **各自**泛用性按**成本占比**加权（每人那个数 = 他在**自己那一档星魂**下能通关的
-      // 队伍里见过的不同队友数），再按候选池归一。刻度是「个队友」，所以写清楚单位 ——
-      // 否则读者会把它当成一个百分比。
-      ['泛用性', `成本加权 ${vers(row.versatilityRaw)} 个队友`,
-        `${vers(plan.versatilityLo)} ~ ${vers(plan.versatilityHi)} 个（池内现算）`,
-        `${num(row.versatilityPct)} × ${wv}`],
-    ],
-    null,
-    // ⚠️ 打上自己的 class（用户 2026-10-13 第 8 条）：这张表现在与**它自己那份来源表**
-    // 同处一个窗口，两张表都没有标记的话，探针（`check-advice-layout.mjs`）按
-    // `.advice-value-tip-table tbody tr` 取「分数来源表是几行」会把两张表一起数进去
-    // —— 实测会数出 6 行（3 + 3）而不是 3 行，判据变成测别的东西。
-    'is-score-scale',
-  );
+  const scoreTable = planScaleTable(row, 'is-score-scale');
   // 与来源无关的脚注（留在窗口里）：刻度口径、候选池、以及「性价比 = 性价比」那句。
   // ⚠️ 顺序与改前**完全一致**：折叠块只搬走属于「来源」的两段，其余原位保留 ——
   //    这样「窗口里先看结论、要看来源再点开」的读法不变。
@@ -3730,23 +4047,36 @@ const teamPlanTip = (row, plan) => {
     //    那条被用户第 10 条推翻（同一个词在两处不能指两个东西：总榜里 E6S5 更强，
     //    而抽卡方案里越便宜越「强」，用户 2026-10-15 报的正是这个错位）。
     '强度得分 = **角色总榜那一列的强度分**（绝对 0~100，与总榜同一把尺子）：'
-    + '每个副本取该整包**最近版本**那一次成绩的行动值（旧版本的成绩不再压过新版本），'
-    + '按你设的关卡权重加权，'
+    + '逐关卡取**这一关最佳证据那一支队自己的行动值**（同一支队里取最快的一次，'
+    + '旧版本的成绩不再压过新版本），按你设的关卡权重加权，'
     + '再按「星魂 ≤、叠影 ≤ 的档位里打过的最好成绩」向上兜底，最后 5 分按投入档位给 —— '
     + '所以**行动值越低越高、投入越高越高**（E6S5 > E6S1 > E2S1 > E0S0），'
     + `**与金数、与你有多少钱无关**。三个系数来自「抽卡权重」（强度 ${(draw.strength * 100).toFixed(0)}% / `
     + `性价比 ${(draw.cost * 100).toFixed(0)}% / 泛用性 ${(draw.versatility * 100).toFixed(0)}%），`
     + '改它不用重算数据集。',
     // ⚠️ 用户 2026-10-13 第 3 条：泛用性**也**进补金推荐分。
-    //    2026-10-14 第 1 条把两件事一起改了（原话：「整个队伍的泛用性根据不同角色的成本
-    //    占整个队伍的成本的权重而定」）：① 每人的那个数现在是**他自己那一档星魂**的数
-    //    （不再是角色级的一个数）；② 队级合成从**简单平均**换成**按各成员金数占比加权**。
-    '泛用性 = 队内成员**各自**泛用性按**成本占比**加权（每人那个数 = 他在**自己那一档星魂**下'
-    + '能通关的队伍里见过的不同队友数，开拓者各命途算一个人；权重 = 这个人的金数 ÷ 全队金数），'
+    //    2026-10-14 第 1 条定了队级合成（按各成员金数占比加权）；
+    //    2026-10-16 第 3、5 条改了**每人那个数**：只看 E0/E1/E2 的平均值、固定为角色的
+    //    全局泛用性，且「不用抽就有」的角色（常驻 / 大隐金）不算。
+    '泛用性 = 队内成员**各自**泛用性按**成本占比**加权（每人那个数 = 这个角色的**全局泛用性**'
+    + '＝它在 E0/E1/E2 能通关的队伍里搭配过的**限定**不同队友数、按关卡与版本权重加权；'
+    + '开拓者各命途算一个人；权重 = 这个人的金数 ÷ 全队金数），'
     + '再按候选池归一 —— 所以「队里花金最多的那位越百搭，这支队越好抄、越好换人」。',
   ];
   const tip = tipBox({
     head: `补金推荐分 +${num(row.total)}`,
+    // ⚠️ 用户 2026-10-15 第 6 条：「查看分数来源」按钮搬到**补金推荐分右侧**（与标题同一行、
+    // 紧跟其后，视觉上属于标题行）。用的是**内联版**按钮（`tipInlineToggle()`），而不是原来的
+    // `tipScoreDetails()`（那个把按钮与内容包在一个盒子里、按钮独占一行）；内容仍收在下面
+    // `pre` 里那个**默认收起（`hidden`）**的折叠块中（`tipBox` 的 `headExtra` 负责把按钮摆进标题行）。
+    headExtra: tipInlineToggle({
+      id: `advicePlanScore-${cardNo}`,
+      title: '查看补金推荐分的分数来源',
+      extraClass: 'is-plan',
+      // 旁边就是「补金推荐分 +N.1」，写「查看来源」会含糊（看哪个来源？）——
+      // 所以这一处用更明确的「查看分数来源」（见 `tipInlineToggle()` 的 label 参数）。
+      label: '查看分数来源',
+    }),
     // ⚠️ 第二项写成**性价比**（不是「性价比得分」）：v4.6.89 起它俩就是同一个数，
     // 印两个名字会让读者以为还有别的成分（用户第 6 条要的就是去掉这一层）。
     eq: `= 强度得分 ${num(row.strengthPct)} × ${ws} + 性价比 ${num(row.gapPct)} × ${wc}`
@@ -3754,9 +4084,10 @@ const teamPlanTip = (row, plan) => {
     // ⚠️ 表头 / 行 / 脚注都在**折叠块里**（见上面 `scoreTable`）——这里不再直接传
     // `headers` / `rows` / `notes`：`tipBox` 只在 `headers && rows` 时才建表，
     // 不传就等于「窗口正文里没有这张表」。
-    pre: [tipScoreDetails({
+    // ⚠️ 按钮已搬到标题行（`headExtra`），所以这里只放**内容块**（`tipInlineDetailBlock()`）——
+    // 它在 `pre` 里的位置与改前 `tipScoreDetails()` 那个盒子一模一样（等式与主表之间）。
+    pre: [tipInlineDetailBlock({
       id: `advicePlanScore-${cardNo}`,
-      label: '查看分数来源',
       node: (() => {
         const box = text('span', 'advice-plan-tip-scale');
         box.appendChild(scoreTable);
@@ -3768,7 +4099,6 @@ const teamPlanTip = (row, plan) => {
         }
         return box;
       })(),
-      extraClass: 'is-plan',
     })],
     extra,
     notes: [
@@ -3786,9 +4116,12 @@ const teamPlanTip = (row, plan) => {
       // ⚠️ 候选池在 v4.6.83 从「角色总榜」放宽到「逐档榜 ∪ 总榜」
       // （每角色 × 每星魂档各留一条，再加每角色的总最佳），所以这里不能再说「总榜 N 支」
       // —— 两个数已经不是同一个集合了。
-      `候选池 ${plan.pool} 支（逐档榜 ∪ 总榜去重后 ${plan.poolAll} 支，`
+      `候选池 ${plan.pool} 支（逐档榜 ∪ 总榜 ∪ 行动值前沿去重后 ${plan.poolAll} 支，`
       + '再去掉「补金 0」的；逐档榜 = 每个角色在每个星魂档各收敛一条，'
-      + '所以同一支队伍的**低配档位**也在池内），'
+      + '所以同一支队伍的**低配档位**也在池内；'
+      + `行动值前沿 = 各副本行动值最好的几支队，共 ${plan.poolAv ?? 0} 支 —— 那类「0 行动值」的满配队`
+      + '进不了证据池，专门为它开这条路）,'
+
       + `按总分降序取前 ${plan.rows.length} 支展示；改展示条数不会改分数。`,
     ],
   });
@@ -3924,7 +4257,7 @@ const renderTeamPlan = (conclusion) => {
   const wv = formatShare(draw.versatility);
 
   setMeta(plan.rows.length
-    ? `候选 ${plan.pool} 支队伍（总榜 ${plan.poolAll} 支里去掉「补金 0」的）`
+    ? `候选 ${plan.pool} 支队伍（逐档榜 ∪ 总榜 ∪ 行动值前沿 ${plan.poolAll} 支里去掉「补金 0」的）`
       + `${plan.truncated ? ` · 只列前 ${plan.rows.length} 条` : ''}`
     : '没有需要补金的队伍');
 
@@ -4114,8 +4447,9 @@ const renderTeamPlan = (conclusion) => {
   const capped = plan.rows.filter((r) => r.gap >= plan.gapMax).length;
   const drawFoot = plan.drawWeights || normalizeDrawWeights(state.drawWeights || {});
   el.teamPlanBody.appendChild(text('p', 'muted small advice-plan-team-foot',
-    `口径：候选 = 角色**逐档榜 ∪ 总榜**按队伍去重`
-    + `（逐档榜 = 每个角色在 E0/E1/E2/E6 各收敛一条，再并上每个角色的总最佳，共 ${plan.poolAll} 支），`
+    `口径：候选 = 角色**逐档榜 ∪ 总榜 ∪ 行动值前沿**按队伍去重`
+    + `（逐档榜 = 每个角色在 E0/E1/E2/E6 各收敛一条，再并上每个角色的总最佳；`
+    + `行动值前沿 = 各副本行动值最好的几支队，${plan.poolAv ?? 0} 支；共 ${plan.poolAll} 支），`
     + `去掉补金 0 金的之后剩 ${plan.pool} 支 —— `
     + '**这样同一支队伍的低配档位也在池内**，便宜但强度略低的队伍能靠补金少拉分；'
     + `**下面这 ${plan.rows.length} 条是其中最靠前的**（按补金推荐分排，截断只影响显示）；`
@@ -4378,6 +4712,10 @@ const loadConclusion = async () => {
         // 而总榜的「每角色只留一条」收敛在服务端 —— 所以**必须显式发**。
         // 服务端会回显归一化后的那一份（`data.drawWeights`），界面据此印比例。
         drawWeights: { ...(state.drawWeights || {}) },
+        // 版本权重（用户 2026-10-16 第 3 条）：6 个槽位的**数组**（下标 0 = 每个副本
+        // 自己的最新版）。服务端按它现算每个副本的 `seasonWeights`，客户端再拿那份
+        // 做跨版本加权 —— 所以**必须显式发**（不传 = 默认表）。
+        versionWeights: [...(state.versionWeights || [])],
       }),
     });
     const data = await res.json().catch(() => null);
@@ -4627,9 +4965,11 @@ export const mountAdviceView = (options = {}) => {
   // 角色面板浮层（战斗记录里点角色）：关闭 / 背景 / ESC
   wireRecordPanel();
 
-  // 权重两大类：先恢复用户上次定下的倾向（关卡权重 + 抽卡权重），再把输入框画出来。
+  // 权重三大类：先恢复用户上次定下的倾向（关卡权重 + 抽卡权重 + 版本权重），再把
+  // 三组输入框画出来（用户 2026-10-16 第 3 条起是三类，三组各占一行）。
   state.weights = loadWeights();
   state.drawWeights = loadDrawWeights();
+  state.versionWeights = loadVersionWeights();
   renderWeightRows();
 
   // 隐金设置（用户 2026-10-11）：先读存档（没有存档 = 五项全勾），再画状态行、
@@ -4657,7 +4997,7 @@ export const mountAdviceView = (options = {}) => {
     state.season = el.season.value;
     loadStats();
   });
-  // 权重两大类之一：**关卡权重**输入 → 存本地 → 防抖后请服务端按新权重重算。
+  // 权重三大类之一：**关卡权重**输入 → 存本地 → 防抖后请服务端按新权重重算。
   //
   // ⚠️ 2026-10-11 起**只有 frontier 这一套**（用户第 10 轮「去掉方案权重那一行」）：
   // 角色总榜与抽卡方案的「强度得分」都吃它，所以这一行会同时改两块 —— 这是口径使然
@@ -4688,7 +5028,7 @@ export const mountAdviceView = (options = {}) => {
       });
     }
   }
-  // 权重两大类之二：**抽卡权重**输入（用户 2026-10-12 第 2、3、4 条 + 2026-10-13 第 1、2 条）。
+  // 权重三大类之二：**抽卡权重**输入（用户 2026-10-12 第 2、3、4 条 + 2026-10-13 第 1、2 条）。
   //
   // ⚠️ 它**现在也进服务端请求**（v4.6.95 起，与 v4.6.94 那版相反）：用户 2026-10-13 第 2 条
   // 要求角色总榜受三个权重影响，而总榜的「每角色只留一条」收敛在服务端
@@ -4716,26 +5056,58 @@ export const mountAdviceView = (options = {}) => {
       });
     }
   }
+  // 权重三大类之三：**版本权重**输入（用户 2026-10-16 第 3 条）。
+  //
+  // ⚠️ 它与抽卡权重一样**进服务端请求**：它决定每个副本窗口里「最新往前 6 个版本」
+  // 各占多少，而服务端在当前请求里现算 `seasonWeights`，客户端再拿那一份做跨版本加权
+  // （总榜的整包分、详情窗口的「跨版本发挥」都是这条链的下游）。
+  // 所以走的还是同一条路：防抖 → `packsCache.clear()` → `loadConclusion()` 重算。
+  {
+    const grid = el.versionWeightRow;
+    if (grid) {
+      grid.addEventListener('input', () => {
+        state.versionWeights = readVersionWeights(grid);
+        saveVersionWeights();
+        renderVersionWeightsMeta();
+        const meta = el.versionWeightsMeta;
+        if (meta) meta.classList.add('is-pending');
+        clearTimeout(state.versionWeightsTimer);
+        state.versionWeightsTimer = setTimeout(async () => {
+          // 三处旋钮做**逐字一致**的一件事（关卡权重 / 抽卡权重那两处也一样）：
+          // 角色面板那份「全部配队」是按三类权重 + 隐金缓存的，旋钮一变就必须作废 ——
+          // 否则同一个角色会一直吃旧权重算出来的分（v4.6.69 / v4.6.93 修的就是这一类）。
+          packsCache.clear();
+          if (state.index) await loadConclusion();
+          else if (state.conclusion) renderTeamPlan(state.conclusion);
+          if (meta) meta.classList.remove('is-pending');
+        }, WEIGHTS_DEBOUNCE);
+      });
+    }
+  }
   /**
-   * 「恢复默认」= 清掉**两大类**权重（关卡权重回到 `envWeightDefaults()`、抽卡权重回到
-   * `drawWeightDefaults()`）。
+   * 「恢复默认」= 清掉**三大类**权重（关卡权重回到 `envWeightDefaults()`、抽卡权重回到
+   * `drawWeightDefaults()`、版本权重回到 `versionWeightDefaults()`）。
    *
-   * 为什么一个按钮管两块：它们本来就是一张卡里的同一件事（用户第 2 条：「权重分为两大类」），
-   * 而恢复默认是「我调乱了、回到起点」的动作 —— 分成两个按钮只会让人以为还有第三类。
+   * 为什么一个按钮管三块：它们本来就是一张卡里的同一件事（用户第 2 条：「权重分为两大类」，
+   * 2026-10-16 第 3 条又加了第三类），而恢复默认是「我调乱了、回到起点」的动作 ——
+   * 分成三个按钮只会让人以为它们是三件互不相关的事。
    */
   const resetWeights = async (scope) => {
     state.weights[scope] = {};
     state.drawWeights = { ...drawWeightDefaults() };
+    state.versionWeights = versionWeightDefaults();
     saveWeights();
     saveDrawWeights();
+    saveVersionWeights();
     renderWeightRow(scope);
     renderDrawWeightRow();
-    // ⚠️ **和两个输入框处理器做同一件事**（用户 2026-10-13 第 10 条那类 bug）：这一下同样
-    // 换掉了「关卡权重 + 抽卡权重」两个缓存键里的旋钮，所以角色面板 / 角色得分详情那份
-    // 「该角色的全部配队」缓存必须一起作废。漏了它的症状与关卡权重那条一模一样
+    renderVersionWeightRow();
+    // ⚠️ **和三个输入框处理器做同一件事**（用户 2026-10-13 第 10 条那类 bug）：这一下同样
+    // 换掉了「关卡权重 + 抽卡权重 + 版本权重」三个缓存键里的旋钮，所以角色面板 / 角色得分
+    // 详情那份「该角色的全部配队」缓存必须一起作废。漏了它的症状与关卡权重那条一模一样
     // ——「点了恢复默认、总榜回去了，点开角色详情还是刚才那组自定义权重算出来的分」，
-    // 而且这个按钮是**两套权重一起清**，漏掉时错得更久。
-    // 旧注释里只写了「清掉两大类权重」，没人提缓存，所以这里把理由写下来（避免下次又漏）。
+    // 而且这个按钮是**三套权重一起清**，漏掉时错得更久。
+    // 2026-10-16 加上版本权重时这条注释同样适用，所以把「三」一起改掉（避免下次又漏）。
     packsCache.clear();
     if (state.index) await loadConclusion();
   };

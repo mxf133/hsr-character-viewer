@@ -409,6 +409,18 @@ export const createApp = (options = {}) => {
             // 口径不变）；这里不做校验，`normalizeDrawWeights` 只认有限非负数、缺键补默认，
             // 所以非法输入（字符串 / 数组 / 多给的键）都退化成安全的形状，不会 500。
             drawWeights: body.drawWeights,
+            // **版本权重**（用户 2026-10-16）：第 3 类权重 —— 6 个槽位的数组
+            // （下标 0 = 最新版，默认 `[3, 2.5, 2, 1.5, 1, 0.5]`），只有**相对大小**
+            // 有意义（不做归一到 1，界面上要印用户敲的原值）。
+            //
+            // 它决定「跨版本加权」那一层：每个整包的分是**按版本加权**的（旧版本被稀释、
+            // 权重 0 = 那一版不进窗口），所以它必须进服务端 —— `seasonWeights` 是按
+            // 用户这张表现算的（见 `archiveFrontier`）。
+            //
+            // 与 `drawWeights` 同一套路：**不传 = 默认表**（工具与回归测试的历史口径不变）；
+            // 这里不做校验，`normalizeVersionWeights` 只认有限非负数、缺槽位补默认、
+            // 全 0 退回默认，所以非法输入（字符串 / 短数组 / 多给的键）都退化成安全的形状。
+            versionWeights: body.versionWeights,
           });
           json(res, 200, result);
         } catch (err) {
@@ -512,11 +524,29 @@ export const createApp = (options = {}) => {
               // 非法 JSON → 当作没传，退回默认三等分（面板仍然可用）。
             }
           }
+          // **版本权重**（用户 2026-10-16）：与 `drawWeights` 同一套写法 —— 查询串
+          // 里是 JSON 数组（6 个槽位，下标 0 = 最新版）。
+          //
+          // ⚠️ 少了它，详情窗口里的「跨版本发挥」/来源表会按**默认表**算，而榜上是按
+          // 用户设的表算的 —— 同一个整包在两个地方两个数（与 v4.6.69 修过的
+          // 「总榜权重没带过去」是同一类 bug）。解析失败就当作没传，不让它 500。
+          let versionWeights;
+          const rawVersion = url.searchParams.get('versionWeights');
+          if (rawVersion) {
+            try {
+              const parsed = JSON.parse(rawVersion);
+              if (Array.isArray(parsed)) versionWeights = parsed;
+              else if (parsed && typeof parsed === 'object') versionWeights = parsed;
+            } catch {
+              // 非法 JSON → 当作没传，退回默认版本权重表。
+            }
+          }
           json(res, 200, await archiveCharacterPacks(char, {
             window: url.searchParams.get('window'),
             ...(frontierWeights ? { frontierWeights } : {}),
             ...(hiddenCosts !== undefined ? { hiddenCosts } : {}),
             ...(drawWeights !== undefined ? { drawWeights } : {}),
+            ...(versionWeights !== undefined ? { versionWeights } : {}),
           }));
         } catch (err) {
           console.warn('[archive] 读取角色配装失败：', err.message);

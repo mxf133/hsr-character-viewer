@@ -11,9 +11,11 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
-  VERSION_WEIGHTS, VERSION_WINDOW, envWeightOf, versionWeightOf, videoUrlOf,
+  VERSION_WEIGHTS, VERSION_WINDOW, envWeightOf, normalizeVersionWeights, versionWeightOf,
+  videoUrlOf,
 } from '../../public/scripts/advice.js';
 import { applyCharacterIdOverrides } from './character-icon-ids.js';
+import { buildDebutOrder, FORM_AVATAR_ID, DEBUT_ID_ALIASES } from './character-debut.js';
 
 const DEFAULT_DIR = resolve(process.cwd(), 'theherta');
 
@@ -341,6 +343,30 @@ const resolveModeLabels = async () => {
 };
 
 /**
+ * 「数据集英文键 → avatar_id」的查表器（角色列表排序用，见 `refs.debutOrder`）。
+ *
+ * `i18n.charactersById` 是 `id → { en, cn }`，这里反查；对**数据集分不清的多形态角色**
+ * （三月七两个命途 / 开拓者五个命途）用 `FORM_AVATAR_ID` 兜底 —— 那张表在
+ * `character-debut.js` 里，与排序模块同源，不在这里另抄一份。
+ *
+ * 反查命中与兜底都拿不到时返回 `null`，`buildDebutOrder()` 会退化到「英文键字典序」
+ * —— 那种键是数据集里新加的、还没进 i18n 表，**不该抛异常**。
+ */
+const avatarIdResolver = (i18n) => {
+  const byEn = new Map();
+  for (const [id, v] of Object.entries(i18n?.charactersById || {})) {
+    // ⚠️ 首次写入为准：`charactersById` 里 1001/1224 都写成 `March 7th`，后写会把
+    //    先写的那条挤掉 —— 反正那两条这里都用不到（走 `FORM_AVATAR_ID`）。
+    if (v?.en && !byEn.has(v.en)) byEn.set(v.en, Number(id) || null);
+  }
+  return (key) => {
+    if (FORM_AVATAR_ID[key]) return FORM_AVATAR_ID[key];
+    const id = byEn.get(key);
+    return Number.isFinite(id) ? id : null;
+  };
+};
+
+/**
  * Everything the recommendation page needs to render its dropdowns without
  * shipping the per-team breakdown.
  */
@@ -450,6 +476,55 @@ export const archiveIndex = async () => {
        */
       firstSeen: data.refs?.firstSeen || { characters: {}, lightCones: {}, byMode: {} },
       /**
+       * 角色列表的**固定排序键**（用户 2026-10-16 第 8 条）：`{ 数据集英文键: 序号 }`，
+       * 序号**越大越新**，界面按序号降序排就是「最新登场的角色在前」。
+       *
+       * 三层主次全在 `character-debut.js` 的 `buildDebutOrder()` 里（① 黑塔网 firstSeen
+       * ② wiki 实装版本 ③ avatar_id），服务端这里只负责把「英文键 → avatar_id」的查表
+       * 喂给它 —— 那张表要用 `i18n.charactersById`（id → {en, cn}）反查，加上
+       * `FORM_AVATAR_ID` 补上数据集分不清的 7 个多形态键。
+       *
+       * ⚠️ 为什么走**整数序号**而不是把版本号原样下发：前端只要一次 `a - b`，不必在浏览器里
+       * 再抄一份版本比较函数（版本比较在本仓库只允许有一份实现，见 `seasonSort`）。
+       * ⚠️ 只下发 93 个键的整数表（实测约 1 KB），不是整份 firstSeen。
+       */
+      debutOrder: buildDebutOrder({
+        firstSeen: data.refs?.firstSeen?.characters || {},
+        idOf: avatarIdResolver(i18n),
+        keys: data.refs?.characters || [],
+      }),
+      /**
+       * 同一份排序键，换成 **avatar_id → 序号**（用户 2026-10-16 第 8 条）。
+       *
+       * 为什么还要这一份：米游社快照里的角色只有**中文名 + 数字 id**，而数据集把多形态
+       * 角色拆成了带命途的英文键（`March 7th (Hunt)` 的中文名是「三月七•巡猎」，
+       * 快照里却只写「三月七」）—— 只按中文名匹配，三月七与开拓者五个命途都会落进
+       * 「取不到序号」的兜底里。**数字 id 是唯一的**（三月七 1001/1224、开拓者 8001..8010），
+       * 所以前端优先按 id 查、查不到再退回中文名。
+       *
+       * ⚠️ 开拓者的 10 个 id 先过 `DEBUT_ID_ALIASES` 收口到同一个键（快照里它只有一行，
+       * id 随当前命途变；不收口的话这一行会随玩家切命途上下乱跳，而用户要的是固定顺序）。
+       */
+      debutOrderById: (() => {
+        const idOf = avatarIdResolver(i18n);
+        const out = {};
+        for (const [key, rank] of Object.entries(
+          buildDebutOrder({
+            firstSeen: data.refs?.firstSeen?.characters || {},
+            idOf,
+            keys: data.refs?.characters || [],
+          }),
+        )) {
+          const id = idOf(key);
+          if (Number.isFinite(id)) out[id] = rank;
+        }
+        for (const [id, aliasKey] of Object.entries(DEBUT_ID_ALIASES)) {
+          const rank = out[Number(idOf(aliasKey))];
+          if (rank !== undefined) out[Number(id)] = rank;
+        }
+        return out;
+      })(),
+      /**
        * 立绘与图标（角色面板的立绘、总榜每行的头像）。
        *
        * 原来只放在 `i18n-zh.json` 里、**没有**经过 `/api/archive` 暴露出去，
@@ -530,8 +605,16 @@ export const archiveFrontier = async (mode, options = {}) => {
   const idx = seasons.indexOf(wanted);
   const recent = seasons.slice(Math.max(0, idx - windowSize + 1), idx + 1);
   const recentDesc = [...recent].reverse();
-  // 版本权重 = 按下标查表（下标 0 = 该副本最新的版本，权重 3）。见 VERSION_WEIGHTS。
-  const weightOf = (s) => versionWeightOf(recentDesc.indexOf(s));
+  /**
+   * 版本权重 = 按下标查表（下标 0 = 该副本最新的版本）。
+   *
+   * 用户 2026-10-16：这张表**用户自己也能设**（界面上「版本权重」那一行），默认仍是
+   * `VERSION_WEIGHTS`（3 : 2.5 : 2 : 1.5 : 1 : 0.5）。传进来的原值在这里过一次
+   * `normalizeVersionWeights()`（缺的/非法的按默认补齐、全 0 退回默认），**不归一化**
+   * —— 它只有相对大小有意义，整体乘个常数不影响任何结果。
+   */
+  const vWeights = normalizeVersionWeights(options.versionWeights);
+  const weightOf = (s) => versionWeightOf(recentDesc.indexOf(s), vWeights);
 
   // 旧的差距/星魂强度口径仍然只看满分；目标档只进入新的性价比总榜。
   const rows = [];
@@ -544,11 +627,11 @@ export const archiveFrontier = async (mode, options = {}) => {
   // 版本权重（用户第 7 条）：客户端算总榜的「按版本加权」时**必须**用这一份，
   // 不要自己再写一遍 `3:2.5:2:1.5:1:0.5` —— 版本一更新（黑塔网加了新版本），
   // 这张表整体前移，客户端抄一份就会对不上。
-  const seasonWeights = Object.fromEntries(recentDesc.map((s, i) => [s, versionWeightOf(i)]));
+  const seasonWeights = Object.fromEntries(recentDesc.map((s, i) => [s, versionWeightOf(i, vWeights)]));
   const empty = {
     ok: true, pool: 0, merged: 0, seasons: recent,
     versionWindow: VERSION_WINDOW, seasonWeights,
-    characters: {}, eidolons: {}, raw: {}, rawEidolons: {}, frontierRows: [],
+    characters: {}, eidolons: {}, raw: {}, rawEidolons: {}, frontierRows: [], avTeams: [],
   };
   if (!rows.length) return empty;
   // 2) 池 = 窗口内**全部**前沿行（v4.6.78：不再按成本截断「最便宜的那一批」）
@@ -690,6 +773,9 @@ export const archiveFrontierAll = async (envs, options = {}) => {
       // 见 `conclusion.js` 的 `listEnvs` 注释（v4.6.48 修：砂金•戏浪 #14 → #2）。
       season: env.frontierSeason ?? env.season, stage: env.stage || '',
       window: options.window,
+      // 用户自定义的版本权重（2026-10-16）：透传给 `archiveFrontier`，它按这张表
+      // 现算 `seasonWeights`（客户端再拿它做跨版本加权）。不传 = 用默认表。
+      versionWeights: options.versionWeights,
       // ⚠️ v4.6.78 起不再传 `tierLines` / `lowerIsBetter`：它们只服务
       // `observedPackScores`（估算机器），而那套已随「池=全部成绩」一起删除。
     });
@@ -788,6 +874,83 @@ const resolveScope = (data, mode, season, options = {}) => {
 };
 
 /**
+ * 「**行动值前沿**」—— 本关卡最近一版行动值最好的几支队伍（用户 2026-10-16 第 2 条）。
+ *
+ * ## 为什么需要它
+ *
+ * 抽卡推荐的候选池（逐档榜 ∪ 总榜）里的队伍全是**各整包的性价比证据队**。实测那 242 支
+ * 队伍里**没有任何一支**打出过 0 行动值（绝境的 `av` 最低 16、p50 295）—— 因为 0 行动值
+ * 的投稿只出现在 32~48 金的「四 6+5」满配队里，而那些队**永远不会**成为谁的证据队
+ * （它们太贵，性价比轮不到它们）。于是用户要的「抽卡推荐里**各种 0 行动值队伍登顶**」
+ * 根本无从发生：池里压根没有这类队伍。
+ *
+ * 所以这些队伍必须作为候选**单独补进来**：每个关卡按行动值升序取前 `AV_TEAMS_PER_ENV` 支。
+ *
+ * ## 口径
+ *
+ *   * 用**最近一版**的行动值（`newestAv`），不是「跨版本取最小」—— 后者会让两三版前的
+ *     旧 0 行动值一直霸榜（v4.6.104 修过的「吃旧版本红利」）。
+ *   * 版本**窗口**与版本**权重**仍然生效：窗口外的版本根本不在 `recent` 里，
+ *     权重为 0 的版本也不贡献 `historyWeight`（见 `weightOf`）。
+ *   * 同一个阵容（四人配装完全一致）只留一次，取它行动值最低的那一版。
+ *
+ * @returns {Array<{cost:number, av:number, tier:string|null, season:string|null,
+ *                  members:Array<object>}>} 按行动值升序，最多 `AV_TEAMS_PER_ENV` 条。
+ */
+const AV_TEAMS_PER_ENV = 8;
+/**
+ * 行内数据按「**权重最高的那个有数据的版本**」取成绩（用户 2026-10-16 第 2 条：
+ * 0 行动值队伍登顶要「受到版本权重影响」）。
+ * `bySeason` 缺（夹具）时退回「最近版本那次」（newestAv）。
+ */
+const avRowFor = (build, seasonWeights) => {
+  let best = null;
+  if (seasonWeights && build.bySeasonAv) {
+    for (const [season, hit] of build.bySeasonAv) {
+      const w = Number(seasonWeights?.[season]);
+      if (!(w > 0)) continue;
+      if (!best || w > best.w
+        || (w === best.w && Number(hit.actionValue) < best.av)) {
+        best = { av: Number(hit.actionValue), w, tier: hit.tier ?? null, season };
+      }
+    }
+  }
+  if (best) return best;
+  const av = Number(build.newestAv);
+  return Number.isFinite(av)
+    ? { av, tier: build.newestTier || build.tier || null, season: build.newestSeason || null }
+    : null;
+};
+const buildAvTeams = (frontierByBuild, seasonWeights) => {
+  const rosterKeyOf = (members) => (members || [])
+    .map((m) => `${m.char}|${Number(m.eidolon) || 0}|${m.lc || '-'}|${Number(m.superimp) || 1}`)
+    .sort().join('~');
+  const rows = [...frontierByBuild.values()]
+    .map((r) => ({ r, hit: avRowFor(r, seasonWeights) }))
+    .filter(({ r, hit }) => hit && (r.members || []).length)
+    .sort((a, b) => a.hit.av - b.hit.av || Number(a.r.cost) - Number(b.r.cost));
+  const out = [];
+  const seen = new Set();
+  for (const { r, hit } of rows) {
+    const key = rosterKeyOf(r.members);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      cost: Number(r.cost) || 0,
+      av: hit.av,
+      tier: hit.tier,
+      season: hit.season,
+      members: r.members,
+    });
+    if (out.length >= AV_TEAMS_PER_ENV) break;
+  }
+  return out;
+};
+
+/**
+ * `aggregateTeams` —— 一个「模式 × 关卡」的阵容聚合（早期口径，现在服务抽卡方案的
+ * 阵容表与「和主流强阵的差距」）。
+/**
  * 近 N 个版本的阵容 → 跨版本聚合的阵容表。
  *
  * 只把版本当成权重来源，不按版本分别出结论：玩家要用一个账号横跨多个版本。
@@ -796,6 +959,12 @@ const resolveScope = (data, mode, season, options = {}) => {
  */
 const aggregateTeams = (scope, i18n, options = {}) => {
   const { stageData, recent, wanted, weightOf, trustOf } = scope;
+  // 本关卡的「版本 → 权重」表（`buildAvTeams` 按**权重最高的有数据版本**挑代表行，
+  // 用户 2026-10-16 第 2 条：行动值前沿要受版本权重影响）。`weightOf` 来自 scope，
+  // 已经吃用户自定义的版本权重表（见 `archiveFrontier` 里的 `vWeights`）。
+  // ⚠️ 顺序刻意「新的在前」（`recent` 是升序，反转即可），与 `seasonWeights` 的
+  // 下标约定（0 = 最新版）一致。
+  const seasonWeights = Object.fromEntries([...recent].reverse().map((s0) => [s0, weightOf(s0)]));
   // 星魂档位的配对证据（同一套阵容里「角色 → {档位: 最好成绩 + 档位 + 成本}」）。
   // 只有综合结论要它：评分按同一阵容里的相邻目标档（E0/E1/E2/E6）比较星魂边际收益，
   // 配对不上就只能退回「跨阵容取各档最好成绩」——那量的是阵容差异，不是星魂差异
@@ -849,10 +1018,26 @@ const aggregateTeams = (scope, i18n, options = {}) => {
             historyWeight: seasonWeight,
             seasonCount: 1,
             newestSeason: s,
+            // 「最近版本那一次」的行动值（用户 2026-10-16 第 2 条：行动值前沿要用它，
+            // 不能用「跨版本取最小」——那正是 v4.6.104 修掉的「吃旧版本红利」）。
+            // `recent` 是**升序**遍历，所以每遇到更新的版本直接覆盖即可。
+            newestAv: actionValue,
+            newestTier: tier,
+            // 逐版本的行动值成绩（版本权重选代表行用，见 `avRowFor`）：
+            // 同一版本内取**最快**那次（与整包口径「版本内取最少行动值」一致）。
+            bySeasonAv: new Map([[s, { actionValue, tier }]]),
           });
         } else {
           previous.historyWeight += seasonWeight;
           previous.seasonCount += 1;
+          if (actionValue !== null) {
+            previous.newestAv = actionValue;
+            previous.newestTier = tier;
+            const seenAv = previous.bySeasonAv.get(s);
+            if (!seenAv || Number(actionValue) < Number(seenAv.actionValue)) {
+              previous.bySeasonAv.set(s, { actionValue, tier });
+            }
+          }
           if (!previous.newestSeason || seasonSort(previous.newestSeason, s) < 0) {
             previous.newestSeason = s;
           }
@@ -1060,6 +1245,9 @@ const aggregateTeams = (scope, i18n, options = {}) => {
     seasonRuns,
     windowRuns,
     frontierRows: withFrontier ? [...frontierByBuild.values()] : undefined,
+    // 「行动值前沿」：本关卡**最近一版**行动值最好的几支队伍（用户 2026-10-16 第 2 条）。
+    // 见 `buildAvTeams` 的注释 —— 它服务「抽卡推荐里各种 0 行动值队伍要能登顶」。
+    avTeams: withFrontier ? buildAvTeams(frontierByBuild, seasonWeights) : undefined,
   };
 };
 
@@ -1077,7 +1265,7 @@ export const archiveTeams = async (mode, options = {}) => {
   const i18n = await loadI18n();
   const scope = resolveScope(data, mode, options.season, options);
   if (!scope.ok) return scope;
-  const { teams, seasonRuns, windowRuns, frontierRows } = aggregateTeams(scope, i18n, {
+  const { teams, seasonRuns, windowRuns, frontierRows, avTeams } = aggregateTeams(scope, i18n, {
     withEidoPerf: options.withEidoPerf === true,
     withFrontier: options.withFrontier === true,
   });
@@ -1106,7 +1294,8 @@ export const archiveTeams = async (mode, options = {}) => {
     dist: wantedSeason.dist || null,
     reliable: wantedSeason.reliable !== false,
     teams,
-    ...(options.withFrontier === true ? { frontierRows: frontierRows || [] } : {}),
+    ...(options.withFrontier === true
+      ? { frontierRows: frontierRows || [], avTeams: avTeams || [] } : {}),
   };
 };
 

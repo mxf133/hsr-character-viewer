@@ -115,6 +115,32 @@ const main = async () => {
     check('index.html has the 抽卡推荐 tab', String(index.body).includes('id="tabAdvice"'));
     check('index.html has the advice layout', String(index.body).includes('id="layoutAdvice"'));
 
+    // ---- 版本号 + 检查更新在**标题栏**（用户 2026-10-16 第 7 条）------------------
+    //
+    // 用户原话：「版本号、检查更新应显示在页面上方的标题栏较为显眼的地方，提示及时更新」。
+    // 这一组量的是**服务端真的发出去的那份 HTML**：两个元素都必须落在 `<header class="topbar">`
+    // 之内、且**页脚里一个都不许留**（用户明确要求别在两处各放一份）。
+    // ⚠️ 只钉**位置**，不钉文案或版本号本身（那是 `src/version.js` 的事，这里写死会打架）。
+    {
+      const served = String(index.body);
+      const headerEnd = served.indexOf('</header>');
+      const footerAt = served.indexOf('<footer');
+      const versionAt = served.indexOf('id="appVersion"');
+      const updateAt = served.indexOf('id="appUpdateCheck"');
+      check('版本号与「检查更新」都在 <header class="topbar"> 里',
+        headerEnd > 0 && versionAt > 0 && updateAt > 0
+          && versionAt < headerEnd && updateAt < headerEnd,
+        `headerEnd=${headerEnd} version=${versionAt} update=${updateAt}`);
+      check('页脚里不再有版本号 / 检查更新 / 结果行（只留一处）',
+        footerAt > 0 && !served.slice(footerAt).includes('id="appVersion"')
+          && !served.slice(footerAt).includes('id="appUpdateCheck"')
+          && !served.slice(footerAt).includes('id="appUpdateResult"'),
+        'footer still carries a copy');
+      check('「检查更新」按钮带 title 与 aria-label（可访问性）',
+        /id="appUpdateCheck"[^>]*aria-label=/.test(served)
+          && /id="appUpdateCheck"[^>]*title=/.test(served));
+    }
+
     // ---- 数据状态（用户 2026-10-11）：三份缓存的记录整合在一块，就在标题下方 -------
     //
     // 这一组量的是**服务端真的发出去的那份 HTML**（不是源文件）：结构与顺序一起钉住，
@@ -369,12 +395,21 @@ const main = async () => {
         }
       }
       const multiTierChar = [...tierRawOfChar.entries()].find(([, m]) => m.size >= 2);
-      check('⭐ 同一角色在不同星魂档拿到不同的泛用性原始量（不再是角色级的一个数）',
+      // ⚠️ **2026-10-16 反向**（用户第 3 条：只看 E0/E1/E2 的平均值、E6 完全不参与，
+      //    并把这个结果固定成该角色的**全局泛用性**）：改前这条断言钉的是「同一角色
+      //    不同档拿到**不同**的原始量」，现在必须是**完全相同** —— 否则第 3 条根本没生效。
+      check('⭐ 同一角色在各星魂档拿到**相同**的泛用性原始量（全局泛用性，E6 不再单独算）',
         Boolean(multiTierChar)
-        && new Set([...multiTierChar[1].values()]).size >= 2,
+        && new Set([...multiTierChar[1].values()]).size === 1,
         multiTierChar
           ? `${multiTierChar[0]}: ${JSON.stringify([...multiTierChar[1].entries()])}`
           : '没有任何角色横跨两个星魂档，这条断言无从验证');
+      // 同一角色的四个档位必须指向**同一把尺子**（`byTier` 的四个键同值，见 advice.js）。
+      const byTierKeys = Object.keys(hiddenOn.body?.frontierExtents?.versatility?.byTier || {});
+      check('泛用性的 `byTier` 四个档位指向同一对上下限（不再按档分组）',
+        byTierKeys.length === 0 || new Set(byTierKeys
+          .map((t) => JSON.stringify(hiddenOn.body.frontierExtents.versatility.byTier[t]))).size === 1,
+        `byTier=${JSON.stringify(hiddenOn.body?.frontierExtents?.versatility?.byTier)}`);
       // 队伍口径的抽卡方案在**界面**现算差额，所以 availability 必须真的发过去；
       // 缺它时界面会把 4★ 也算成 1 金（见 conclusion.js 的 slimAvailability 注释）。
       check('conclusion 带成本口径表 availability（星级 / 常驻标记）',
@@ -515,9 +550,24 @@ const main = async () => {
         (packs.body?.packs || []).every((p) => (p.envs || []).every((e) => (e.members || [])
           .every((m) => m.nameCn))),
         '有队伍成员缺中文名');
-      check('packs stays small enough to send on demand',
-        Buffer.byteLength(JSON.stringify(packs.body)) < 400 * 1024,
-        `${Math.round(Buffer.byteLength(JSON.stringify(packs.body)) / 1024)} KB`);
+      /**
+       * ⚠️ **2026-10-16 换了判据的形状**：原来只钉「这一次请求 < 400 KB」，而请求的角色是
+       * `units[0]`（**随榜面变动**）—— 实测本机 93 个角色里有 **7 个**按需载荷天然超过
+       * 400 KB（最大 Sparkle 740 KB / 117 条配装），所以那条断言其实是「恰好被选中的那个
+       * 角色够小」，榜面一动就会假红（2026-10-16 的口径改动就触发了它）。
+       * 现在钉两件**与选了谁无关**的事：
+       *   ① 每条配装的字节预算 —— 这才是有意义的那条「别把逐包字段撑大」的护栏
+       *      （例如再往每个整包上塞一份泛用性名单，这条立刻红）；
+       *   ② 一个宽松的硬上限（实测最大 ≈ 740 KB，留 ~20% 余量）。
+       */
+      const packsBytes = Buffer.byteLength(JSON.stringify(packs.body));
+      const packsCount = Math.max(1, (packs.body?.packs || []).length);
+      check('packs 每条配装的字节预算（防止口径改动把逐包字段撑大）',
+        packsBytes / packsCount < 8 * 1024,
+        `${Math.round(packsBytes / 1024)} KB / ${packsCount} 条 = `
+        + `${(packsBytes / packsCount / 1024).toFixed(1)} KB/条`);
+      check('packs 按需载荷不超过硬上限（实测最大 ≈ 740 KB：Sparkle 117 条配装）',
+        packsBytes < 900 * 1024, `${Math.round(packsBytes / 1024)} KB`);
       const noSuch = await get('/api/archive/packs?char=NotARealCharacter');
       check('unknown character -> found:false with an empty list (not an error)',
         noSuch.status === 200 && noSuch.body?.ok === true

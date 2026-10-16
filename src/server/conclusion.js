@@ -10,7 +10,8 @@
 // 「按副本把数据取齐 + 把中文名补上」。
 import { archiveFrontierAll, archiveIndex, archiveTeams, loadI18n, zhName } from './archive.js';
 import {
-  buildConclusion, eidolonTierOf, normalizeDrawWeights, normalizeHiddenCosts, VERSION_WINDOW,
+  buildConclusion, EIDOLON_TIERS, eidolonTierOf, normalizeDrawWeights, normalizeHiddenCosts,
+  VERSION_WINDOW,
 } from '../../public/scripts/advice.js';
 
 /** 结论覆盖的副本顺序（按游戏解锁顺序）。 */
@@ -135,6 +136,10 @@ export const conclusionEnvs = async (index, options = {}) => {
       dist: data.dist || null,
       teams: data.teams,
       frontierRows: data.frontierRows,
+      // 「行动值前沿」：本关卡最近一版行动值最好的几支队伍（用户 2026-10-16 第 2 条）——
+      // 抽卡推荐的候选池要靠它把「各种 0 行动值队伍」补进去（见 archive.js 的
+      // `buildAvTeams` 注释：实测候选池里一支都没有）。
+      avTeams: data.avTeams || [],
     });
   }
   return { envs, skipped, window };
@@ -643,7 +648,7 @@ const slimCharacterPack = (unit, i18n, maps) => ({
  *
  * @param {string} name 角色英文数据集键**或**中文名
  * @param {{window?:string, frontierWeights?:object, hiddenCosts?:object,
- *          drawWeights?:object}} options
+ *          drawWeights?:object, versionWeights?:number[]}} options
  */
 export const archiveCharacterPacks = async (name, options = {}) => {
   const raw = String(name || '').trim();
@@ -670,6 +675,10 @@ export const archiveCharacterPacks = async (name, options = {}) => {
   const frontierAll = await archiveFrontierAll(envs, {
     window: VERSION_WINDOW,
     ...(options.frontierWeights ? { weights: options.frontierWeights } : {}),
+    // 版本权重（用户 2026-10-16）：面板与总榜**必须同一份** —— 否则同一个整包在
+    // 详情窗口里印的「跨版本发挥」与榜上那个对不上（与 frontierWeights / hiddenCosts
+    // / drawWeights 同一类坑，v4.6.69 修过一次）。
+    versionWeights: options.versionWeights,
   });
   const result = buildConclusion(envs, {
     availability: index.refs?.availability || {},
@@ -686,6 +695,8 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     // 抽卡权重（用户 2026-10-13 第 2 条）：角色得分 = 三个分项按它加权，所以面板
     // **必须**与总榜用同一份，否则同一个整包在两个地方显示两个「角色得分」。
     drawWeights: options.drawWeights,
+    // 版本权重（2026-10-16）：同上，夹具路也吃它。
+    versionWeights: options.versionWeights,
   });
   // ⚠️ 键不区分大小写地兜一次：形态角色（开拓者各形态、丹恒•腾荒这类）在两边
   // 的大小写/空格写法可能不一致。
@@ -717,21 +728,26 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     // `versatilityMembers`（老字段）**保留**，取 `hit[0]` 那一档的名单 —— 它是这条接口
     // 从 v4.6.97 起的公开形状，`tools/e2e-test.mjs` 与老前端都在读它；语义退化成
     // 「最佳那条配装所属档位的名单」，而新前端一律走 `versatilityByTier`。
+    // ⚠️ **2026-10-16 起一个角色只有一份名单**（用户第 3 条：只看 E0/E1/E2 的平均值、
+    //    E6 完全不参与，并把这个结果固定成该角色的**全局泛用性**）：名单就是该角色
+    //    E0/E1/E2 三档队友的**并集**，四个档位索引到同一份 —— 与算分用的那个原始量同源。
+    //    （2026-10-14~15 它曾是「按星魂档各一份」，那一套已被第 3 条推翻；按档索引的形状
+    //    保留只为载荷兼容，界面仍按 `byTier[档] ?? 整榜` 取。）
+    //
+    // `versatilityMembers`（老字段）**保留**，取 `hit[0]` 那条的名单（现在四条完全相同）——
+    // 它是这条接口从 v4.6.97 起的公开形状，`tools/e2e-test.mjs` 与老前端都在读它。
     versatilityMembers: hit[0]?.versatilityMembers ?? null,
     versatilityByTier: (() => {
+      const unit = hit.find((u) => Array.isArray(u.versatilityMembers)) || null;
+      if (!unit) return null;
       const byTier = {};
-      for (const unit of hit) {
-        const tier = String(eidolonTierOf(unit.eidolon));
-        // 同一个档在一个角色上可能有多条配装（不同光锥）。⚠️ 2026-10-15 起原始量按
-        // 版本/关卡双重加权、随整包自己的证据走，同档不同配装不再共享同一个数 ——
-        // 取**最大**的那条（这一档攒下的最宽关系网），与 teamPlan 的档位表同一规则。
-        const raw = Number(unit.versatilityRaw);
-        if (byTier[tier] && !(raw > byTier[tier].raw)) continue;
-        const members = unit.versatilityMembers;
-        if (!Array.isArray(members)) continue;
-        byTier[tier] = { raw: Number.isFinite(raw) ? raw : members.length, members };
+      for (const tier of EIDOLON_TIERS) {
+        byTier[String(tier)] = {
+          raw: Number(unit.versatilityRaw) || 0,
+          members: unit.versatilityMembers,
+        };
       }
-      return Object.keys(byTier).length ? byTier : null;
+      return byTier;
     })(),
     // 三个分项的归一上下限：面板浮层也要写「得分 = 100 ×（原始量 − 最小）÷（最大 − 最小）」，
     // 而面板这条路上界面**可能根本没有加载过结论**（用户直接在「角色信息」页点开的）。
@@ -896,6 +912,11 @@ const projectConclusion = (result) => ({
     versionWindow: env.versionWindow ?? null,
     seasons: env.seasons || [],
     seasonWeights: env.seasonWeights || {},
+    // 「行动值前沿」（用户 2026-10-16 第 2 条）：本关卡最近一版行动值最好的几支队伍。
+    // 抽卡推荐的候选池靠它把「各种 0 行动值队伍」补进来（见 `buildAvTeams` 注释：
+    // 实测那些队永远不会成为谁的性价比证据队）。每关 8 支 × 5 关 ≈ 40 条、每条
+    // 只带 roster 与标量，实测 **+15 KB**（40 行 15374 字节）。
+    avTeams: env.avTeams || [],
   })),
   // 总榜的口径标记：**只发一份**（每条整包都带一份会把载荷白涨 28 KB —— 实测）。
   frontierBasis: 'team-gold-frontier-pack',
@@ -978,6 +999,9 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     // 按请求走 —— 它服务抽卡方案的阵容表，改它会连带改方案的口径。
     const all = await archiveFrontierAll(envs, {
       window: VERSION_WINDOW, weights: options.frontierWeights,
+      // 用户自定义的版本权重（2026-10-16）：只影响「按版本加权」那一层
+      // （`seasonWeights` 现算 + 客户端跨版本加权）。不传 = 默认 `VERSION_WEIGHTS`。
+      versionWeights: options.versionWeights,
     });
     frontier = Object.fromEntries(all.map((f) => [f.env, f]));
   } catch (err) {
@@ -997,6 +1021,8 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     frontier,
     // 「够得着的强阵」允许差几金（用户在界面上自己定，见 advice-view 的「可及预算」）
     gapMaxPulls: options.gapMaxPulls,
+    // 用户自定义的版本权重（2026-10-16）：没有服务端前沿表的夹具路也吃它。
+    versionWeights: options.versionWeights,
     // 用户自定义的副本权重：**两套**（用户 2026-10 要求相互独立）。
     //   planWeights     → 抽卡方案 / 差距榜 / 星魂榜
     //   frontierWeights → 性价比总榜

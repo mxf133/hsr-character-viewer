@@ -3840,6 +3840,222 @@ checkAsync('⭐ 面板（/api/archive/packs）那一路的 env 也要能还原�
   assert.ok(maxFactor > 0, '这条用例不能空跑：至少要有一行算出正的跨版本发挥');
 });
 
+// --------------------------------------------------------------------------
+// 2026-10-16 用户第 2~5 条：强度只看「这支队自己」的行动值 + 泛用性只看 E0/E1/E2、
+// 按关卡权重加权、不含「不用抽就有」的角色。四条各一个最小复现。
+// --------------------------------------------------------------------------
+
+check('⭐ 强度只看「这一关最佳证据那一支队」的行动值，不再借别支队伍的最快成绩（用户 2026-10-16 第 2 条）', () => {
+  // 用户原话：「**一个队伍的强度得分和此队伍的实际行动值有关**」。
+  // 复现：同一个整包（Hero E0）有两条成绩 ——
+  //   * 便宜那支（1 金）：行动值 **450**（在绝境满分线 300 与达标线 500 之间）；
+  //   * 贵那支（6 金）：行动值 **0**（举全队之力打出来的最快成绩）。
+  // 改前强度取「该整包在这个副本里**任意一支队伍**的最少行动值」→ 0 → 满分；改后取
+  // 「最佳证据那一支队」（便宜那支，它的分更高）→ 450。
+  // 实测依据：全服 2301 条绝境投稿里只有 **32 条**是 0 行动值，且全部来自 32~48 金的
+  // 「四 6+5」满配队 —— 缇宝 E6S5 的卡片写着「绝境 26 金 · 457 行动值」而强度是 100，
+  // 用户报的就是这条（「仅仅只是存在一个 6+5 的角色而已」）。
+  const availability = {
+    characters: { Hero: { rarity: 5, limited: true }, Rich: { rarity: 5, limited: true } },
+    lightCones: {},
+  };
+  const env = envFixture('aa|plight', [], {
+    mode: 'aa', stage: 'plight', season: '4.6',
+    tierLines: { perfect: 300, target: 500 },
+    // 两条都是 target 档 → 金数项的分母取「该版本全档最小」= 1，于是便宜那支的金数项 = 1、
+    // 贵那支 = 1/6，证据必然落在便宜那支上。
+    frontierRows: [
+      { cost: 1, tier: 'target', actionValue: 450, members: [{ char: 'Hero', eidolon: 0 }] },
+      { cost: 6, tier: 'target', actionValue: 0,
+        members: [{ char: 'Hero', eidolon: 0 }, { char: 'Rich', eidolon: 6 }] },
+    ],
+  });
+  const out = buildConclusion([env], { availability });
+  const hero = out.frontierUnits.find((u) => u.name === 'Hero');
+  assert.ok(hero, 'Hero 应当进榜');
+  const e = hero.envs[0];
+  assert.equal(e.actionValue, 450, '最佳证据那一支队的行动值（卡片上印的就是它）');
+  assert.equal(e.avBest, 450, '强度口径必须与卡片上那个行动值**同源**（改前它会取到 0）');
+  // 450 落在**第二档**（没打出 0 行动值）：本副本强度 = `strengthSecondBandCap × 曲线`。
+  // 顶格档（0 行动值）才给满 100，见下面那条「两档」用例。
+  const expected = SCORING.strengthSecondBandCap * Math.min(1, perfFactorOf(450, env.tierLines,
+    true, 'target', SCORING.strengthLineWeights));
+  assert.ok(Math.abs(e.envStrength - expected) < 1e-6,
+    `第二档的本副本强度应是 ${SCORING.strengthSecondBandCap} × 曲线(450) = ${expected}，实际 ${e.envStrength}`);
+  assert.ok(e.envStrength < SCORING.strengthSecondBandCap + 1e-9,
+    `450 > 满分线 300，属第二档，不该够到顶格（实际 ${e.envStrength}）`);
+});
+
+check('⭐ 强度两档：打出 0 行动值 = 顶格档 100；没打出 = ≤ 90（用户 2026-10-16 第 1 条）', () => {
+  // 用户原话：「应该是 **29 金 0 行动值 > 48 金 0 行动值 > 其他不足 0 行动值**的队伍，
+  // 也就是**先看行动值，再看是否压金**」。所以「打没打出 0 行动值」必须先于其它比较
+  // 定档：顶格 = 该关 100，第二档 = 上限 90（曲线在 0 附近太平，不隔开会被噪声翻面）。
+  // 夹具：同一个 Hero E0 两支满配队都打出 0 行动值（29 金 / 48 金）→ 都该顶格 100；
+  //       另设一支只差一点点（av=1）的 → 落第二档（< 100）。
+  const availability = {
+    characters: { Hero: { rarity: 5, limited: true } },
+    lightCones: {},
+  };
+  const mk = (cost, av) => ({
+    cost, tier: 'perfect', actionValue: av, season: '4.6',
+    members: [{ char: 'Hero', eidolon: 0 }],
+  });
+  // 每个整包只有一条证据行（各自 av），逐个查它这一关的 envStrength。
+  const strengthOf = (av) => {
+    const out = buildConclusion([envFixture('aa|plight', [], {
+      mode: 'aa', stage: 'plight', season: '4.6',
+      tierLines: { perfect: 300, target: 500 },
+      frontierRows: [mk(29, av)],
+    })], { availability });
+    return out.frontierUnits.find((u) => u.name === 'Hero').envs[0].envStrength;
+  };
+  assert.equal(strengthOf(0), 100, '0 行动值 → 顶格档，本副本强度 100');
+  assert.ok(strengthOf(1) <= SCORING.strengthSecondBandCap + 1e-9,
+    `av=1（没打出 0）应落第二档 ≤ ${SCORING.strengthSecondBandCap}，实际 ${strengthOf(1)}`);
+  // 「顶格 > 第二档」这条主序：0 行动值哪怕配到最贵，也强过只差一点的队伍。
+  assert.ok(strengthOf(0) > strengthOf(1), '顶格档必须严格高于任何第二档');
+});
+
+check('⭐ 泛用性只看 E0/E1/E2 的平均值、固定给所有档位（E6 完全不参与）（用户 2026-10-16 第 3 条）', () => {
+  // 用户原话：「仅参考该角色 E0/1/2 的泛用性的平均值，**完全不考虑 E6 的泛用性**，
+  // 将这一结果固定为该角色的**全局泛用性**」。
+  // 夹具让三档的队友集大小各不相同：E0 → 2、E1 → 3、E2 → 4，而 E6 只有 1 ——
+  // 期望：四档全部等于 (2+3+4)/3 = 3（E6 那个 1 完全不参与）。
+  const availability = {
+    characters: {
+      Hero: { rarity: 5, limited: true }, A: { rarity: 5, limited: true },
+      B: { rarity: 5, limited: true }, C: { rarity: 5, limited: true },
+      D: { rarity: 5, limited: true },
+    },
+    lightCones: {},
+  };
+  const mk = (heroEido, mates) => ({
+    cost: 1,
+    tier: 'perfect',
+    actionValue: 0,
+    members: [{ char: 'Hero', eidolon: heroEido },
+      ...mates.map((c) => ({ char: c, eidolon: 0 }))],
+  });
+  const env = envFixture('moc', [], {
+    frontierRows: [
+      mk(0, ['A', 'B']),
+      mk(1, ['A', 'B', 'C']),
+      mk(2, ['A', 'B', 'C']),
+      mk(2, ['A', 'D']),
+      mk(6, ['A']),
+    ],
+  });
+  const out = buildConclusion([env], { availability });
+  const heroRows = out.frontierPacksByChar?.Hero || [];
+  const rawOf = (eido) => heroRows.find((u) => Number(u.eidolon) === eido)?.versatilityRaw;
+  // 各档自己那一份（`versatilityPerTier`）—— 分档的值仍在，只是**不再直接用于算分**。
+  const perTierOf = (eido) => heroRows.find((u) => Number(u.eidolon) === eido)?.versatilityPerTier;
+  assert.equal(perTierOf(0), 2, 'Hero|E0 的队友集 = {A,B}');
+  assert.equal(perTierOf(1), 3, 'Hero|E1 的队友集 = {A,B,C}');
+  assert.equal(perTierOf(2), 4, 'Hero|E2 的队友集 = {A,B,C,D}（两条行并起来）');
+  assert.equal(perTierOf(6), 1, 'Hero|E6 的队友集 = {A}（它**不参与**平均）');
+  const avg = (2 + 3 + 4) / 3;
+  for (const eido of [0, 1, 2, 6]) {
+    assert.equal(rawOf(eido), avg,
+      `E${eido} 的泛用性原始量应当是 E0/E1/E2 的平均值 ${avg}（实际 ${rawOf(eido)}）`);
+  }
+  assert.notEqual(rawOf(6), 1, 'E6 自己那份队友集（1 个）不许参与，也不许留下');
+  // 四个档位的榜面值也必须一致（原始量一致 ⇒ 得分一致，因为现在是整榜一把尺子）。
+  const scoreOf = (eido) => (out.frontierTiers?.[eido] || [])
+    .find((u) => u.name === 'Hero')?.versatilityScore;
+  const scores = [0, 1, 2, 6].map(scoreOf).filter((v) => Number.isFinite(Number(v)));
+  assert.ok(scores.length >= 2 && new Set(scores).size === 1,
+    `各档的泛用性得分必须相同，实际 ${JSON.stringify(scores)}`);
+});
+
+check('⭐ 泛用性按**关卡权重**加权：在低权重关卡百搭 ≠ 在高权重关卡百搭（用户 2026-10-16 第 4 条）', () => {
+  // 用户原话：「不能因为某角色在低权重关卡泛用就能当成高权重关卡也泛用」。
+  // 夹具：绝境（权重 5）里 Hero 只和 A 同队过（1 个队友）；混沌回忆（权重 1）里 Hero
+  // 和 A/B/C/D 同队过（4 个）。期望 raw = (5×1 + 1×4) / 6 = **1.5** —— 若关卡的权重没
+  // 进去（直接并集或等权平均）会得到 4 或 2.5。
+  const availability = {
+    characters: {
+      Hero: { rarity: 5, limited: true }, A: { rarity: 5, limited: true },
+      B: { rarity: 5, limited: true }, C: { rarity: 5, limited: true },
+      D: { rarity: 5, limited: true },
+    },
+    lightCones: {},
+  };
+  const row = (mates, season) => ({
+    cost: 1, tier: 'perfect', actionValue: 0, season,
+    members: [{ char: 'Hero', eidolon: 0 }, ...mates.map((c) => ({ char: c, eidolon: 0 }))],
+  });
+  const plight = envFixture('aa|plight', [], {
+    mode: 'aa', stage: 'plight', season: '4.5',
+    tierLines: { perfect: 300, target: 500 },
+    frontierRows: [row(['A'], '4.5')],
+  });
+  const moc = envFixture('moc', [], {
+    mode: 'moc', stage: '', season: '4.5',
+    frontierRows: [row(['A', 'B', 'C', 'D'], '4.5')],
+  });
+  const out = buildConclusion([plight, moc], { availability });
+  const hero = (out.frontierPacksByChar?.Hero || []).find((u) => Number(u.eidolon) === 0);
+  assert.ok(hero, 'Hero 应进榜');
+  assert.equal(envWeightOf('aa', 'plight', 'frontier'), 5, '绝境的默认关卡权重是 5');
+  assert.equal(envWeightOf('moc', '', 'frontier'), 1, '混沌回忆的默认关卡权重是 1');
+  assert.equal(hero.versatilityRaw, 1.5, `期望 (5×1 + 1×4) / 6 = 1.5，实际 ${hero.versatilityRaw}`);
+});
+
+check('⭐ 泛用性的分子与分母都不含「不用抽就有」的角色（常驻 / 大隐金）（用户 2026-10-16 第 5 条）', () => {
+  // 用户原话：「泛用性得分的**分子分母都不应当考虑常驻角色**（考虑大隐金）」。
+  //   * 分子 = 队友集合：常驻 5★ / 开拓者 / 大隐金 不算队友；**4★ 仍算**（用户说的是
+  //     「常驻角色」，而未定轨的 4★ 还要靠抽，能配谁是有信息量的）。
+  //   * 分母 = 榜内刻度：被排除的角色自己的原始量是 0，**不进** min/max 取样 ——
+  //     否则它们会把尺子往 0 那端拉长（本用例钉住 `lo`）。
+  const availability = {
+    characters: {
+      Hero: { rarity: 5, limited: true }, Narrow: { rarity: 5, limited: true },
+      Lim: { rarity: 5, limited: true },
+      Std: { rarity: 5, limited: false },        // 常驻 5★ → 不算
+      Four: { rarity: 4, limited: false },       // 4★ → **算**
+      'Dr. Ratio': { rarity: 5, limited: true }, // ① 赠送（大隐金 16 人之一）→ 不算
+    },
+    lightCones: {},
+  };
+  const row = (hero, mates, cost = 1) => ({
+    cost,
+    tier: 'perfect',
+    actionValue: 0,
+    members: [{ char: hero, eidolon: 0 }, ...mates.map((c) => ({ char: c, eidolon: 0 }))],
+  });
+  const env = envFixture('moc', [], {
+    frontierRows: [
+      // Hero 的队友里混了常驻 5★（Std）与大隐金（Dr. Ratio）→ 只剩 Lim 与 Four 算数 → 2
+      row('Hero', ['Lim', 'Std', 'Four']),
+      row('Hero', ['Dr. Ratio', 'Four', 'Lim']),
+      // Narrow 只和 Lim 同队 → 1（有了它，刻度才有非零下界可验）
+      row('Narrow', ['Lim', 'Std', 'Dr. Ratio']),
+    ],
+  });
+  const out = buildConclusion([env], { availability });
+  const byName = (name, eido = 0) => (out.frontierPacksByChar?.[name] || [])
+    .find((u) => Number(u.eidolon) === eido);
+  const hero = byName('Hero');
+  assert.ok(hero, 'Hero 应进榜');
+  assert.equal(hero.versatilityRaw, 2,
+    `常驻 5★ 与大隐金都不算队友 → 只剩 Lim + Four = 2（实际 ${hero.versatilityRaw}）`);
+  // ⚠️ 上面那个 2 同时钉住了「**4★ 仍然算**」：若 4★ 也被排除，这里会是 1（只剩 Lim）。
+  //    （4★ 自己 0 金、根本不进整包榜，所以只能从别人的队友集里验这一条。）
+  const narrow = byName('Narrow');
+  assert.ok(narrow, 'Narrow 应进榜');
+  assert.equal(narrow.versatilityRaw, 1, 'Narrow 只和 Lim 同队 → 1');
+  assert.equal(byName('Std'), undefined,
+    '常驻 5★ 是 0 金，本来就不进整包榜（泛用性那一项更是完全不算它）');
+  assert.equal(byName('Dr. Ratio')?.versatilityRaw, 0,
+    '大隐金（① 赠送，本身是限定、会进榜）自己的泛用性 = 0 —— 分子分母都不考虑它');
+  // ⭐ 分母：常驻角色自己的分数是 0，但**不许**参与刻度取样 ——
+  //    若它在样本里，`lo` 会变成 0；现在应当是限定角色里的最小值 1。
+  assert.equal(out.frontierExtents?.versatility?.lo, 1,
+    `泛用性的榜内下界应当只看限定角色（实际 ${out.frontierExtents?.versatility?.lo}）`);
+  assert.equal(out.frontierExtents?.versatility?.hi, 3, '上界 = Lim 的 3（它横跨三支队）');
+});
+
 // ------------------------------------------------------------------- report
 console.log(`\n抽卡推荐测试: ${passed} passed, ${failed} failed`);if (failed) {
   console.log('\n失败项：');
