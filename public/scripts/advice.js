@@ -2566,8 +2566,166 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     });
   }
 
+  // ---- 「行动值前沿」候选池（用户 2026-10-16 第 2 条）--------------------------------
+  //
+  // 用户原话：「这时，抽卡推荐给的队伍应当是**各种 0 行动值队伍登顶**（且受到版本权重、
+  // 副本权重影响）」。可这类队伍（实测 29~48 金的「四 6+5」满配队）**永远进不了证据池**：
+  // 候选池来自逐档榜 ∪ 总榜，池里每支队都是某个整包的**性价比证据队** —— 越贵越不可能
+  // 成为谁的最佳证据。探针实测：池 242 支，自己在绝境 0 行动值的是 **0 支**。
+  //
+  // 服务端为此给每个副本带一份 `avTeams`（该副本行动值最好的 8 支；逐版本成绩按
+  // **权重最高的有数据版本**取代表行 —— 版本权重在选行时就已生效，见
+  // `src/server/archive.js` 的 `buildAvTeams` / `avRowFor`）。这里按**阵容**把它们
+  // 合并成候选，与 `byRoster` 去重（证据池里已有的队走原来那条路，不重复进池）。
+  //
+  // ⚠️ 口径与证据池那条路**刻意不同**（都别再改回去）：
+  //   * 强度 ① **不借**代表整包的 `strengthScore`，而是这支队**自己**的行动值 ——
+  //     用户 2026-10-16 上午的原话「一个队伍的强度得分和此队伍的实际行动值有关」。
+  //     逐关按 `frontierBoard` 里 `envStrengthNew` 的同一个两档规则算
+  //     （`av == 0` → 100；其余 `strengthSecondBandCap(90) × 强度曲线`），
+  //     再按**关卡权重**加权。
+  //   * 加权分母是「**这支队自己有数据的关卡**」，不是全部关卡。缺副本按 0 计是总榜为治
+  //     「投稿少的整包占便宜」立的规矩（实测把绝境覆盖率从 36/77 打到 1/77 的那个反向
+  //     激励，见 `strengthTotal` 的注释）；而**这一池的存在意义**就是把「只在绝境打出
+  //     0 行动值」的队伍捞出来 —— 用同一条分母，它们会被没投稿的 4 关稀释到 55.6，
+  //     用户要的「登顶」永远不发生。副本权重仍然生效：混合 0 与非 0 成绩的队按权重摊；
+  //     版本权重在服务端选行时生效（两处都「受到影响」，与用户原话一致）。
+  //   * **不参与单调兜底（包络）**：那是「同角色低档位救高档位」的整包级机制，
+  //     这里没有对应的档位阶梯，也不需要 —— 强度直接来自这支队自己的行动值。
+  //   * ② ③ 与证据池**逐字相同**（同一个循环里装配）：差额、账面金数、隐金减免、
+  //     成本加权泛用性。所以「0 行动值但补金 0」的队同样被剔除（第 3 条：无抽卡必要）。
+  const avCandidates = [];
+  {
+    const avUnitByKey = new Map();
+    for (const u of units) avUnitByKey.set(packKeyOf(u.name, u.eidolon, u.lc, u.superimp), u);
+    // 光锥那一维的投入档位：**只有要金的光锥**（限定 / 活动 5★）的叠影才算 ——
+    // 与 `buildConclusionInner` 的 `coneRankOf` 同一个口径（免费 / 4★ 锥叠影不计金）。
+    const avConeRankOf = (m) => (m.lc && coneCostOf(m.lc, availability) > 0
+      ? Math.max(1, Math.round(Number(m.superimp) || 1)) : 0);
+    // 同一支队在多个副本的前沿里各有一条：合并成 `{hits:[{id,weight,av,tier,season,cost,minCost}]}`。
+    const avByRoster = new Map();
+    for (const env of conclusion?.frontierEnvs || []) {
+      const list = Array.isArray(env?.avTeams) ? env.avTeams : [];
+      if (!env?.id || !list.length) continue;
+      const weight = Number(env.weight) || 0;
+      const tierLines = env.tierLines || null;
+      const lowerIsBetter = env.lowerIsBetter !== false;
+      const avLo = Number(env.avLo);
+      const avHi = Number(env.avHi);
+      for (const row of list) {
+        const members = Array.isArray(row?.members) ? row.members : [];
+        if (!members.length) continue;
+        const av = Number(row?.av);
+        if (!Number.isFinite(av)) continue;
+        const key = rosterKeyOf(members);
+        // 证据池里已有这支队（它的代表整包给分，还带视频地址）→ 不重复进池。
+        if (byRoster.has(key)) continue;
+        const hit = {
+          id: env.id,
+          weight,
+          av,
+          tier: row?.tier ?? null,
+          season: row?.season ?? null,
+          cost: Math.max(0, Number(row?.cost) || 0),
+          // 压金度的分母 = 该副本**该版本**的最便宜金数（与总榜 `seasonMinCost` 同源）。
+          minCost: Math.max(0, Number((env.minCostBySeason || {})[row?.season]) || 0),
+          tierLines,
+          lowerIsBetter,
+          avLo,
+          avHi,
+        };
+        const prev = avByRoster.get(key);
+        if (!prev) {
+          avByRoster.set(key, { rosterKey: key, members, hits: [hit] });
+        } else {
+          // 同一支队在同一副本只留最快那次（服务端已去重，这里是防御）。
+          const same = prev.hits.find((h) => h.id === hit.id);
+          if (same) { if (hit.av < same.av) Object.assign(same, hit); } else prev.hits.push(hit);
+        }
+      }
+    }
+    for (const av of avByRoster.values()) {
+      const hitEnvs = av.hits.filter((h) => Number.isFinite(h.av));
+      if (!hitEnvs.length) continue;
+      // 逐关强度：两档规则（与 `frontierBoard` 的 `envStrengthNew` 逐字一致的两条分支）。
+      const withStrength = hitEnvs.map((h) => {
+        let envStrength;
+        if (h.tierLines) {
+          const perf = perfFactorOf(h.av, h.tierLines, h.lowerIsBetter, h.tier,
+            SCORING.strengthLineWeights);
+          envStrength = h.av === 0
+            ? 100
+            : SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
+        } else if (Number.isFinite(h.avLo) && Number.isFinite(h.avHi) && h.avHi > h.avLo) {
+          // 判据线取不到（老载荷）但有行动值区间：按区间线性折算，不猜满分线。
+          const perf = 1 - (h.av - h.avLo) / (h.avHi - h.avLo);
+          envStrength = h.av === 0
+            ? 100
+            : SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
+        } else {
+          // 什么都没有（合成夹具）：0 行动值仍是顶格，其余按第二档天花板记 —— 确定的退路。
+          envStrength = h.av === 0 ? 100 : SCORING.strengthSecondBandCap;
+        }
+        return { ...h, envStrength };
+      });
+      const wSum = withStrength.reduce((n, h) => n + h.weight, 0);
+      if (!(wSum > 0)) continue;
+      // 队级行动值表现 = Σ(关卡权重 × 本关强度) ÷ Σ(**本队有数据的**关卡权重)。
+      const strengthTotal = withStrength.reduce((n, h) => n + h.weight * h.envStrength, 0) / wSum;
+      const ownTopBand = strengthTotal >= 99.99;
+      // 第二维那 5 分（与总榜同一个 `investWeight`）：顶格档按**压金度**
+      // （该版本最便宜金数 ÷ 本队金数，按关卡权重加权），其余按投入档位。
+      const pinched = withStrength.reduce((n, h) => n
+        + (h.cost > 0 && h.minCost > 0 ? h.weight * Math.min(1, h.minCost / h.cost) : 0), 0) / wSum;
+      const invest = Math.max(0, Math.min(1, av.members.reduce(
+        (n, m) => n + eidolonTierOf(m.eidolon) + avConeRankOf(m), 0) / SCORING.fullInvestRank));
+      const strength = (100 - SCORING.investWeight) * (strengthTotal / 100)
+        + SCORING.investWeight * (ownTopBand ? pinched : invest);
+      // 队分（展示 + 同分兜底排序）取成员里总分最高的那个整包 —— 与 `byRoster` 的
+      // 「代表整包」同一个取法（那一条取的是 `total` 最高的成员整包）。
+      let rep = null;
+      for (const m of av.members) {
+        const u = avUnitByKey.get(packKeyOf(m.char, m.eidolon, m.lc, m.superimp));
+        if (u && (!rep || (Number(u.total) || 0) > (Number(rep.total) || 0))) rep = u;
+      }
+      // 「最佳证据」= 这支队**自己**最快的那一关（行动值并列时取关卡权重高的）——
+      // 卡片上那行「最佳证据：{副本} {金} 金 · {行动值} 行动值 · {版本}」读它。
+      const bestHit = [...withStrength].sort((a, b) => a.av - b.av || b.weight - a.weight)[0];
+      avCandidates.push({
+        rosterKey: av.rosterKey,
+        members: av.members,
+        total: rep ? Number(rep.total) || 0 : 0,
+        best: {
+          id: bestHit.id,
+          // ⚠️ `value` 这一池**没有**（它原意是整包表现分的加权贡献，而这里的强度
+          //    直接来自行动值，不是从某个整包借的）—— 下发 `null`，界面不印它。
+          value: null,
+          bestTeamGold: bestHit.cost,
+          tier: bestHit.tier,
+          actionValue: bestHit.av,
+          evidenceSeason: bestHit.season,
+          seasonMinCost: bestHit.minCost || null,
+          // ⚠️ `video` 只能是 `null`：`avTeams` 是紧凑聚合数据，不带投稿地址
+          //    （数据集 `frontier` 条目只有 `c/a/t/m` 四个键）。界面据此不画视频图标。
+          video: null,
+          members: av.members,
+        },
+        // 最小形状的「unit」：只有 `envCount` 会被下发段读到（证据广度展示）。
+        unit: { envCount: withStrength.length },
+        strength: Number.isFinite(strength) ? Number(strength.toFixed(4)) : 0,
+        // 标记「这一支来自行动值前沿」—— 界面据此把强度来源写成「本队自己的行动值」，
+        // 而不是「角色总榜那一列」。
+        avSource: true,
+      });
+    }
+  }
+
   const candidates = [];
-  for (const team of byRoster.values()) {
+  // ⚠️ 两个来源**共用一个循环**：差额 / 账面金数 / 隐金减免 / 泛用性的口径必须逐字
+  // 相同（分家写过两遍就开始漂 —— 那是 v4.6.87 两套金数刻度的教训）。
+  // `byRoster`（证据池）在前、`avCandidates`（行动值前沿）在后；刻度（② 的封顶分位、
+  // ③ 的 min-max）都按**合并后的整个候选池**现算，与「展示条数」无关的老规矩不变。
+  for (const team of [...byRoster.values(), ...avCandidates]) {
     const cost = marginalCostOf(team.members, availability, account);
     // 用户第 3 条：补金 0 的队伍直接剔除（「无抽卡的必要，不值得显示」）。
     if (!(cost.pulls > 0)) continue;
@@ -2842,6 +3000,9 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   // ---- 下发 ------------------------------------------------------------------
   const rows = delivered.map((t) => ({
     key: t.rosterKey,
+    // 「这一支来自行动值前沿」标记（用户 2026-10-16 第 2 条）：它的强度 ① 是**本队
+    // 自己各关行动值**的加权，不是角色总榜那一列 —— 来源表据此换一行解释。
+    avSource: Boolean(t.avSource),
     // 队伍成员（整包三要素）：界面按它画 4 个位置，并标出「已有 / 缺」。
     members: t.members.map((m) => ({
       char: m.char, eidolon: eidolonTierOf(m.eidolon), lc: m.lc || null, superimp: m.superimp,
@@ -2983,6 +3144,7 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
           gapPct: x.o.gapPct,
           versatilityPct: x.o.versatilityPct,
           versatilityRaw: x.o.versatilityRaw,
+          avSource: Boolean(x.o.avSource),
           // 账面金数：与卡片上「账面 N 金」同一个口径（来源表用它解释 ② 那一行）。
           gold: x.o.gold,
           members: x.o.members.map((m) => ({
@@ -3005,7 +3167,12 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     //   两组的取样集合都是全池，所以**与 `rows.length` 无关** —— 改 `teamPlanMaxRows`
     //   只会改展示条数，分数与名次一字不变。
     pool: candidates.length,
-    poolAll: byRoster.size,
+    // ⚠️ `poolAll` 是「去重后见过的全部阵容」= 证据池 + 行动值前沿两个来源
+    // （用户 2026-10-16 第 2 条之后的池口径；`gap = 0` 的都不算「候选」，
+    //  所以它 ≥ `pool`）。界面据此写「候选池 N 支」的来源说明。
+    poolAll: byRoster.size + avCandidates.length,
+    /** 行动值前沿池贡献了多少支候选（探针 / 界面解释「为什么有 48 金的队」用）。 */
+    poolAv: avCandidates.length,
     // ① 的刻度：**绝对 0 ~ 100**（2026-10-15 起不再池内 min-max，见上面那一段）。
     // ⚠️ 界面拿它印「0 ~ 100（绝对刻度）」那一格 —— 所以它**必须**是常量，
     //    不能改回 `candidates` 的 min/max（那样池内第一又会被顶成 100 分）。
@@ -4565,6 +4732,13 @@ const buildConclusionInner = (envs, options = {}) => {
             versionWindow: VERSION_WINDOW,
             seasons: [...windowSeasons],
             seasonWeights: Object.fromEntries(windowSeasons.map((s) => [s, seasonWeightOfRow(s)])),
+            // 「行动值前沿」（用户 2026-10-16 第 2 条）：本关卡**最近一版**行动值最好的
+            // 几支队伍。抽卡推荐的候选池靠它把「各种 0 行动值队伍」补进来 ——
+            // 实测那类队伍（32~48 金的满配队）永远不会成为谁的性价比证据队，
+            // 只靠证据行装配的池里**一支都没有**（见 `teamPlan` 的 avCandidates）。
+            // ⚠️ 形状与 `env.avTeams` 原样透传（`{cost, av, tier, season, members}`），
+            //    服务端没带（老载荷 / 夹具）时是 `[]`。
+            avTeams: Array.isArray(env.avTeams) ? env.avTeams : [],
           });
         }
       }
@@ -6637,6 +6811,10 @@ const buildConclusionInner = (envs, options = {}) => {
       versionWindow: meta.versionWindow ?? VERSION_WINDOW,
       seasons: meta.seasons || [],
       seasonWeights: meta.seasonWeights || {},
+      // 「行动值前沿」（用户 2026-10-16 第 2 条）：本关卡最近一版行动值最好的几支队伍。
+      // `teamPlan` 靠它把「各种 0 行动值队伍」补进候选池 —— 实测那些队（32~48 金满配队）
+      // 永远不会成为谁的性价比证据队，只靠证据行装配的池里一支都没有。
+      avTeams: meta.avTeams || [],
     })),
     // 「和主流强阵的差距」榜（用户 2026-10 换的口径）：回答「照着主流打，我还差几金」
     gapUnits,

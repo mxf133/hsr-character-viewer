@@ -3101,11 +3101,17 @@ if (teamPlanProbe.missing) {
       // ⚠️ 2026-10-15 换 ① 口径时**新加**的判据：那一格的「刻度」必须写「绝对刻度」，
       //    而取值那一格必须是**强度分**（不再是「队分」——旧口径印的是含金数项的整包分，
       //    池内 min-max 之后第一必然 100 分，用户 2026-10-15 报的就是那个数）。
+      // ⚠️ 2026-10-16（用户第 2 条「行动值前沿」池）起有两套**都正确**的措辞，
+      //    取决于点开的是哪张卡：
+      //      * 证据池的卡：「强度分 X」+「0 ~ 100（绝对刻度）」—— ① = 代表整包自己的分；
+      //      * 前沿池的卡（0 行动值队，当前数据集下占据前排）：「本队行动值强度 X」+
+      //        「0 ~ 100（本队各关行动值，0 行动值 = 100）」—— ① = 本队自己行动值的加权。
+      //    两种都是绝对刻度、都不印「队分」；探针点开的是**第一张卡**，所以两种都要认。
       const strengthRow = (scoreTip?.cells || []).find((c) => (c[0] || '') === '强度得分');
       const strengthAbsOk = Boolean(strengthRow)
-        && (strengthRow[1] || '').includes('强度分')
+        && (/强度分|行动值强度/).test(strengthRow[1] || '')
         && !(strengthRow[1] || '').includes('队分')
-        && (strengthRow[2] || '').includes('绝对刻度');
+        && (/绝对刻度|本队各关行动值/).test(strengthRow[2] || '');
       if (!strengthAbsOk) failures += 1;
       console.log(`  ${strengthAbsOk ? '✓' : '✗'} 「强度得分」那一行写的是绝对刻度`
         + `（实际取值 ${JSON.stringify(strengthRow?.[1] || '')}`

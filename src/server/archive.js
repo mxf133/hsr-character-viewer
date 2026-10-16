@@ -898,24 +898,48 @@ const resolveScope = (data, mode, season, options = {}) => {
  *                  members:Array<object>}>} 按行动值升序，最多 `AV_TEAMS_PER_ENV` 条。
  */
 const AV_TEAMS_PER_ENV = 8;
-const buildAvTeams = (frontierByBuild) => {
+/**
+ * 行内数据按「**权重最高的那个有数据的版本**」取成绩（用户 2026-10-16 第 2 条：
+ * 0 行动值队伍登顶要「受到版本权重影响」）。
+ * `bySeason` 缺（夹具）时退回「最近版本那次」（newestAv）。
+ */
+const avRowFor = (build, seasonWeights) => {
+  let best = null;
+  if (seasonWeights && build.bySeasonAv) {
+    for (const [season, hit] of build.bySeasonAv) {
+      const w = Number(seasonWeights?.[season]);
+      if (!(w > 0)) continue;
+      if (!best || w > best.w
+        || (w === best.w && Number(hit.actionValue) < best.av)) {
+        best = { av: Number(hit.actionValue), w, tier: hit.tier ?? null, season };
+      }
+    }
+  }
+  if (best) return best;
+  const av = Number(build.newestAv);
+  return Number.isFinite(av)
+    ? { av, tier: build.newestTier || build.tier || null, season: build.newestSeason || null }
+    : null;
+};
+const buildAvTeams = (frontierByBuild, seasonWeights) => {
   const rosterKeyOf = (members) => (members || [])
     .map((m) => `${m.char}|${Number(m.eidolon) || 0}|${m.lc || '-'}|${Number(m.superimp) || 1}`)
     .sort().join('~');
   const rows = [...frontierByBuild.values()]
-    .filter((r) => Number.isFinite(Number(r.newestAv)) && (r.members || []).length)
-    .sort((a, b) => Number(a.newestAv) - Number(b.newestAv) || Number(a.cost) - Number(b.cost));
+    .map((r) => ({ r, hit: avRowFor(r, seasonWeights) }))
+    .filter(({ r, hit }) => hit && (r.members || []).length)
+    .sort((a, b) => a.hit.av - b.hit.av || Number(a.r.cost) - Number(b.r.cost));
   const out = [];
   const seen = new Set();
-  for (const r of rows) {
+  for (const { r, hit } of rows) {
     const key = rosterKeyOf(r.members);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     out.push({
       cost: Number(r.cost) || 0,
-      av: Number(r.newestAv),
-      tier: r.newestTier || r.tier || null,
-      season: r.newestSeason || null,
+      av: hit.av,
+      tier: hit.tier,
+      season: hit.season,
       members: r.members,
     });
     if (out.length >= AV_TEAMS_PER_ENV) break;
@@ -935,6 +959,12 @@ const buildAvTeams = (frontierByBuild) => {
  */
 const aggregateTeams = (scope, i18n, options = {}) => {
   const { stageData, recent, wanted, weightOf, trustOf } = scope;
+  // 本关卡的「版本 → 权重」表（`buildAvTeams` 按**权重最高的有数据版本**挑代表行，
+  // 用户 2026-10-16 第 2 条：行动值前沿要受版本权重影响）。`weightOf` 来自 scope，
+  // 已经吃用户自定义的版本权重表（见 `archiveFrontier` 里的 `vWeights`）。
+  // ⚠️ 顺序刻意「新的在前」（`recent` 是升序，反转即可），与 `seasonWeights` 的
+  // 下标约定（0 = 最新版）一致。
+  const seasonWeights = Object.fromEntries([...recent].reverse().map((s0) => [s0, weightOf(s0)]));
   // 星魂档位的配对证据（同一套阵容里「角色 → {档位: 最好成绩 + 档位 + 成本}」）。
   // 只有综合结论要它：评分按同一阵容里的相邻目标档（E0/E1/E2/E6）比较星魂边际收益，
   // 配对不上就只能退回「跨阵容取各档最好成绩」——那量的是阵容差异，不是星魂差异
@@ -993,6 +1023,9 @@ const aggregateTeams = (scope, i18n, options = {}) => {
             // `recent` 是**升序**遍历，所以每遇到更新的版本直接覆盖即可。
             newestAv: actionValue,
             newestTier: tier,
+            // 逐版本的行动值成绩（版本权重选代表行用，见 `avRowFor`）：
+            // 同一版本内取**最快**那次（与整包口径「版本内取最少行动值」一致）。
+            bySeasonAv: new Map([[s, { actionValue, tier }]]),
           });
         } else {
           previous.historyWeight += seasonWeight;
@@ -1000,6 +1033,10 @@ const aggregateTeams = (scope, i18n, options = {}) => {
           if (actionValue !== null) {
             previous.newestAv = actionValue;
             previous.newestTier = tier;
+            const seenAv = previous.bySeasonAv.get(s);
+            if (!seenAv || Number(actionValue) < Number(seenAv.actionValue)) {
+              previous.bySeasonAv.set(s, { actionValue, tier });
+            }
           }
           if (!previous.newestSeason || seasonSort(previous.newestSeason, s) < 0) {
             previous.newestSeason = s;
@@ -1210,7 +1247,7 @@ const aggregateTeams = (scope, i18n, options = {}) => {
     frontierRows: withFrontier ? [...frontierByBuild.values()] : undefined,
     // 「行动值前沿」：本关卡**最近一版**行动值最好的几支队伍（用户 2026-10-16 第 2 条）。
     // 见 `buildAvTeams` 的注释 —— 它服务「抽卡推荐里各种 0 行动值队伍要能登顶」。
-    avTeams: withFrontier ? buildAvTeams(frontierByBuild) : undefined,
+    avTeams: withFrontier ? buildAvTeams(frontierByBuild, seasonWeights) : undefined,
   };
 };
 

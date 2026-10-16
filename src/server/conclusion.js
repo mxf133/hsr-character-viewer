@@ -912,6 +912,11 @@ const projectConclusion = (result) => ({
     versionWindow: env.versionWindow ?? null,
     seasons: env.seasons || [],
     seasonWeights: env.seasonWeights || {},
+    // 「行动值前沿」（用户 2026-10-16 第 2 条）：本关卡最近一版行动值最好的几支队伍。
+    // 抽卡推荐的候选池靠它把「各种 0 行动值队伍」补进来（见 `buildAvTeams` 注释：
+    // 实测那些队永远不会成为谁的性价比证据队）。每关 8 支 × 5 关 ≈ 40 条、每条
+    // 只带 roster 与标量，实测 **+15 KB**（40 行 15374 字节）。
+    avTeams: env.avTeams || [],
   })),
   // 总榜的口径标记：**只发一份**（每条整包都带一份会把载荷白涨 28 KB —— 实测）。
   frontierBasis: 'team-gold-frontier-pack',

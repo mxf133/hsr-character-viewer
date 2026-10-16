@@ -3899,9 +3899,16 @@ const teamPlanTip = (row, plan) => {
       // 所以刻度那一格写死「0 ~ 100（绝对刻度）」：这一档**不做池内归一**，
       // 换账号 / 换展示条数都不变 —— 旧口径（含金数项的整包分按池内 min-max）见
       // `teamPlan()` 里那段历史注释。
-      ['强度得分', `强度分 ${num(r.strengthPct)}`,
-        '0 ~ 100（绝对刻度）',
-        `${num(r.strengthPct)} × ${ws}`],
+      // ⚠️ `r.avSource`（用户 2026-10-16 第 2 条的「行动值前沿」池）那一行的取值
+      //    不是角色总榜的强度分，而是**本队自己**各关行动值的加权 —— 分开写，
+      //    否则读者会拿总榜那一列的数字来对，对不上还以为是算错了。
+      r.avSource
+        ? ['强度得分', `本队行动值强度 ${num(r.strengthPct)}`,
+          '0 ~ 100（本队各关行动值，0 行动值 = 100）',
+          `${num(r.strengthPct)} × ${ws}`]
+        : ['强度得分', `强度分 ${num(r.strengthPct)}`,
+          '0 ~ 100（绝对刻度）',
+          `${num(r.strengthPct)} × ${ws}`],
       // ② 只有这一个刻度（用户 2026-10-12 第 6 条）。「账面 N 金」放在「本队取值」里当
       // 参考信息，**不进公式** —— 它已经不参与任何折算（想让它参与就是 v4.6.87 那个
       // 被用户否掉的「压金度」）。
@@ -4109,9 +4116,12 @@ const teamPlanTip = (row, plan) => {
       // ⚠️ 候选池在 v4.6.83 从「角色总榜」放宽到「逐档榜 ∪ 总榜」
       // （每角色 × 每星魂档各留一条，再加每角色的总最佳），所以这里不能再说「总榜 N 支」
       // —— 两个数已经不是同一个集合了。
-      `候选池 ${plan.pool} 支（逐档榜 ∪ 总榜去重后 ${plan.poolAll} 支，`
+      `候选池 ${plan.pool} 支（逐档榜 ∪ 总榜 ∪ 行动值前沿去重后 ${plan.poolAll} 支，`
       + '再去掉「补金 0」的；逐档榜 = 每个角色在每个星魂档各收敛一条，'
-      + '所以同一支队伍的**低配档位**也在池内），'
+      + '所以同一支队伍的**低配档位**也在池内；'
+      + `行动值前沿 = 各副本行动值最好的几支队，共 ${plan.poolAv ?? 0} 支 —— 那类「0 行动值」的满配队`
+      + '进不了证据池，专门为它开这条路）,'
+
       + `按总分降序取前 ${plan.rows.length} 支展示；改展示条数不会改分数。`,
     ],
   });
@@ -4247,7 +4257,7 @@ const renderTeamPlan = (conclusion) => {
   const wv = formatShare(draw.versatility);
 
   setMeta(plan.rows.length
-    ? `候选 ${plan.pool} 支队伍（总榜 ${plan.poolAll} 支里去掉「补金 0」的）`
+    ? `候选 ${plan.pool} 支队伍（逐档榜 ∪ 总榜 ∪ 行动值前沿 ${plan.poolAll} 支里去掉「补金 0」的）`
       + `${plan.truncated ? ` · 只列前 ${plan.rows.length} 条` : ''}`
     : '没有需要补金的队伍');
 
@@ -4437,8 +4447,9 @@ const renderTeamPlan = (conclusion) => {
   const capped = plan.rows.filter((r) => r.gap >= plan.gapMax).length;
   const drawFoot = plan.drawWeights || normalizeDrawWeights(state.drawWeights || {});
   el.teamPlanBody.appendChild(text('p', 'muted small advice-plan-team-foot',
-    `口径：候选 = 角色**逐档榜 ∪ 总榜**按队伍去重`
-    + `（逐档榜 = 每个角色在 E0/E1/E2/E6 各收敛一条，再并上每个角色的总最佳，共 ${plan.poolAll} 支），`
+    `口径：候选 = 角色**逐档榜 ∪ 总榜 ∪ 行动值前沿**按队伍去重`
+    + `（逐档榜 = 每个角色在 E0/E1/E2/E6 各收敛一条，再并上每个角色的总最佳；`
+    + `行动值前沿 = 各副本行动值最好的几支队，${plan.poolAv ?? 0} 支；共 ${plan.poolAll} 支），`
     + `去掉补金 0 金的之后剩 ${plan.pool} 支 —— `
     + '**这样同一支队伍的低配档位也在池内**，便宜但强度略低的队伍能靠补金少拉分；'
     + `**下面这 ${plan.rows.length} 条是其中最靠前的**（按补金推荐分排，截断只影响显示）；`
