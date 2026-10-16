@@ -3124,7 +3124,12 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
      */
     alternatives: (() => {
       const mine = new Set(t.members.map((m) => m.char));
-      return delivered
+      // ⚠️ 候选范围取**全池 `ranked`**、不是下发的 `delivered`（v4.6.110 合并时踩过）：
+      //    行动值前沿池登顶后，榜面 15 条**全是**没有投稿地址的前沿队（数据集不带 video），
+      //    若只在这 15 条里找次选，每支次选的视频按钮都永远画不出来。全池里仍有证据池
+      //    （`byRoster`）的相似队，它们的地址是全的 —— 用户要的「次选也要有视频按钮」
+      //    只有把候选范围放开才成立。仍按「共享成员数 → 分差」排序，语义不变。
+      return ranked
         .filter((o) => o.rosterKey !== t.rosterKey)
         .map((o) => ({
           o,
