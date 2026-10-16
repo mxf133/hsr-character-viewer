@@ -911,14 +911,24 @@ const avRowFor = (build, seasonWeights) => {
       if (!(w > 0)) continue;
       if (!best || w > best.w
         || (w === best.w && Number(hit.actionValue) < best.av)) {
-        best = { av: Number(hit.actionValue), w, tier: hit.tier ?? null, season };
+        best = {
+          av: Number(hit.actionValue), w, tier: hit.tier ?? null, season,
+          // 来源视频必须跟着**被选中那一版**走（用户 2026-10-17 第 5 条）：
+          // 同一个阵容在不同版本是**不同的投稿**，借别的版本的地址就是编造。
+          video: hit.video ?? null,
+        };
       }
     }
   }
   if (best) return best;
   const av = Number(build.newestAv);
   return Number.isFinite(av)
-    ? { av, tier: build.newestTier || build.tier || null, season: build.newestSeason || null }
+    ? {
+      av,
+      tier: build.newestTier || build.tier || null,
+      season: build.newestSeason || null,
+      video: build.newestVideo ?? null,
+    }
     : null;
 };
 const buildAvTeams = (frontierByBuild, seasonWeights) => {
@@ -941,6 +951,15 @@ const buildAvTeams = (frontierByBuild, seasonWeights) => {
       tier: hit.tier,
       season: hit.season,
       members: r.members,
+      // **来源视频**（用户 2026-10-17 第 5 条：「提供抽卡方案-所有队伍的视频链接（类似角色
+      // 总榜）」）。这一池原先恒为 `null` —— 建库侧的前沿行 `{c,a,t,m}` 里本来就没有投稿
+      // 地址（见 `archiveFrontier` 里那段「来源视频」注释），而这一池的存在意义恰恰是把
+      // 「0 行动值满配队」捞进候选池，于是用户看到的抽卡方案**前排全是点不出视频的队伍**。
+      // 这里按 `版本|阵容` 回查一次（口径与 `archiveFrontier` 逐字相同：阵容 = 成员角色名
+      // 排序后 `' + '` 拼接，键取自 `teams[].roster`），查不到就**如实留空**。
+      // ⚠️ 用 `hit.season` 而不是「最近版本」：`avRowFor` 是按**版本权重**挑代表行的，
+      //    视频必须属于被挑中的那一版，否则地址与行动值来自两次不同的投稿。
+      video: hit.video ?? null,
     });
     if (out.length >= AV_TEAMS_PER_ENV) break;
   }
@@ -974,6 +993,31 @@ const aggregateTeams = (scope, i18n, options = {}) => {
   const withFrontier = options.withFrontier === true;
   const byRoster = new Map();
   const frontierByBuild = new Map();
+  /**
+   * **来源视频的索引**：`版本|阵容` → 视频地址（用户 2026-10-17 第 5 条）。
+   *
+   * 建库侧的前沿行只有 `{c, a, t, m}` 四个键，**没有投稿地址**；而每期每套阵容的
+   * `teams[].sample` 上有（实测 11992/11992 全覆盖）。`archiveFrontier` 早就用同一套
+   * 回查给「逐档榜 / 总榜」的整包补了 `video`，这里把它一并服务给**行动值前沿池**
+   * （`buildAvTeams`）—— 那一池原先恒为 `null`，于是抽卡方案前排那些「0 行动值满配队」
+   * 全是点不出视频的卡片，正是用户第 5 条要修的东西。
+   *
+   * ⚠️ 阵容键必须与 `archiveFrontier` 逐字相同（成员**角色名**排序后 `' + '` 拼接，
+   *    与 `teams[].roster` 同一口径）—— 「人数一样但换了人」的阵容不能互相顶替。
+   * ⚠️ 只有在 `withFrontier`（= 综合结论那条路）时才建：主榜不需要它，
+   *    白扫一遍七期的全部阵容是纯浪费。
+   */
+  const sampleVideoByRosterSeason = withFrontier ? (() => {
+    const map = new Map();
+    for (const s of recent) {
+      for (const team of stageData.seasons[s]?.teams || []) {
+        if (!team?.sample?.video) continue;
+        const roster = (team.roster || []).map((n) => String(n)).sort().join(' + ');
+        if (roster) map.set(`${s}|${roster}`, videoUrlOf(team.sample.video));
+      }
+    }
+    return map;
+  })() : null;
   let seasonRuns = 0;
   let windowRuns = 0;
 
@@ -1007,6 +1051,14 @@ const aggregateTeams = (scope, i18n, options = {}) => {
         const actionValue = Number.isFinite(parsedAction) && parsedAction >= 0
           ? parsedAction : null;
         const tier = Number(entry.t) === 2 ? 'target' : 'perfect';
+        // 这一条前沿行对应的**投稿视频**：前沿数据自己不带地址，按 `版本|阵容` 回查
+        // `teams[].sample.video`（用户 2026-10-17 第 5 条，索引见上方注释）。
+        // ⚠️ 键的口径必须与 `archiveFrontier` 逐字相同（成员**角色名**排序 + `' + '`）：
+        //    阵容不同就是不同的投稿，查到别人的地址等于编造来源。
+        const video = sampleVideoByRosterSeason
+          ? sampleVideoByRosterSeason
+            .get(`${s}|${members.map((m) => m.char).sort().join(' + ')}`) || null
+          : null;
         const previous = frontierByBuild.get(key);
         const seasonWeight = weightOf(s);
         // 同一配置跨版本只留一条最佳成绩，但保留它出现过的版本数和新近度权重。
@@ -1023,9 +1075,13 @@ const aggregateTeams = (scope, i18n, options = {}) => {
             // `recent` 是**升序**遍历，所以每遇到更新的版本直接覆盖即可。
             newestAv: actionValue,
             newestTier: tier,
+            // 同上，但记的是视频：必须与 `newestAv` 出自**同一次投稿**，所以跟着一起覆盖。
+            newestVideo: video,
             // 逐版本的行动值成绩（版本权重选代表行用，见 `avRowFor`）：
             // 同一版本内取**最快**那次（与整包口径「版本内取最少行动值」一致）。
-            bySeasonAv: new Map([[s, { actionValue, tier }]]),
+            // ⚠️ `video` 是**这一版这一次**的地址：`avRowFor` 挑中哪一版就用哪一版的，
+            //    不能借别的版本——那会把行动值和视频拼成两条不相干的投稿。
+            bySeasonAv: new Map([[s, { actionValue, tier, video }]]),
           });
         } else {
           previous.historyWeight += seasonWeight;
@@ -1033,9 +1089,10 @@ const aggregateTeams = (scope, i18n, options = {}) => {
           if (actionValue !== null) {
             previous.newestAv = actionValue;
             previous.newestTier = tier;
+            previous.newestVideo = video;
             const seenAv = previous.bySeasonAv.get(s);
             if (!seenAv || Number(actionValue) < Number(seenAv.actionValue)) {
-              previous.bySeasonAv.set(s, { actionValue, tier });
+              previous.bySeasonAv.set(s, { actionValue, tier, video });
             }
           }
           if (!previous.newestSeason || seasonSort(previous.newestSeason, s) < 0) {

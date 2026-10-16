@@ -167,14 +167,35 @@
    ⚠️ 它是 `.advice-detail-toggle` 的**修饰类**，不是另一个类名：委托监听器、
    `[aria-expanded]` 的箭头朝向、以及 `check-advice-layout.mjs` 的探针都按那**同一个**
    类名找它们（拆成两个类名时探针会一个都找不到，表现为「折叠判据整组静默变红」）。 */
+/* ⚠️ 2026-10-17（用户第 3 条「角色得分详情页-分项的排版有误，请对齐标题」）：
+   改前这里是 `flex + space-between`，而 `.tip-stack`（分项名 + 说明两行）是
+   `inline-flex` 的**收缩宽度**盒子 —— 于是每一行的盒子宽度都等于它自己那行说明的
+   自然宽度，三行的中心线就跟着说明长短左右乱跳（实测 CDP 量到三行的中心分别在
+   x=364 / 301 / 389），既不在一条竖线上，也都对不上表头「分项」的中心（x=579）——
+   界面上就是「分项名一会儿偏左一会儿偏右，还跟表头不齐」。
+
+   现在改成：容器取**列宽**、左右各留出与按钮等宽的一块（`padding: 0 76px`，
+   左右对称 ⇒ 中心线仍然是列的中心线），两行都在这条中心线上居中；按钮改用绝对
+   定位钉在右边（它本来就不参与文字排版，脱流之后既不会被居中带偏、也不会把
+   说明挤窄）。实测改后三行的中心都是 x=579 = 表头「分项」的中心。
+
+   ⚠️ 左右 padding 必须**等宽**：这是「文字居中于列」与「按钮占右边」两件事能同时
+   成立的原因。改成单边 padding（或把按钮放回 flex 流里）中心线立刻偏半个按钮宽。 */
 .advice-factor-cell {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
+  display: block;
+  position: relative;
+  padding: 0 76px;
 }
-.advice-factor-cell > .tip-stack { min-width: 0; }
+.advice-factor-cell > .tip-stack {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  min-width: 0;
+}
 .advice-detail-toggle.is-inline {
+  position: absolute;
+  right: 0;
+  top: 1px;
   flex: none;
   margin-top: 1px;
   padding: 1px 7px;

@@ -1125,8 +1125,14 @@ export const SCORING = {
    * **相对大小**，决定「补金推荐分」（抽卡方案）与「角色得分」（角色总榜）里各分项占多少。
    *
    * ```
-   *   补金推荐分 = 强度得分 × ws + 差额接近度 × wc + 泛用性得分 × wv   （三项归一，和为 1）
+   *   补金推荐分 = 队伍强度 × ws + 队伍性价比 × wc + 队伍泛用性 × wv   （三项归一，和为 1）
    * ```
+   *
+   * ⚠️ **2026-10-17（用户第 4 条）三项改名**：界面上这三个分项叫
+   * **队伍强度 / 队伍性价比 / 队伍泛用性**（旧名「强度得分 / 性价比 / 泛用性」作废）；
+   * 角色总榜那边叫**角色强度 / 角色性价比 / 角色泛用性**。
+   * ⚠️ 而**这三个输入框自己的标签仍是「强度 / 性价比 / 泛用性」、不带前缀**（用户 2026-10-17
+   *    确认）：它们是两个榜**共用**的一组系数，加前缀会被读成只管某一个榜。
    *
    * 旋钮手感（**2026-10-15 起**，与角色总榜同一把尺子）：
    *   * **强度** 越高 → 越推荐**行动值低、投入高**的强队：① 就是角色总榜那一列的
@@ -1174,8 +1180,8 @@ export const SCORING = {
    * 角色总榜的合成方式（用户 2026-10-13 选定「榜内归一到 0~100 再加权」）：
    *
    * ```
-   *   角色得分 = 100 × (ws × 强度得分 + wc × 性价比得分 + wv × 泛用性得分)
-   *              ↑ 三个分项各自在榜内 min-max 归一，ws + wc + wv = 1
+   *   角色得分 = ws × 角色强度 + wc × 角色性价比 + wv × 角色泛用性
+   *              ↑ 后两项各自在榜内 min-max 归一（强度是绝对刻度），ws + wc + wv = 1
    * ```
    *
    * 所以不动输入框时 = `0.4 / 0.4 / 0.2`；名次不再由「含金数项总分」单键决定，
@@ -1311,6 +1317,13 @@ export const envWeightDefaults = () => Object.fromEntries(
  *
  * 历史（别再改回去）：v4.6.95/96 方案只吃 `strength : cost` 两项、内部再归一一次，
  * 于是调泛用性不动方案名次 —— 用户第 3 条明确要求它**也适用于补金推荐**，已统一。
+ */
+/**
+ * ⚠️ 这三个**输入框的标签刻意不带「角色 / 队伍」前缀**（用户 2026-10-17 确认）：
+ * 它们是两个榜**共用**的一组系数，加前缀会被读成「只管某一个榜」。
+ * 两个榜各自的**分项名**才带前缀 —— 角色总榜叫「角色强度 / 角色性价比 / 角色泛用性」、
+ * 抽卡方案叫「队伍强度 / 队伍性价比 / 队伍泛用性」（改名见 `SCORING.drawWeight` 那段注释）。
+ * 三处（输入框 / 两个榜的分项）的**顺序恒为 强度 → 性价比 → 泛用性**。
  */
 export const DRAW_WEIGHT_ROWS = [
   { key: 'strength', label: '强度' },
@@ -2646,6 +2659,13 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
           tier: row?.tier ?? null,
           season: row?.season ?? null,
           cost: Math.max(0, Number(row?.cost) || 0),
+          // 来源视频（用户 2026-10-17 第 5 条）：v4.6.115 起服务端 `avTeams` 也带
+          // `video` 了（按 `版本|阵容` 回查 `teams[].sample.video`，见 `archive.js`
+          // 的 `sampleVideoByRosterSeason`）。以前这一池恒为 `null`，于是抽卡方案
+          // 前排那些「0 行动值满配队」全是点不出视频的卡片。
+          // ⚠️ 它是**逐关逐版**的：`bestHit` 挑中哪一关就用哪一关的地址，
+          //    不能拿别关别版的来顶 —— 那会把行动值和视频拼成两条不相干的投稿。
+          video: row?.video ?? null,
           // 压金度的分母 = 该副本**该版本**的最便宜金数（与总榜 `seasonMinCost` 同源）。
           minCost: Math.max(0, Number((env.minCostBySeason || {})[row?.season]) || 0),
           tierLines,
@@ -2743,9 +2763,11 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
           actionValue: bestHit.av,
           evidenceSeason: bestHit.season,
           seasonMinCost: bestHit.minCost || null,
-          // ⚠️ `video` 只能是 `null`：`avTeams` 是紧凑聚合数据，不带投稿地址
-          //    （数据集 `frontier` 条目只有 `c/a/t/m` 四个键）。界面据此不画视频图标。
-          video: null,
+          // 来源视频（用户 2026-10-17 第 5 条）：v4.6.115 起服务端 `avTeams` 按
+          // `版本|阵容` 回查 `teams[].sample.video` 后下发，这一池不再恒为 `null`。
+          // ⚠️ 取 `bestHit`（这支队最快的那一关）自己的地址，不借别关别版的；
+          //    查不到就**如实留空**，界面据此不画视频图标（绝不猜地址）。
+          video: bestHit.video ?? null,
           members: av.members,
         },
         // 最小形状的「unit」：只有 `envCount` 会被下发段读到（证据广度展示）。

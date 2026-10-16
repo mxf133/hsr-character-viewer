@@ -1477,7 +1477,11 @@ if (!tipTarget) {
     const strengthTrs = [ ...(strengthTable?.querySelectorAll(':scope > tbody > tr') || []) ];
     // 泛用性的来源块：一份队友名单 + 一句归一换算（它**不是**表格，是名单）。
     const versBlock = [ ...tip.querySelectorAll('.advice-score-split') ]
-      .find((b) => /^泛用性来源/.test(b.querySelector('.advice-score-split-title')?.textContent || ''));
+      // ⚠️ 2026-10-17（用户第 2 条）：角色总榜三项改名为「角色强度 / 角色性价比 /
+      //    角色泛用性」，**来源块标题**也跟着改（「角色泛用性来源：…」），
+      //    这里按前缀认块必须同步，否则 versMemberCount 恒为 0 → 假红。
+      //    ⚠️ 本段整体上是一个模板字符串：注释里**不能出现反引号**（HANDOFF §6.1 第 16 条）。
+      .find((b) => /^角色泛用性来源/.test(b.querySelector('.advice-score-split-title')?.textContent || ''));
     const versMembers = versBlock?.querySelector('.advice-vtip-members')?.textContent || '';
     // ⚠️ 按**元素**数数，不要 split 文本：角色名里本来就有「•」（砂金•戏浪），
     //    用分隔符切会把一个名字切成两个（假红）。
@@ -1619,6 +1623,28 @@ if (!tipTarget) {
           return { text: (btn.textContent || '').trim(),
             dy: Math.round(Math.abs((b.top + b.bottom) / 2 - (l.top + l.bottom) / 2)),
             sameRow: b.height > 0 && l.height > 0 && b.top < l.bottom && l.top < b.bottom };
+        }),
+      // ---- 三分项那三行的**居中对齐**（用户 2026-10-17 第 3 条：「角色得分详情页-分项的
+      //     排版有误，请对齐标题」+ 追问确认「两项都居中」）--------------------------------
+      // 量两个数：① 表头「分项」那一格的中心 x；② 每一行文字块（.tip-stack）的中心 x。
+      // 改前 .advice-factor-cell 是 flex + space-between，.tip-stack 又是 shrink-to-fit 的
+      // inline-flex —— 于是三行的中心**随「说明」那一行的长度漂**（实测 364 / 301 / 389），
+      // 既不在一条竖线上、也对不上表头（579）。修法是整格居中 + 按钮绝对定位到右边。
+      //     ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+      splitHeadMid: (() => {
+        const th = splitTable?.querySelector(':scope > thead > tr > th');
+        if (!th) return null;
+        const r = th.getBoundingClientRect();
+        return Math.round((r.left + r.right) / 2);
+      })(),
+      splitCellMids: [ ...(splitTable?.querySelectorAll(':scope > tbody > tr') || []) ]
+        .filter((tr) => !tr.classList.contains('is-total')
+          && !tr.classList.contains('advice-detail-row'))
+        .map((tr) => {
+          const s = tr.querySelector('.advice-factor-cell .tip-stack');
+          if (!s) return null;
+          const r = s.getBoundingClientRect();
+          return Math.round((r.left + r.right) / 2);
         }),
       // ---- 折叠块（用户 2026-10-13 第 8 条）------------------------------------------
       // 收起态在上面、**点之前**量的；展开态是点完之后量的。两串一起带出来，
@@ -2049,13 +2075,16 @@ if (!tipTarget) {
     && tipReport.packGolds.length === tipReport.packRows
     && tipReport.packGolds.every((t) => /^成本 \d+ 金$/.test(t));
   // ---- 三个分项那张表（用户 2026-10-13 第 1、2 条）--------------------------------
-  // 三行（强度 / 性价比 / 泛用性）+ 一行合计；表头固定；**合计 = 标题上那个数**。
+  // 三行（角色强度 / 角色性价比 / 角色泛用性）+ 一行合计；表头固定；**合计 = 标题上那个数**。
   // 这条恒等式是整块改动的锚点：权重接错层、归一化取样集合写错、或者某天有人把
   // 角色得分又改回「含金数项总分」，这一格立刻与标题对不上。
   const SPLIT_HEADERS = ['分项', '原始量', '得分', '权重', '贡献'];
   // ⚠️ 探针写死三行的列名（与表头 SPLIT_HEADERS 同一条约定）：第一列的**分项名**必须
   //    逐字是这三个，且顺序固定。2026-10-15 改成读 `.tip-main`（那一格里多了按钮）。
-  const SPLIT_LABELS = ['强度', '性价比', '泛用性'];
+  //    ⚠️ 2026-10-17（用户第 2 条）：总榜那三个旋钮仍叫「强度 / 性价比 / 泛用性」
+  //    （两个榜共用），但**角色总榜自己的分项**改名为「角色强度 / 角色性价比 /
+  //    角色泛用性」—— 这里必须跟着改，否则改名一落地这条就红。
+  const SPLIT_LABELS = ['角色强度', '角色性价比', '角色泛用性'];
   const splitOk = Boolean(tipReport)
     && JSON.stringify(tipReport.splitHeaders) === JSON.stringify(SPLIT_HEADERS)
     && JSON.stringify(tipReport.splitRowLabels) === JSON.stringify(SPLIT_LABELS)
@@ -2071,6 +2100,20 @@ if (!tipTarget) {
     && tipReport.splitInlineToggles.length === SPLIT_LABELS.length
     && tipReport.splitInlineToggles.every((t) => t.text.includes('查看来源')
       && t.sameRow && t.dy !== null && t.dy <= 10);
+  // ---- 三分项三行的**居中对齐**（用户 2026-10-17 第 3 条）------------------------------
+  //
+  // 原话「角色得分详情页-分项的排版有误，请对齐标题」，追问确认是「**两项都居中**」：
+  // 分项名那一行与它下面那行「说明」都要居中于「分项」这一列，三行必须落在**同一条竖线**上。
+  // 判据：每一行的文字块中心 x 都要与表头「分项」的中心 x 相差 ≤ 4px。
+  // ⚠️ 阈值 4px 而不是 0：不同字数的行在亚像素取整上会差 1~2px，而改前那种「跟着说明
+  //    长度漂」的偏差是**几十到上百 px**（实测 364 / 301 / 389 vs 表头 579）——
+  //    4px 足够区分「居中了」与「没居中」，又不至于被取整抖动绊倒。
+  const SPLIT_ALIGN_TOL = 4;
+  const splitAlignOk = Boolean(tipReport)
+    && tipReport.splitHeadMid !== null && tipReport.splitHeadMid !== undefined
+    && tipReport.splitCellMids.length === SPLIT_LABELS.length
+    && tipReport.splitCellMids.every((m) => Number.isFinite(m)
+      && Math.abs(m - tipReport.splitHeadMid) <= SPLIT_ALIGN_TOL);
   // ---- 折叠块：默认收起 + 点一下真的展开（用户 2026-10-13 第 8 条）----------------------
   //
   // 用户原话：「强度/性价比/泛用性三个得分项目，都可以点击后显示来源，节省界面的空间，
@@ -2329,6 +2372,11 @@ if (!tipTarget) {
     console.log(`      ${splitInlineOk ? '✓' : '✗'} 三个「查看来源」按钮都在分项行的**第一格**里`
       + `（与文字同行）：`
       + `${JSON.stringify((tipReport.splitInlineToggles || []).map((t) => `${t.text || '（无）'}/${t.sameRow ? '同行' : '换行了'} dy=${t.dy}`))}`);
+    if (!splitAlignOk) failures += 1;
+    console.log(`      ${splitAlignOk ? '✓' : '✗'} 三个分项**两项都居中**于「分项」这一列`
+      + `（2026-10-17 第 3 条）：表头中心 x=${tipReport?.splitHeadMid ?? '—'}`
+      + `，三行中心 ${JSON.stringify(tipReport?.splitCellMids || [])}`
+      + `（容差 ±${SPLIT_ALIGN_TOL}px；改前实测 364 / 301 / 389 对不上 579）`);
     console.log(`      ${sourceOk ? '✓' : '✗'} 贡献值来源表：列 ${JSON.stringify(tipReport.headers)}`
       + `，逐副本 ${tipReport.rows.length} 行`
       + `${tipReport.rows[0] ? `（首行 ${JSON.stringify(tipReport.rows[0])}）` : ''}`
@@ -2539,6 +2587,50 @@ if (!goldBar) {
     + `（距权重块下沿 ${goldBar.gapBelowWeights}px、距列表 ${goldBar.gapAboveList}px）`);
   console.log(`      按钮旁状态行：${JSON.stringify(goldBar.meta)}`);
 }
+
+/**
+ * **权重栏与隐金设置住在「② 综合结论」那一节的开头**（用户 2026-10-17 第 1 条
+ * 「权重栏放在综合结论下方」+ 追问确认「权重栏与隐金设置一起移」）。
+ *
+ * 改前这两条长在「角色总榜」标题之下、总榜筛选器之上，读起来像「总榜自己的设置」；
+ * 可它们改的是**整套结论**：关卡权重与抽卡权重同时喂角色总榜与抽卡方案，
+ * 隐金设置改的也是总榜的账面金数。所以判据是三件事：
+ *   ① 两块都还是 `#adviceConclusion` 的后代（不能移出这一节）；
+ *   ② 都在「② 综合结论」那个 h3 **之后**；
+ *   ③ 都在「角色总榜」那个 h4 **之前**（= 还没有落到某个具体的榜里）。
+ * ⚠️ 用 `compareDocumentPosition` 而不是 offsetTop：滚动位置会把 top 量歪。
+ */
+const weightsPlacement = await evaluate(`(() => {
+  const con = document.getElementById('adviceConclusion');
+  const weights = document.getElementById('adviceFrontierWeights');
+  const hidden = document.getElementById('adviceHiddenCostsBar');
+  const h3 = con?.querySelector('.advice-section-head h3') || null;
+  const h4 = [ ...(con?.querySelectorAll('h4.advice-h4') || []) ]
+    .find((n) => (n.textContent || '').includes('角色总榜')) || null;
+  if (!con || !weights || !hidden || !h3 || !h4) {
+    return { missing: {
+      con: !con, weights: !weights, hidden: !hidden, h3: !h3, h4: !h4 } };
+  }
+  const after = (a, b) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  return {
+    inSection: con.contains(weights) && con.contains(hidden),
+    afterH3: after(h3, weights) && after(h3, hidden),
+    beforeBoard: after(weights, h4) && after(hidden, h4),
+    weightsBeforeHidden: after(weights, hidden),
+    h4Text: (h4.textContent || '').replace(/\\\\s+/g, ' ').trim().slice(0, 20),
+  };
+})()`);
+const weightsPlacementOk = Boolean(weightsPlacement)
+  && !weightsPlacement.missing
+  && weightsPlacement.inSection && weightsPlacement.afterH3
+  && weightsPlacement.beforeBoard && weightsPlacement.weightsBeforeHidden;
+if (!weightsPlacementOk) failures += 1;
+console.log(`  ${weightsPlacementOk ? '✓' : '✗'} 权重栏 + 隐金设置住在「② 综合结论」开头`
+  + `（2026-10-17 第 1 条，不再长在角色总榜里）：`
+  + `${weightsPlacement?.missing ? `缺节点 ${JSON.stringify(weightsPlacement.missing)}` : ''
+  }在这一节内 ${weightsPlacement?.inSection ? '✓' : '✗'}`
+  + ` / 在「综合结论」标题之后 ${weightsPlacement?.afterH3 ? '✓' : '✗'}`
+  + ` / 在「${weightsPlacement?.h4Text || '角色总榜'}」之前 ${weightsPlacement?.beforeBoard ? '✓' : '✗'}`);
 
 let goldReport = null;
 let goldModalOk = false;
@@ -2846,10 +2938,14 @@ const teamPlanProbe = await evaluate(`(() => {
     // ⚠️ 第二项在 2026-10-12 第 6 条**回到**「差额接近度」：v4.6.87 一度叫「性价比得分」
     //    （差额接近度 与 压金度 合成），用户说这三者重叠、只要差额接近度，于是删掉中间层。
     //    标签不跟着改，numAfter 会取到 NaN（这条断言就是这么被绊到的）。
-    const parts = [numAfter('强度得分'), numAfter('性价比'), numAfter('泛用性')];
+    //    ⚠️ 2026-10-17（用户第 4 条）：这三项**整体改名**为「队伍强度 / 队伍性价比 /
+    //    队伍泛用性」（旧的「强度得分」「性价比」「泛用性」就此作废），
+    //    与角色总榜那边的「角色强度 / …」区分开 —— 两个榜共用同一组权重旋钮，
+    //    但**分项名**必须各叫各的，否则用户分不清读的是角色还是队伍。
+    const parts = [numAfter('队伍强度'), numAfter('队伍性价比'), numAfter('队伍泛用性')];
     // ⚠️ 第三项「泛用性」是用户 2026-10-13 第 3 条（「泛用性权重也适用于补金推荐」）
     //    加进来的 —— 等式里现在是**三个**分项与三个系数，v4.6.95/96 时只有两个。
-    const coefs = [coefAfter('强度得分'), coefAfter('性价比'), coefAfter('泛用性')];
+    const coefs = [coefAfter('队伍强度'), coefAfter('队伍性价比'), coefAfter('队伍泛用性')];
     const fills = [ ...card.querySelectorAll('.advice-plan-team-fill .advice-fill-item') ];
     // 一笔补金可能是**多金**（例：遐蝶 E0→E2 一笔 2 金），所以条数 ≠ 补金金数 ——
     // 正确的判据是「各条的金数之和 = 补金金数」。每条的 .advice-fill-cost 以「N 金」开头。
@@ -2963,34 +3059,52 @@ if (teamPlanProbe.missing) {
     console.log(`        ${first.fillText[0]?.replace(/\\s+/g, ' ').trim().slice(0, 70) || '(空)'}`);
     if (!first.hasBest) failures += 1;
     /**
-     * **抽卡方案卡片上的来源视频**（用户 2026-10-14 第 6 条）。
+     * **抽卡方案卡片上的来源视频**（用户 2026-10-14 第 6 条；**2026-10-17 第 5 条收紧**）。
      *
      * 与详情窗口那条判据同一套要求（真 http(s) + `_blank` + `noopener` + 平台 class），
-     * 差别是位置：这里的图标挂在「最佳证据」那半句后面。**允许部分卡片没有** ——
-     * 那一行证据的投稿恰好是 `douyin:` / `tiktok:` 伪串时本来就没有可点的地址，
-     * 硬画一个死链比不画更糟。但至少要有一张卡带上（否则就是功能没接）。
+     * 差别是位置：这里的图标挂在「最佳证据」那半句后面。
+     *
+     * ⚠️ 判据在 2026-10-17 从「至少一张」收紧成「**每一张**」—— 用户第 5 条原话是
+     *    「提供抽卡方案-所有队伍的视频链接（类似角色总榜）」。改前实测 15 张卡只有 7 张
+     *    有视频，缺的 8 张**全是行动值前沿池**（`avTeams`）的队伍：那一池的载荷里压根
+     *    没有投稿地址，而它恰恰是「0 行动值满配队」的唯一来源，于是前排全是点不出的卡。
+     *    修法是服务端按 `版本|阵容` 回查 `teams[].sample.video`（见 `archive.js` 的
+     *    `sampleVideoByRosterSeason`），实测前沿池 5 关 × 8 条 = 40/40 全覆盖。
+     *    ⚠️ 唯一还能让某一张**合法地**没有视频的情况：那一条证据的投稿是 `douyin:` /
+     *    `tiktok:` 伪串（`videoUrlOf()` 挡掉，本来就没有可点的地址）。当前数据集下
+     *    没有命中这一档；真命中时应当把阈值改成 `rows.length - k` 并在注释里写明 k 与
+     *    命中的队伍，**不要**简单地退回「至少一张」——那等于把第 5 条又放掉了。
      */
     const planVideos = teamPlanProbe.rows.map((r) => r.video).filter(Boolean);
-    const planVideoOk = planVideos.length >= 1 && planVideos.every((v) => /^https?:\/\//.test(v.href)
-      && v.target === '_blank' && /noopener/.test(v.rel)
-      && ['is-bilibili', 'is-youtube', 'is-video'].includes(v.platform));
+    const planVideoOk = teamPlanProbe.rows.length > 0
+      && planVideos.length === teamPlanProbe.rows.length
+      && planVideos.every((v) => /^https?:\/\//.test(v.href)
+        && v.target === '_blank' && /noopener/.test(v.rel)
+        && ['is-bilibili', 'is-youtube', 'is-video'].includes(v.platform));
     if (!planVideoOk) failures += 1;
-    console.log(`  ${planVideoOk ? '✓' : '✗'} 方案卡片带来源视频外链（用户 2026-10-14 第 6 条）：`
+    console.log(`  ${planVideoOk ? '✓' : '✗'} 方案卡片带来源视频外链`
+      + `（2026-10-14 第 6 条 + 2026-10-17 第 5 条「所有队伍」）：`
       + `${planVideos.length}/${teamPlanProbe.rows.length} 张`
       + `（首个 ${JSON.stringify(planVideos[0]?.href || '')} ${planVideos[0]?.platform || ''}`
       + ` target=${planVideos[0]?.target || ''}；要求 _blank + noopener + 平台 class）`);
     // ---- 用户 2026-10-11 的抽卡方案第 2~6 条 ----------------------------------------
-    //   ② 徽标标签必须叫「补金推荐分」、「性价比」必须改叫「强度得分」，
+    //   ② 徽标标签必须叫「补金推荐分」，三项必须叫「队伍强度 / 队伍性价比 / 队伍泛用性」
+    //      （2026-10-17 用户第 4 条；旧的「强度得分 / 性价比 / 泛用性」作废），
     //      且等式里**不许再用全角空格**（用户：「注意空格不要离得太远」）；
     //   ③ 补金顺序写「本体 / 本体+E1」，**不许再出现箭头 `→`**；
     //   ④ 界面**不显示抽数**、补金顺序里也不许再写「性价比」；
     //      ⚠️ 2026-10-12 起判据是「不许出现 `N 抽` / `抽数`」而不是单个「抽」字 ——
     //      用户第 2 条把第二类权重命名为**抽卡权重**，那个功能名必然含「抽」。
     //   ⑤ 条数上限 15。
+    // ⚠️ 2026-10-17（用户第 4 条）：等式里三项改叫「队伍强度 / 队伍性价比 / 队伍泛用性」，
+    //    所以这里从「含『强度得分』」改成「三项队名都在、且旧的『强度得分』不再出现」。
     const labelOk = teamPlanProbe.rows.every((r) => /^补金推荐分 \+/.test(r.badgeText)
-      && r.eqText.includes('强度得分') && !r.eqText.includes('　'));
+      && r.eqText.includes('队伍强度') && r.eqText.includes('队伍性价比')
+      && r.eqText.includes('队伍泛用性') && !r.eqText.includes('强度得分')
+      && !r.eqText.includes('　'));
     if (!labelOk) failures += 1;
-    console.log(`  ${labelOk ? '✓' : '✗'} 标签改成「补金推荐分 / 强度得分」且等式里没有全角空格`
+    console.log(`  ${labelOk ? '✓' : '✗'} 标签改成「补金推荐分 / 队伍强度 / 队伍性价比 / 队伍泛用性」`
+      + `且等式里没有全角空格`
       + `（首条「${teamPlanProbe.rows[0]?.badgeText || ''}」/「${(teamPlanProbe.rows[0]?.eqText || '').slice(0, 60)}」）`);
     // ⚠️ 「不出现抽」这条判据在 2026-10-12 收窄成「不出现**抽数**」：用户第 2 条把
     //    第二类权重命名为**抽卡权重**（那是功能名，必然含「抽」字），而这条判据的本意是
@@ -3179,12 +3293,14 @@ if (teamPlanProbe.missing) {
       // ⚠️ 用户 2026-10-12 第 6 条：分数来源**只有真实生效的那几个刻度**，
       //    且不许再出现「压金度 / 性价比得分」。2026-10-13 第 3 条（泛用性也进补金推荐）
       //    之后是**三行** —— v4.6.95/96 时这里钉的是两行。
+      // ⚠️ 2026-10-17（用户第 4 条）：这三项改名为「队伍强度 / 队伍性价比 / 队伍泛用性」
+      //    （旧的「强度得分」就此作废），探针必须跟着改 —— 否则改名一落地这条就假红。
       const scoreScaleOk = JSON.stringify(scoreTip?.rowLabels)
-        === JSON.stringify(['强度得分', '性价比', '泛用性'])
+        === JSON.stringify(['队伍强度', '队伍性价比', '队伍泛用性'])
         && !scoreTip.text.includes('压金度')
         && !scoreTip.text.includes('性价比得分');
       if (!scoreScaleOk) failures += 1;
-      console.log(`  ${scoreScaleOk ? '✓' : '✗'} 分数来源表是「强度得分 / 性价比 / 泛用性」三行、`
+      console.log(`  ${scoreScaleOk ? '✓' : '✗'} 分数来源表是「队伍强度 / 队伍性价比 / 队伍泛用性」三行、`
         + `全文不出现「压金度 / 性价比得分」（实际 ${JSON.stringify(scoreTip?.rowLabels || [])}）`);
       // ⚠️ 2026-10-15 换 ① 口径时**新加**的判据：那一格的「刻度」必须写「绝对刻度」，
       //    而取值那一格必须是**强度分**（不再是「队分」——旧口径印的是含金数项的整包分，
@@ -3195,13 +3311,14 @@ if (teamPlanProbe.missing) {
       //      * 前沿池的卡（0 行动值队，当前数据集下占据前排）：「本队行动值强度 X」+
       //        「0 ~ 100（本队各关行动值，0 行动值 = 100）」—— ① = 本队自己行动值的加权。
       //    两种都是绝对刻度、都不印「队分」；探针点开的是**第一张卡**，所以两种都要认。
-      const strengthRow = (scoreTip?.cells || []).find((c) => (c[0] || '') === '强度得分');
+      // ⚠️ 同上（用户第 4 条改名）：行名从「强度得分」改成「队伍强度」。
+      const strengthRow = (scoreTip?.cells || []).find((c) => (c[0] || '') === '队伍强度');
       const strengthAbsOk = Boolean(strengthRow)
         && (/强度分|行动值强度/).test(strengthRow[1] || '')
         && !(strengthRow[1] || '').includes('队分')
         && (/绝对刻度|本队各关行动值/).test(strengthRow[2] || '');
       if (!strengthAbsOk) failures += 1;
-      console.log(`  ${strengthAbsOk ? '✓' : '✗'} 「强度得分」那一行写的是绝对刻度`
+      console.log(`  ${strengthAbsOk ? '✓' : '✗'} 「队伍强度」那一行写的是绝对刻度`
         + `（实际取值 ${JSON.stringify(strengthRow?.[1] || '')}`
         + `，刻度 ${JSON.stringify(strengthRow?.[2] || '')}）`);
       await evaluate("document.querySelector('#adviceTipClose')?.click(); true");

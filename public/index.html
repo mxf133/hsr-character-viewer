@@ -250,43 +250,24 @@
             </h3>
           </div>
 
-          <!-- 权重**两大类**（用户 2026-10-12 第 2、3、4 条 + 2026-10-13 第 3 条）：
+          <!-- 权重与隐金设置（用户 2026-10-17：「权重栏放在综合结论下方」）。
+               移动前这两条长在「角色总榜」标题之下、总榜筛选器之上，读起来像「总榜自己
+               的设置」；可它们改的是**整套结论**：关卡权重与抽卡权重同时喂角色总榜与
+               抽卡方案（见下面那段注释），隐金设置改的也是总榜的账面金数。所以摆到
+               「② 综合结论」这一节的开头 —— 先看到旋钮，再往下看两个榜。
+
+               权重**三大类**（用户 2026-10-12 第 2、3、4 条 + 2026-10-13 第 3 条）：
                  ① 关卡权重 = 五个副本的权重（决定哪些副本算数，**角色总榜与抽卡方案都吃它**）；
                  ② 抽卡权重 = 强度 / 性价比 / 泛用性（三个分项在**角色总榜**与**抽卡方案**里
-                    各占多少 —— v4.6.97 起两处共用同一组系数）。
+                    各占多少 —— v4.6.97 起两处共用同一组系数）；
+                 ③ 版本权重 = 每个副本窗口里从最新往前 6 个版本各占多少。
                用户原话：「总榜权重改名为权重，权重分为两大类，分别为关卡权重和抽卡权重，
                关卡权重照旧让用户设置5种关卡的权重」「抽卡方案也适用于以上权重」。
                ⚠️ 它们与「方案权重」那一行不是一回事：那一行在 2026-10-11 第 10 轮就已经
-               删掉了（新的抽卡方案是队伍口径）。 -->
-          <!-- 一节：角色总榜（纯黑塔网投稿口径，不看你的角色池） -->
-          <h4 class="advice-h4">
-            角色总榜
-            <span class="muted small">角色 / 星魂 / 光锥混排 · 只看黑塔网投稿数据</span>
-          </h4>
-          <p class="muted small advice-note" id="adviceUnitNote">
-            <span class="advice-note-line"><span class="advice-note-tag">看什么</span>
-              这个榜<strong>完全不看你的角色池</strong>：它只统计黑塔网上别人投稿的配队，
-              你抽到没抽到都不影响名次。</span>
-            <span class="advice-note-line"><span class="advice-note-tag">怎么算</span>
-              每个副本先只保留<strong>判据最好的一档与次好的一档</strong>
-              （混沌回忆/虚构叙事是 <strong>0T</strong> / <strong>≤2T</strong>、末日幻影是 <strong>积分 4000</strong> /
-              <strong>≥3700</strong>、异相仲裁·绝境王棋关是<strong>行动值 &lt;300</strong> / <strong>&lt;500</strong>），
-              这批投稿<strong>全部进池</strong>（v4.6.78 起不再只圈最便宜的 25%），
-              最后看每个单位在这批里出现的<strong>占比</strong>——
-              占比越高说明它越常在能出分的阵容里出现。</span>
-          </p>
-          <!-- 星魂档筛选的口径（用户 2026-10-11 报的缺陷：切到 E0/E1/E2/E6 只剩
-               「最佳成绩就在这一档」的角色）。说明只写在这一处，筛选器上的 title
-               写同一件事的短版。 -->
-          <p class="muted small advice-note">
-            <span class="advice-note-line"><span class="advice-note-tag">切档位</span>
-              下面的 <strong>E0 / E1 / E2 / E6</strong> 是把这一份榜拆成四个<strong>星魂档</strong>：
-              每一档<strong>各自比较</strong>，一个角色在每个档位都可能有自己的一行
-              （取它抽到这一档时最强的那个整包）。</span>
-            <span class="advice-note-line"><span class="advice-note-tag">不会消失</span>
-              所以「最佳成绩在 E2」的角色，切到 <strong>E0</strong> 也能看到它 E0 档的分数与名次 ——
-              不会因为别的档位分更高就不见了。</span>
-          </p>
+               删掉了（新的抽卡方案是队伍口径）。
+               ⚠️ 抽卡权重那三个输入框的口径**刻意不含「角色」二字**：它们是两个榜共用的
+               一组系数（角色总榜读成「角色强度」，抽卡方案读成「队伍强度」，见
+               advice.js 的 DRAW_WEIGHT_ROWS）。 -->
           <div class="advice-weights is-compact" id="adviceFrontierWeights">
             <span class="advice-weights-title">权重</span>
             <span class="advice-weights-hint muted small"><strong>三大类</strong>：<strong>关卡权重</strong>决定
@@ -317,8 +298,9 @@
             </div>
           </div>
           <!-- 隐金设置（用户 2026-10-11）：「在性价比总榜添加一个按钮，用于额外设置，
-               将其放置于总榜权重下方」——所以它紧跟在 `#adviceFrontierWeights` 之后、
-               总榜列表之前（2026-10-12 起那个权重块的标题是「权重」、包含两大类）。
+               将其放置于总榜权重下方」——它与权重栏本来就是一前一后的一对，所以
+               2026-10-17「权重栏放在综合结论下方」这一条把它一起带了上来
+               （改前它在 `#adviceFrontierWeights` 之后、总榜筛选器之前）。
                按钮只负责开详情窗口；口径与名单都在 advice.js 里
                （`HIDDEN_COST_SETTINGS` / `hiddenReductionOf`），界面不抄第二份。 -->
           <div class="advice-hidden-costs" id="adviceHiddenCostsBar">
@@ -326,6 +308,38 @@
               aria-haspopup="dialog">隐金设置</button>
             <span class="muted small" id="adviceHiddenCostsMeta"></span>
           </div>
+
+          <!-- 一节：角色总榜（纯黑塔网投稿口径，不看你的角色池）。
+               ⚠️ 权重栏与隐金设置**不在这里** —— 2026-10-17 起它们属于「② 综合结论」
+               这一节的开头（两个榜共用的旋钮，见本节上方那段注释）。 -->
+          <h4 class="advice-h4">
+            角色总榜
+            <span class="muted small">角色 / 星魂 / 光锥混排 · 只看黑塔网投稿数据</span>
+          </h4>
+          <p class="muted small advice-note" id="adviceUnitNote">
+            <span class="advice-note-line"><span class="advice-note-tag">看什么</span>
+              这个榜<strong>完全不看你的角色池</strong>：它只统计黑塔网上别人投稿的配队，
+              你抽到没抽到都不影响名次。</span>
+            <span class="advice-note-line"><span class="advice-note-tag">怎么算</span>
+              每个副本先只保留<strong>判据最好的一档与次好的一档</strong>
+              （混沌回忆/虚构叙事是 <strong>0T</strong> / <strong>≤2T</strong>、末日幻影是 <strong>积分 4000</strong> /
+              <strong>≥3700</strong>、异相仲裁·绝境王棋关是<strong>行动值 &lt;300</strong> / <strong>&lt;500</strong>），
+              这批投稿<strong>全部进池</strong>（v4.6.78 起不再只圈最便宜的 25%），
+              最后看每个单位在这批里出现的<strong>占比</strong>——
+              占比越高说明它越常在能出分的阵容里出现。</span>
+          </p>
+          <!-- 星魂档筛选的口径（用户 2026-10-11 报的缺陷：切到 E0/E1/E2/E6 只剩
+               「最佳成绩就在这一档」的角色）。说明只写在这一处，筛选器上的 title
+               写同一件事的短版。 -->
+          <p class="muted small advice-note">
+            <span class="advice-note-line"><span class="advice-note-tag">切档位</span>
+              下面的 <strong>E0 / E1 / E2 / E6</strong> 是把这一份榜拆成四个<strong>星魂档</strong>：
+              每一档<strong>各自比较</strong>，一个角色在每个档位都可能有自己的一行
+              （取它抽到这一档时最强的那个整包）。</span>
+            <span class="advice-note-line"><span class="advice-note-tag">不会消失</span>
+              所以「最佳成绩在 E2」的角色，切到 <strong>E0</strong> 也能看到它 E0 档的分数与名次 ——
+              不会因为别的档位分更高就不见了。</span>
+          </p>
           <!-- 筛选器（星魂档 / 「只看我没有的」）：`feat/team-plan` 那一轮把它连同这个
                节点一起撤掉了，而 `dsh/fix-eidolon-tier-filter` 恰好把它修好（每档各自
                收敛一条）—— 收尾人裁决**保留并修好**，所以节点在这里，渲染在
@@ -348,16 +362,18 @@
               一条<strong>可以照着走的补金路线</strong>：先看你已有几位核心角色，
               再看<strong>下一步最适合补什么</strong>。</span>
             <span class="advice-note-line"><span class="advice-note-tag">队伍来源</span>
-              候选来自<strong>角色总榜里的真实队伍</strong>，同一支队伍只留一条。</span>
+              候选来自<strong>逐档榜 ∪ 角色总榜 ∪ 行动值前沿</strong>（每个副本行动值最好的 8 支），
+              同一支队伍只留一条。</span>
             <span class="advice-note-line"><span class="advice-note-tag">分数怎么算</span>
-              补金推荐分 = <strong>强度得分 × 抽卡权重</strong> + <strong>性价比 × 抽卡权重</strong>，
-              两档一个是「这支队打得多好」、一个是「你还要补几金」，各管一头。</span>
-            <span class="advice-note-line"><span class="advice-note-tag">强度</span>
-              取<strong>角色总榜那一列的强度分</strong>（绝对 0~100，与总榜同一个数）——
+              补金推荐分 = <strong>队伍强度 × 抽卡权重</strong> + <strong>队伍性价比 × 抽卡权重</strong>
+              + <strong>队伍泛用性 × 抽卡权重</strong>，
+              三项一个是「这支队打得多好」、一个是「你还要补几金」、一个是「好不好换人」，各管一头。</span>
+            <span class="advice-note-line"><span class="advice-note-tag">队伍强度</span>
+              取<strong>角色总榜那一列的「角色强度」分</strong>（绝对 0~100，与总榜同一个数）——
               每个副本取<strong>最近版本那一次</strong>成绩的行动值、按关卡权重加权，再按投入档位补分，
               所以<strong>行动值越低越高、投入越高越高</strong>（E6S5 &gt; E6S1 &gt; E2S1 &gt; E0S0），
               <strong>与金数无关</strong>。</span>
-            <span class="advice-note-line"><span class="advice-note-tag">性价比</span>
+            <span class="advice-note-line"><span class="advice-note-tag">队伍性价比</span>
               只看<strong>你自己还要补几金</strong>：补得越少分越高，<strong>正好补到「候选池封顶值」= 0 分，
               超过就转负分</strong>（最低 −100）—— 所以「要补十几金」的队伍会被真的压下去，
               而不是和更贵的队一起并排停在 0 分（指数 1.8 让尾部掉得更快，补 1~2 金的几乎不受影响）。</span>
