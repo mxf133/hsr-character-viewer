@@ -1120,6 +1120,10 @@ check('⑦ 过渡档位：中间档位是严格下位（金数更少、成员状
           `${r.key} ${m.lc}：过渡档位 S${m.superimp} 高于目标 S${target.superimp}`);
       }
     }
+    // 用户 2026-10-16：过渡档位要有视频按钮 —— 它与本方案共用**同一条**最佳证据投稿
+    // （过渡档位就是本方案这支队的中间状态），所以必须逐字等于卡片上那个视频地址。
+    assert.equal(r.mid.video, r.bestEnv?.video ?? null,
+      `${r.key}：过渡档位的视频必须与本方案的最佳证据同一条`);
   }
 });
 
@@ -1138,6 +1142,17 @@ check('⑧ 次选配队：至多 3 支、共享 ≥2 名成员、不含本队', 
     }
     assert.ok(r.alternatives.length <= 3, `${r.key}：次选最多 3 支，实际 ${r.alternatives.length}`);
   }
+  // 用户 2026-10-16：每支次选配队也要有视频按钮 —— 它自己也是一支候选队，必须有它
+  // **自己**那条投稿的地址（不能是主方案的，也不能是 undefined）。真载荷上视频覆盖率
+  // 是全的，所以这里同时钉住「至少有一支真的拿到了地址」—— 字段发了但全是 null 不算修好。
+  const allAlts = plan.rows.flatMap((r) => r.alternatives);
+  assert.ok(allAlts.length > 0, '真载荷上应当存在次选配队（否则这条判据空跑）');
+  for (const alt of allAlts) {
+    assert.ok(alt.video === null || typeof alt.video === 'string',
+      `${alt.key}：次选的 video 只能是字符串或 null，实际 ${typeof alt.video}`);
+  }
+  assert.ok(allAlts.some((alt) => typeof alt.video === 'string'),
+    '真载荷上至少一支次选配队应拿到视频地址（否则按钮永远画不出来）');
 });
 
 await new Promise((resolve) => server.close(resolve));
