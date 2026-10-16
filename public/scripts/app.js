@@ -1422,9 +1422,30 @@ const characterCard = (character) => {
  * ⚠️ 结果**留在顶栏那一块下方**（绝对定位的结果气泡）而不是只弹一个 toast：toast 4.2 秒
  *    就没了，而这里有一个要点得开的下载链接，而且用户可能想回头再看一次。toast 照样弹一下
  *    （那是「点击的即时反馈」）。气泡**不占标题栏宽度**，长句子不会把顶栏挤坏。
+ * ⚠️ 气泡**有四条收起路径**（用户 2026-10-16 报的就是「它一直挂着不消失」—— 最初那版只设
+ *    `hidden = false`，之后谁都不收它）：① 挂 10 秒自动收（`UPDATE_RESULT_LINGER_MS`，
+ *    比 toast 的 4.2s 长，够把句子读完）；② 悬停在气泡上时暂停计时（读句子 / 够「前往下载」
+ *    链接时不会被中途收走，移开再挂满剩余时间）；③ 点气泡外任意处收；④ Esc 收。
+ *    气泡收掉后「有新版本」这件事**不丢**：按钮的高亮态（`is-outdated`）与「有新版本 vX」
+ *    文案都还在顶栏上，那才是第 7 条要的「提示及时更新」的常驻落点。
  * ⚠️ 按钮在请求期间**禁用并改文案**：GitHub 直连偶尔要好几秒，没有这个反馈用户会连点，
  *    而服务端缓存只挡得住第二次之后的请求（第一次照样要等满）。
  */
+/** 结果气泡自动收起前挂多少毫秒（见 renderUpdateResult 头注释的收起路径 ①）。 */
+const UPDATE_RESULT_LINGER_MS = 10000;
+/** 气泡自动收起的计时器句柄：每次渲染 / 悬停都要先清旧的，避免上一轮的定时器提前收走本轮。 */
+let updateResultHideTimer = 0;
+
+const hideUpdateResult = () => {
+  window.clearTimeout(updateResultHideTimer);
+  updateResultHideTimer = 0;
+  if (el.appUpdateResult) el.appUpdateResult.hidden = true;
+};
+
+const scheduleUpdateResultHide = (delay = UPDATE_RESULT_LINGER_MS) => {
+  window.clearTimeout(updateResultHideTimer);
+  updateResultHideTimer = window.setTimeout(hideUpdateResult, delay);
+};
 const renderUpdateResult = (data) => {
   const el2 = el.appUpdateResult;
   if (!el2) return;
@@ -1460,6 +1481,8 @@ const renderUpdateResult = (data) => {
     el2.appendChild(a);
   }
   el2.hidden = false;
+  // 弹出即挂自动收起的表（收起路径 ①；悬停 / 点外部 / Esc 另有各自的入口）。
+  scheduleUpdateResultHide();
   /**
    * 「及时更新」的高亮（用户第 7 条）：有新版本时给**整块**加 `is-outdated`
    * （`app.css` 里版本号变金色、按钮变「有新版本 vX」+ 发光），检查一次是旧版本就把
@@ -1499,6 +1522,33 @@ const checkUpdate = async () => {
   btn.textContent = label;
   renderUpdateResult(result);
 };
+
+// ---- 结果气泡的三条手动收起路径（收起路径 ②③④，见 renderUpdateResult 头注释）--------
+//
+// ② 悬停暂停：`mouseenter` 清掉计时器（挂表时机在 renderUpdateResult）、`mouseleave`
+//    重新挂满 10 秒 —— 用户正读句子或正把鼠标移向「前往下载」链接时不能被收走。
+//    用 `pointerenter/pointerleave` 而不是 mouse 系：触屏上 mouseenter 会在点按后
+//    迟到地补发一次，行为不如 pointer 系一致。
+el.appUpdateResult?.addEventListener('pointerenter', () => {
+  window.clearTimeout(updateResultHideTimer);
+  updateResultHideTimer = 0;
+});
+el.appUpdateResult?.addEventListener('pointerleave', () => {
+  if (!el.appUpdateResult?.hidden) scheduleUpdateResultHide();
+});
+// ③ 点气泡外任意处收：`pointerdown` 捕获阶段判断，点到气泡 / 版本区 / 检查按钮本身都不收
+//    （检查按钮点了会重新渲染气泡，收了也是立刻弹回来，白闪一下）。
+document.addEventListener('pointerdown', (event) => {
+  if (el.appUpdateResult?.hidden) return;
+  if (event.target instanceof Node
+    && (el.appUpdateResult.contains(event.target)
+      || el.topbarVersion?.contains(event.target))) return;
+  hideUpdateResult();
+}, true);
+// ④ Esc 收：只在气泡开着时拦，别抢别的浮层的键。
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !el.appUpdateResult?.hidden) hideUpdateResult();
+});
 
 const loadConfig = async () => {
   state.accessToken = readAccessToken();
