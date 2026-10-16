@@ -13,9 +13,9 @@
 import assert from 'node:assert/strict';
 import { createApp } from '../src/server/app.js';
 import {
-  DEFAULT_HIDDEN_COSTS, NO_HIDDEN_COSTS, SCORING, eidolonTierOf, eidolonsOf, lightConeRanksOf,
-  normalizeDrawWeights, ownedCharacters, perfFactorOf, setHiddenCosts, teamPlan, teamPoolUnits,
-  unitPullsOf,
+  DEFAULT_HIDDEN_COSTS, NO_HIDDEN_COSTS, SCORING, drawWeightDefaults, eidolonTierOf, eidolonsOf,
+  lightConeRanksOf, normalizeDrawWeights, ownedCharacters, perfFactorOf, setHiddenCosts, teamPlan,
+  teamPoolUnits, unitPullsOf,
 } from '../public/scripts/advice.js';
 
 let passed = 0;
@@ -158,14 +158,19 @@ check('⭐ 候选池取自**逐档榜**（每角色 × 每星魂档），不是�
     `池规模口径自洽：去重前 ${plan.poolAll} 应 ≥ 剔除补金 0 后的 ${plan.pool}`);
 });
 
-check('三个分量按**抽卡权重**合成，默认 1:1:1 = 三等分', () => {
+check('三个分量按**抽卡权重**合成，默认 1:1:0.5 = 0.4 / 0.4 / 0.2', () => {
   const plan = fixturePlan();
   const draw = plan.drawWeights;
   // ⚠️ 用户 2026-10-13 第 3 条（「泛用性权重也适用于补金推荐」）之前这里是 `0.5 / 0.5`
-  //    （方案只吃强度与性价比、两项自己再归一）。现在三项一起归一 → 各 1/3。
+  //    （方案只吃强度与性价比、两项自己再归一）；2026-10-13 之后三项一起归一到三等分
+  //    `1/3 × 3`；**2026-10-16 第 1 条把泛用性的默认权重降到 0.5**，于是默认变成
+  //    `1 : 1 : 0.5` → 归一 `0.4 / 0.4 / 0.2`。
+  // 先把「默认值本身」钉住（用户 2026-10-16 第 1 条）：改它就是改口径，必须是有意的。
+  assert.deepEqual(drawWeightDefaults(), { strength: 1, cost: 1, versatility: 0.5 },
+    '抽卡权重的默认原始值应是 1 : 1 : 0.5');
   assert.deepEqual(draw, {
-    strength: 1 / 3, cost: 1 / 3, versatility: 1 / 3,
-  }, '默认抽卡权重应是 1:1:1 归一化后的三等分');
+    strength: 0.4, cost: 0.4, versatility: 0.2,
+  }, '默认抽卡权重应是 1:1:0.5 归一化后的 0.4 / 0.4 / 0.2');
   for (const r of plan.rows) {
     // ⚠️ 第二项是 `gapPct`（用户 2026-10-12 第 6 条：性价比这一侧只有差额接近度）；
     //    第三项是 `versatilityPct`（用户 2026-10-13 第 3 条）。
@@ -525,26 +530,29 @@ check('⭐ 强度权重高 → 强度分高的在前；性价比权重高 → �
     '泛用性权重拉满时该推「队内平均泛用性」最高的那支（charX 40 vs charY 10）');
 });
 
-check('抽卡权重的边界：全部清空 / 非法值 → 退回默认等权，不出现整列 0 分', () => {
+check('抽卡权重的边界：全部清空 / 非法值 → 退回**默认比例**，不出现整列 0 分', () => {
   // ⚠️ 2026-10-13 第 1 条加了第三个旋钮（泛用性）之后，「清空」必须**三个键一起**才算
-  // 「我没有偏好」；只清两个、第三个留着默认 1 时，第三项就是 100% —— 那是真实的偏好。
-  const even = { strength: 1 / 3, cost: 1 / 3, versatility: 1 / 3 };
-  assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0, versatility: 0 }), even);
-  assert.deepEqual(normalizeDrawWeights({ strength: '', cost: '', versatility: '' }), even,
-    '空串 = 用户清空了输入框 → 按 0 算，三个都是 0 时退回默认等分');
-  assert.deepEqual(normalizeDrawWeights({ strength: -1, cost: 'abc', versatility: NaN }), even,
+  // 「我没有偏好」；只清两个、第三个留着默认时，第三项就是 100% —— 那是真实的偏好。
+  // ⚠️ 2026-10-16 第 1 条把泛用性的**默认权重**降到 0.5，所以「退回默认」= `1:1:0.5`
+  //    归一后的 `0.4 / 0.4 / 0.2`（改前是 `1/3 × 3`）。
+  const dflt = { strength: 0.4, cost: 0.4, versatility: 0.2 };
+  assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0, versatility: 0 }), dflt);
+  assert.deepEqual(normalizeDrawWeights({ strength: '', cost: '', versatility: '' }), dflt,
+    '空串 = 用户清空了输入框 → 按 0 算，三个都是 0 时退回默认比例');
+  assert.deepEqual(normalizeDrawWeights({ strength: -1, cost: 'abc', versatility: NaN }), dflt,
     '非法值忽略、退回默认');
   assert.deepEqual(normalizeDrawWeights({ strength: 2, cost: null }),
-    { strength: 0.5, cost: 0.25, versatility: 0.25 },
-    '只给一个键时另两个按默认值补齐');
+    // 期望值按**同一个算式**写（`值 / 3.5`），避免手抄小数时差 1 ulp 造成假红。
+    { strength: 2 / 3.5, cost: 1 / 3.5, versatility: 0.5 / 3.5 },
+    '只给一个键时另两个按默认值补齐（性价比 1、泛用性 0.5）');
   assert.deepEqual(normalizeDrawWeights({ strength: 1, cost: 0 }),
-    { strength: 0.5, cost: 0, versatility: 0.5 },
-    '单边为 0 是**合法**的：用户可以把某一侧彻底关掉');
+    { strength: 2 / 3, cost: 0, versatility: 1 / 3 },
+    '单边为 0 是**合法**的：用户可以把某一侧彻底关掉（泛用性那 0.5 仍在）');
   assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0 }),
     { strength: 0, cost: 0, versatility: 1 },
     '只清空强度/性价比 = 全押泛用性（第三个框还开着，那不是「没有偏好」）');
-  assert.deepEqual(normalizeDrawWeights(undefined), even,
-    '不给参数时用默认值（默认 1:1:1 → 等分）');
+  assert.deepEqual(normalizeDrawWeights(undefined), dflt,
+    '不给参数时用默认值（默认 1:1:0.5 → 0.4 / 0.4 / 0.2）');
 });
 
 check('⭐ 性价比只有**差额接近度**一个刻度：差额与整包分都相同时同分（用户 2026-10-12 第 6 条）', () => {

@@ -27,12 +27,13 @@
 // 服务端的 `buildConclusion` 里 —— 只在浏览器里加权会让收敛选错代表整包。
 // 所以改它要重算结论（与关卡权重、隐金设置同一条路），见输入框的接线。
 //
-// ⚠️ **版本权重（最新版 / −1 版 … −5 版）是第三类权重**（用户 2026-10-16 第 3 条）：
-// 每个副本窗口里「从最新往前 6 个版本」各占多少（默认 `3:2.5:2:1.5:1:0.5`）。
+// ⚠️ **版本权重（当前版本 / 前1个版本 … 前5个版本）是第三类权重**（用户 2026-10-16 第 3 条；
+// 槽位名 2026-10-16 第 2 条改过：原「最新版 / −1 版 …」不再使用）：
+// 每个副本窗口里「从当前版本往回 6 个版本」各占多少（默认 `3:2.5:2:1.5:1:0.5`）。
 //   * 它决定服务端现算的 `seasonWeights`，客户端再拿那一份做跨版本加权 ——
 //     所以同样**必须进服务端请求**（与抽卡权重同一条路，漏传就是「界面静默显示旧结果」）；
 //   * 槽位**按下标**、不绑定版本号：黑塔网加一版就整体前移，所以界面只能写
-//     「最新版 / −1 版 / …」；而「最新版」是**逐副本**的（4.5 在混沌与异相仲裁里不是同一期）；
+//     「当前版本 / 前1个版本 / …」；而「当前版本」是**逐副本**的（4.5 在混沌与异相仲裁里不是同一期）；
 //   * 它**不做「和归一到 1」**（`normalizeVersionWeights` 明确不做），界面印的是原值比例。
 //
 // 2026-10 删掉的两节：「你的补强路径」与「推荐阵容 · 按金数分档」——前者被
@@ -145,11 +146,11 @@ const LEGACY_WEIGHTS_KEY = 'hsr.advice.weights';
  */
 const DRAW_WEIGHTS_KEY = 'hsr.advice.drawWeights';
 /**
- * **版本权重**（每个副本窗口里最新往前 6 个版本各占多少）的本地存档键
+ * **版本权重**（每个副本窗口里当前版本往回 6 个版本各占多少）的本地存档键
  * （用户 2026-10-16 第 3 条）。
  *
  * ⚠️ 与抽卡权重一样是**长期偏好**，必须跨会话保留；但形状是**长度 6 的数组**
- * （下标 0 = 最新版），不是对象 —— 读回时一律过 `versionWeightValues()`（缺槽位 /
+ * （下标 0 = 当前版本），不是对象 —— 读回时一律过 `versionWeightValues()`（缺槽位 /
  * 非法值按默认补、空串 = 0），所以老存档、短数组、多给的值都退化成安全形状。
  */
 const VERSION_WEIGHTS_KEY = 'hsr.advice.versionWeights';
@@ -197,7 +198,7 @@ const state = {
    * —— 它只有相对大小有意义，而界面上要印原值（与 `normalizeVersionWeights` 同一条
    * 约定：整体乘个常数不改变任何结果）。
    * ⚠️ 槽位**不绑定具体版本号**：黑塔网加一版之后整张表前移（下标 0 从 4.6 变成 4.7），
-   * 所以界面只能写「最新版 / −1 版 / …」。
+   * 所以界面只能写「当前版本 / 前1个版本 / …」。
    */
   versionWeights: versionWeightDefaults(),
   /** 权重输入的防抖计时器。 */
@@ -1324,7 +1325,9 @@ const renderDrawWeightsMeta = () => {
     .map((row) => `${row.label} ${(draw[row.key] * 100).toFixed(0)}%`)
     .join(' · ');
   meta.textContent = `角色总榜：${parts}`
-    + (changed ? '' : '（默认三等分）')
+    // ⚠️ 不改口径、只改文案（v4.6.114）：默认从 `1:1:1`（三等分）改成 `1:1:0.5`，
+    //    所以这里不能再写「默认三等分」—— 印那个词等于在界面说假话。
+    + (changed ? '' : '（默认）')
     // ⚠️ 三个系数**两个榜都吃**（用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」）：
     //    角色总榜的角色得分、抽卡方案的补金推荐分，用的是同一个 `normalizeDrawWeights`。
     + '；角色得分与补金推荐分都按这三个系数加权。';
@@ -1363,7 +1366,7 @@ const renderDrawWeightRow = () => {
   renderDrawWeightsMeta();
 };
 
-// ------------------------------------------------- 版本权重（最新版 / −1 版 … −5 版）
+// ------------------------------------- 版本权重（当前版本 / 前1个版本 … 前5个版本）
 
 /**
  * 读版本权重的 6 个输入框 → **长度 6 的数组**（原值，不归一化）。
@@ -1414,13 +1417,13 @@ const saveVersionWeights = () => {
  * 版本权重那行状态：印**实际生效的值**（用户只有相对大小可调，所以光看输入框里的原值
  * 看不出「谁占多少」——这里印的是过了 `normalizeVersionWeights()` 之后的生效值）。
  *
- * ⚠️ 与另外两组不同，这里不印百分比而印 `最新版 3 : −1 版 2.5 : …` 这种**比值串**
+ * ⚠️ 与另外两组不同，这里不印百分比而印 `当前版本 3 : 前1个版本 2.5 : …` 这种**比值串**
  * —— 因为它**不做归一到 1**（`normalizeVersionWeights` 明确不做），百分比会误导用户
  * 以为总和是 100。标签逐槽位印（来自 `VERSION_WEIGHT_ROWS`，不抄第二份），
  * 这样「哪一版是 0」一眼可见。
  *
  * ⚠️ 措辞必须点明「**每个副本算各自的**」：`4.5` 在混沌与异相仲裁里不是同一期，
- * 所以「最新版」是逐副本的（槽位按下标、不绑定版本号）。
+ * 所以「当前版本」是逐副本的（槽位按下标、不绑定版本号）。
  */
 const renderVersionWeightsMeta = () => {
   const meta = el.versionWeightsMeta;
@@ -1464,10 +1467,11 @@ const renderVersionWeightRow = () => {
     input.inputMode = 'decimal';
     input.dataset.key = row.key;
     input.value = String(current[row.index] ?? defaults[row.index] ?? 0);
-    // ⚠️ 标题写清「距**该副本**最新版第 N 版」：槽位是按下标的，「最新版」逐副本不同
+    // ⚠️ 标题写清「**当前版本**往回数第 N 个」：槽位是按下标的，「当前版本」逐副本不同
     // （4.5 在混沌与异相仲裁里不是同一期），写死版本号第二天就会说假话。
     input.setAttribute('aria-label', `${row.label}（版本权重）`);
-    input.title = `距**该副本**最新版${row.index === 0 ? '' : `第 ${row.index} 版`}（每个副本各有一套版本号）`;
+    input.title = `距**该副本**当前版本${row.index === 0 ? '' : `往回 ${row.index} 个版本`}`
+      + '（每个副本各有一套版本号）';
     label.appendChild(input);
     grid.appendChild(label);
   }
@@ -2612,7 +2616,7 @@ const fetchPacks = async (charKey) => {
     // 隐金设置：**只要有一项勾着就必须带**（接口默认是「一项都不减」），
     // 不带的话面板会按原价算，与榜上的分对不上。
     if (anyHiddenCostOn()) params.set('hiddenCosts', JSON.stringify(state.hiddenCosts));
-    // 抽卡权重：接口默认 = 三等分，所以界面这把也**总是带**（它一定有值），
+    // 抽卡权重：接口默认 = 默认表（`1 : 1 : 0.5`），界面这把也**总是带**（它一定有值），
     // 免得用户调过之后面板仍按默认权重算（这类「权重没带过去」的 bug 修过两次）。
     params.set('drawWeights', JSON.stringify(normalizeDrawWeights(state.drawWeights || {})));
     // 版本权重（用户 2026-10-16 第 3 条）：接口默认 = 默认表，界面这把**总是带**
@@ -2663,7 +2667,7 @@ const packsSlot = (charKey) => {
 };
 
 /**
- * 把空槽填成「该角色的全部配队」清单。
+ * 把空槽填成「（角色头像）xx 的全部配队」清单。
  *
  * ⚠️ **异步**：内容要等服务端返回（实测 ~1s），所以窗口已经开着、内容回来时直接长进
  * 窗口正文里 —— v4.6.59 那次还要「补完再 `placeTip()` 重新量一次坐标」，现在内容在
@@ -2672,11 +2676,25 @@ const packsSlot = (charKey) => {
  * ⚠️ **标题是「配队」不是「配装」**（用户 2026-10-10 第 6 条）：这一节列的其实是
  * 「角色 + 星魂档 + 光锥」这一**整包**（也就是一套配队），用户按他的读法叫它配队，
  * 界面上就跟着叫配队；内部字段仍叫 `pack` / `packs`（服务端载荷的键名不动）。
+ *
+ * ⚠️ **标题 2026-10-16 第 3 条改过**：由「该角色的全部配队」改成
+ * **「（角色头像）xx 的全部配队」**（`xx` = 角色中文名）—— 用户要一眼看出**这是谁**的
+ * 配队，不必回去看窗口标题。头像走 `iconUrlOf('char', …)` 与总榜同一套四级兜底；
+ * 拿不到图时 `iconImg` 返回的节点会退化成 `.is-missing`（**保留占位尺寸**，见 CSS），
+ * 所以这里**不能**因为拿不到图就少 append 一个节点 —— 否则标题会在异步图片到位时抖一下。
  */
 const fillPackList = async (slot) => {
   if (!slot || slot.dataset.filled === '1') return;
   slot.dataset.filled = '1';
-  slot.appendChild(text('span', 'advice-packs-caption', '该角色的全部配队'));
+  const caption = text('span', 'advice-packs-caption');
+  // 头像：`iconImg` 在**一个地址都解析不到**时返回 `null`（那是优雅降级，不是画空框）——
+  // 所以这里必须自己兜一个同尺寸占位（与 `unitAvatar` 同一套写法），否则标题会在
+  // 缺图标表时整块消失；拿得到地址、但图挂了的情况下 `iconImg` 已挂 `is-missing`。
+  caption.appendChild(iconImg(iconUrlOf('char', slot.__charKey), 'advice-packs-avatar',
+    cn(slot.__charKey), 'eager') || text('span', 'advice-packs-avatar is-empty'));
+  caption.appendChild(text('span', 'advice-packs-caption-text',
+    `${cn(slot.__charKey)} 的全部配队`));
+  slot.appendChild(caption);
   const box = text('span', 'advice-packs-list');
   slot.appendChild(box);
   box.appendChild(text('span', 'advice-packs-loading', '正在读取…'));
@@ -2763,9 +2781,11 @@ const packRow = (pack, metaById) => {
   // 与总榜行（`packCostNode`）保持同一口径。改前是 `> 1 ? 'Sx' : ''`，S1 看不到层数。
   head.appendChild(text('span', 'advice-packs-superimp',
     `S${Math.max(1, Math.round(Number(pack.superimp) || 1))}`));
-  // 「整包 N 金」里的数字也走 `goldText()`（白色加粗）—— 与总榜行、方案行的花费同一套。
+  // 「**成本** N 金」里的数字也走 `goldText()`（白色加粗）—— 与总榜行、方案行的花费
+  // 同一套。⚠️ 标签 2026-10-16 第 3 条由「整包 N 金」改成「成本 N 金」：这一节里
+  // 「成本」= 这一套配队**自己**要花几金（与方案卡片的「账面 N 金 / 补金 N 金」是两个数）。
   const gold = text('span', 'advice-packs-gold');
-  gold.appendChild(text('span', '', '整包 '));
+  gold.appendChild(text('span', '', '成本 '));
   gold.appendChild(goldText(Number(pack.gold) || 0));
   head.appendChild(gold);
   head.appendChild(text('span', 'advice-packs-score', `角色得分 +${packScoreText(unitRoleScore(pack))}`));

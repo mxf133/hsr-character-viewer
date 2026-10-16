@@ -102,6 +102,7 @@ if (unknownFiles.length) {
 }
 
 let suitesToRun;
+let skippedSyntax = null;
 if (requested.size) {
   suitesToRun = suites.filter(([, file]) => requested.has(file));
 } else {
@@ -110,6 +111,33 @@ if (requested.size) {
     suitesToRun.push(suites.find(([, file]) => file === 'check-advice-layout.mjs'));
   } else {
     console.log('\n▶ 抽卡推荐界面布局 (CDP)\n   跳过：9222 端口没有可用的调试浏览器');
+    /**
+     * ⚠️ **跳过不等于不检查语法**（2026-10-16 实测踩到）。
+     *
+     * `check-advice-layout.mjs` 把几百行浏览器端代码嵌在一段 `await evaluate(…)` 的
+     * **模板字符串**里 —— 注释里多写一个反引号就会把整段弄坏，而「9222 没开 ⇒ 跳过」
+     * 会让这种语法错在**整套测试里完全看不出来**（本轮就是这么来的：全套 21 个套件
+     * 全绿，而那个文件根本没法解析）。
+     *
+     * 所以跳过的同时做一次 `node --check`：语法坏了就当成一次失败报出来（与环境无关，
+     * 是文件本身的问题）。
+     */
+    skippedSyntax = await new Promise((resolve) => {
+      const path = fileURLToPath(new URL('check-advice-layout.mjs', import.meta.url));
+      const child = spawn(process.execPath, ['--check', path], { stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      child.stdout.on('data', (d) => { output += d; });
+      child.stderr.on('data', (d) => { output += d; });
+      child.on('close', (code) => resolve({ code, output }));
+    });
+    if (skippedSyntax.code === 0) {
+      console.log('   ✓ 语法自检通过（跳过的是**排版判据**，不是文件本身）');
+    } else {
+      console.log('   ✗ 语法自检失败 —— 这个文件根本没法解析，先修它：');
+      for (const line of skippedSyntax.output.trimEnd().split('\n').slice(0, 8)) {
+        console.log(`     ${line.trim()}`);
+      }
+    }
   }
 }
 
@@ -145,6 +173,11 @@ const run = (file) => new Promise((resolve) => {
 const results = [];
 if (requested.size) {
   console.log(`\n运行所选测试套件（${suitesToRun.length}/${suites.length}）`);
+}
+// 被跳过的 CDP 套件的**语法自检**也算一条结果：语法坏了就是失败（见上面那段注释）。
+if (skippedSyntax) {
+  results.push({ title: '抽卡推荐界面布局 (CDP) · 语法自检（跳过排版判据）',
+    code: skippedSyntax.code });
 }
 for (const [title, file] of suitesToRun) {
   process.stdout.write(`\n▶ ${title}\n`);

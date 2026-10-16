@@ -2378,13 +2378,30 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
      4×8 = 32 张，尺寸差一半才排得下。信息不减（名字 + E 档 + 光锥都在）。
    · 性价比得分徽标**紧跟在整包身份后面**，不推到行尾 —— 与总榜那一行的读法一致。 */
 .advice-packs-slot { display: block; margin: 6px 0 0; }
+/* 标题是「（角色头像）xx 的全部配队」（用户 2026-10-16 第 3 条）——
+   所以这一行是 flex（头像 + 文字同一行），不再是纯文本块。
+   ⚠️ 头像尺寸**写死**（理由同 `.advice-unit-avatar`：图是异步来的，不写死会在到位时
+   把标题撑一下）；拿不到图时 `iconImg` 挂 `is-missing`，这里用 visibility 保留占位。 */
 .advice-packs-caption {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   color: var(--text-dim);
   margin-bottom: 3px;
   padding-top: 6px;
   border-top: 1px dashed rgba(120, 150, 220, 0.14);
 }
+.advice-packs-avatar {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.3);
+}
+.advice-packs-avatar.is-missing { visibility: hidden; }
+.advice-packs-caption-text { min-width: 0; }
 /* 限高 260px 是**兜底**（小浮层时代的数值）：现在这一节只出现在
    `advice-tip-window.css` 的大窗口里，那边把它放宽到 `min(52vh, 560px)`
    （窗口宽 1180px，一次能看更多条）。万一窗口那套 CSS 没加载，这里仍然保证
@@ -3020,8 +3037,9 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 }
 /* 抽卡权重只有两个旋钮，按两列摊开（不要跟着关卡权重那五列走）。 */
 .advice-weights-grid.is-draw { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-/* 版本权重六个旋钮（最新版 / −1 版 … −5 版）：六个窄输入框**一行放下**（用户 2026-10-16
-   第 3 条）。标签本身很短（`−3 版`），所以六列比关卡权重那五列还窄也行 ——
+/* 版本权重六个旋钮（当前版本 / 前1个版本 … 前5个版本）：六个窄输入框**一行放下**
+   （用户 2026-10-16 第 3 条）。⚠️ 槽位文案在 2026-10-16 第 2 条改过 —— 从「最新版 /
+   −1 版 …」换成现在这套，**标签变长了**（`前3个版本` 5 个字），所以六列的下限要按它算；
    窄屏（≤900px）由 media 里的 `auto-fit` 列数兜底。输入框宽度写在下面
    （**必须在 `.is-compact .field-inline input` 之后**，见那一处的注释）。 */
 .advice-weights-grid.is-version { grid-template-columns: repeat(6, minmax(0, 1fr)); }

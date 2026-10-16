@@ -1,6 +1,6 @@
 {
   "name": "hsr-warp-advisor",
-  "version": "4.6.113",
+  "version": "4.6.114",
   "private": true,
   "description": "崩坏：星穹铁道 抽卡推荐计算器 — 通过黑塔网 theherta.com 获取角色真实强度，提供抽卡推荐，零第三方依赖",
   "type": "module",

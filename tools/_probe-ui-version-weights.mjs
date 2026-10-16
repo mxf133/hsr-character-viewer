@@ -157,13 +157,13 @@ check('标签来自 VERSION_WEIGHT_ROWS（不抄第二份）',
     const labelSpan = grid.children[i]?.children?.[0];
     return labelSpan?.textContent === VERSION_WEIGHT_ROWS[i].label;
   }), grid.children.map((l) => l.children[0]?.textContent).join(' / '));
-check('title 写明「距该副本最新版」',
+check('title 写明「距该副本当前版本」',
   inputs.every((i) => String(i.title ?? i.attrs.title ?? '').includes('该副本')),
   inputs[0]?.title ?? inputs[0]?.attrs.title);
 check('class 是 advice-version-weight（读数按它选）',
   inputs.every((i) => i.className.includes('advice-version-weight')));
-check('meta 印出逐个槽位的实际值',
-  /最新版 3 : −1 版 2\.5 : −2 版 2 : −3 版 1\.5 : −4 版 1 : −5 版 0\.5/.test(
+check('meta 印出逐个槽位的实际值（槽位名：当前版本 / 前N个版本）',
+  /当前版本 3 : 前1个版本 2\.5 : 前2个版本 2 : 前3个版本 1\.5 : 前4个版本 1 : 前5个版本 0\.5/.test(
     REGISTRY.get('adviceVersionWeightsMeta').textContent),
   REGISTRY.get('adviceVersionWeightsMeta').textContent);
 
@@ -243,7 +243,7 @@ check('存档写进 hsr.advice.versionWeights',
   STORE.get('hsr.advice.versionWeights') === JSON.stringify([1, 0, 0, 0, 0, 0]),
   STORE.get('hsr.advice.versionWeights'));
 check('meta 立刻重画（不等服务端）',
-  REGISTRY.get('adviceVersionWeightsMeta').textContent.includes('最新版 1'),
+  REGISTRY.get('adviceVersionWeightsMeta').textContent.includes('当前版本 1'),
   REGISTRY.get('adviceVersionWeightsMeta').textContent);
 // 防抖 450ms：等够再确认请求发出去了。
 await new Promise((r) => setTimeout(r, 700));

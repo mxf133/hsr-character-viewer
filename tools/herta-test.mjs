@@ -25,7 +25,7 @@ import {
   pullCostOf,
   recommendPlan, scoreOf,
   teamPullsOf, TIER_PLACEHOLDER, tierLabelsOf, tierMoveText, tierScoreOf, tierTextOf,
-  unitPullsOf, VERSION_WINDOW, VERSION_WEIGHTS, versionWeightOf, weightInputOf,
+  unitPullsOf, VERSION_WINDOW, VERSION_WEIGHTS, VERSION_WEIGHT_ROWS, versionWeightOf, weightInputOf,
   // 隐金设置（用户 2026-10-11）
   DEFAULT_HIDDEN_COSTS, HIDDEN_COST_IDS, HIDDEN_COST_SETTINGS, NO_HIDDEN_COSTS,
   hiddenReductionOf, normalizeHiddenCosts, packGoldOf,
@@ -2492,6 +2492,17 @@ check('性价比总榜：版本权重 = 3:2.5:2:1.5:1:0.5（窗口 6 版、线�
   assert.equal(versionWeightOf(2), 2, '第 3 个版本 2 分');
   assert.equal(versionWeightOf(5), 0.5, '第 6 个版本（窗口最后一档）0.5 分');
   assert.equal(versionWeightOf(6), 0, '第 7 个版本起权重 0（不进窗口，不是「权重很小」）');
+  /**
+   * ④ **槽位名**（用户 2026-10-16 第 2 条：「`-1版` 改为 `前1个版本`，`最新版本` 改为
+   * 「当前版本」」）。它是纯展示字段，但**界面三处都读它**（六个输入框的 label、
+   * 输入框 title、状态行的比值串），所以在这里钉一次就够 —— 改回去（或哪天有人
+   * 顺手把「当前版本」改回「最新版」）会当场红。
+   */
+  assert.deepEqual(VERSION_WEIGHT_ROWS.map((r) => r.label),
+    ['当前版本', '前1个版本', '前2个版本', '前3个版本', '前4个版本', '前5个版本'],
+    '版本权重槽位名应是「当前版本 / 前N个版本」（用户 2026-10-16 第 2 条）');
+  assert.deepEqual(VERSION_WEIGHT_ROWS.map((r) => r.key), ['0', '1', '2', '3', '4', '5'],
+    '槽位键仍是下标字符串（改名不许动键 —— 存档与请求体都按它走）');
 
   const availability = {
     characters: {

@@ -319,15 +319,20 @@ const main = async () => {
       // 分项按它加权的结果，而总榜「每角色只留一条」的收敛在服务端 `buildConclusion` 里。
       // 与隐金设置同一套路：既断言回显（穿四层没穿丢），也断言**榜面真的变了** ——
       // 只比回显的话，「口径没接上」也能通过。
+      // ⚠️ 默认值 2026-10-16 第 1 条改过：`1:1:1`（三等分）→ **`1:1:0.5`**（泛用性降到
+      //    0.5），归一之后是 `0.4 / 0.4 / 0.2`。工具与老客户端不传 `drawWeights` 时拿到的
+      //    就是这一份（服务端 `normalizeDrawWeights(undefined)` → `SCORING.drawWeight`）。
       console.log('\n[archive/conclusion · 抽卡权重]');
-      const DRAW_DEFAULT = { strength: 1, cost: 1, versatility: 1 };
-      check('conclusion 回显归一化后的抽卡权重（默认三等分）',
+      const DRAW_DEFAULT = { strength: 1, cost: 1, versatility: 0.5 };
+      check('conclusion 回显归一化后的抽卡权重（默认 0.4 / 0.4 / 0.2）',
         Math.abs(Object.values(conclusion.body?.drawWeights || {})
           .reduce((n, v) => n + Number(v), 0) - 1) < 1e-9
         && Object.keys(conclusion.body?.drawWeights || {}).length === 3,
         `drawWeights=${JSON.stringify(conclusion.body?.drawWeights)}`);
-      check('不传 drawWeights = 默认三等分（工具与老客户端的口径不变）',
-        ['strength', 'cost', 'versatility'].every((k) => Math.abs(conclusion.body.drawWeights[k] - 1 / 3) < 1e-9),
+      check('不传 drawWeights = 默认 1:1:0.5（工具与老客户端的口径不变）',
+        Math.abs(conclusion.body.drawWeights.strength - 0.4) < 1e-9
+        && Math.abs(conclusion.body.drawWeights.cost - 0.4) < 1e-9
+        && Math.abs(conclusion.body.drawWeights.versatility - 0.2) < 1e-9,
         `drawWeights=${JSON.stringify(conclusion.body?.drawWeights)}`);
       const versOnly = await post('/api/archive/conclusion', {
         account: { owned: [], eidolons: {}, cones: {} }, drawWeights: DRAW_DEFAULT,
@@ -347,7 +352,7 @@ const main = async () => {
         .map((u) => `${u.key}|${Math.round(Number(u.characterScore))}`).join(';');
       check('⭐ 抽卡权重真的改变了角色总榜（不只是回显）',
         drawSig(versOnly.body) !== drawSig(versHeavy.body),
-        '全押泛用性与默认三等分得到了同一张榜 —— 权重没接上');
+        '全押泛用性与默认权重得到了同一张榜 —— 权重没接上');
       check('角色得分 = 三个分项按权重加权（每个整包都对得上）',
         (versHeavy.body?.frontierUnits || []).length > 0
         && (versHeavy.body.frontierUnits).every((u) => {
@@ -582,8 +587,11 @@ const main = async () => {
       const boardTop = (hiddenOn.body.frontierUnits || [])[0];
       // 抽卡权重也走查询串（用户 2026-10-13 第 2 条）：面板给的是**角色得分**，
       // 它是三个分项按权重加权的**榜内归一分** —— 权重不同，同一个整包的面板分
-      // 就会与徽标分不一致。这里显式发「默认三等分」，与 `hiddenOn` 那份同口径。
-      const drawParam = encodeURIComponent(JSON.stringify({ strength: 1, cost: 1, versatility: 1 }));
+      // 就会与徽标分不一致。这里显式发**当前默认** `1:1:0.5`（= 0.4 / 0.4 / 0.2），
+      // 与上面那份没带 `drawWeights` 的 `hiddenOn`（服务端同样落回默认表）同口径。
+      // ⚠️ 默认值 2026-10-16 第 1 条由 `1:1:1` 改成 `1:1:0.5` —— 这里漏改过一次，
+      //    `panel=85.9119 board=83.0943` 当场红（两边权重不同 ⇒ 同一个整包两个分）。
+      const drawParam = encodeURIComponent(JSON.stringify({ strength: 1, cost: 1, versatility: 0.5 }));
       const packsHidden = await get(`/api/archive/packs?char=${encodeURIComponent(boardTop?.name || '')}`
         + `&hiddenCosts=${hiddenParam}&drawWeights=${drawParam}`);
       check('GET /api/archive/packs 回显隐金设置（查询串版）',

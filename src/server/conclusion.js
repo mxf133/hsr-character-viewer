@@ -1035,7 +1035,9 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     // 抽卡权重（用户 2026-10-13 第 1、2 条）：**角色总榜**的三个分项按它加权，
     // 而总榜的收敛（每角色留一条）就发生在 `buildConclusion` 里 —— 所以这个旋钮
     // 必须**进服务端**，不能像 v4.6.94 那样只留在浏览器（那时它只服务抽卡方案）。
-    // 不传 = `SCORING.drawWeight`（三等分），工具与探针的历史口径因此不变。
+    // 不传 = `SCORING.drawWeight`（默认 `1 : 1 : 0.5` → `0.4 / 0.4 / 0.2`；
+    // 2026-10-16 第 1 条把泛用性的默认权重降到 0.5，改前是三等分），
+    // 工具与探针的历史口径因此不变。
     drawWeights: options.drawWeights,
   });
   localizeConclusion(result, i18n);

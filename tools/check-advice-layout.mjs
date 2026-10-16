@@ -926,12 +926,22 @@ console.log(`  ${drawBoardOk ? '✓' : '✗'} 角色总榜受抽卡权重影响�
 await evaluate(`document.getElementById('adviceFrontierWeightsReset')?.click()`);
 await sleep(2500);
 const drawReset = await drawProbe();
-// ⚠️ 恢复默认 = 三个框都回到 1 → 三等分 → `formatShare(1/3)` 印成 `0.33`
-//（`toFixed(2)` 去掉尾零）。v4.6.95/96 时是两项 `0.5 / 0.5`，别再按那个写。
-const drawResetOk = (drawReset.inputs || []).join(',') === '1,1,1'
-  && Boolean(drawReset.eq && drawReset.eq.includes('× 0.33'));
+/**
+ * ⚠️ **2026-10-16 第 1 条改过默认值**：三个框回到 **`1 / 1 / 0.5`**（泛用性降到 0.5），
+ * 归一后是 `0.4 / 0.4 / 0.2` —— 所以摘要里印 `× 0.4`（强度/性价比）与 `× 0.2`（泛用性），
+ * 总榜那行印 `强度 40% / 性价比 40% / 泛用性 20%`。
+ * 改前是三个框都 `1` → 三等分 → `formatShare(1/3)` 印 `0.33`（别再按那个写）。
+ */
+const drawResetOk = (drawReset.inputs || []).join(',') === '1,1,0.5'
+  && Boolean(drawReset.eq && drawReset.eq.includes('× 0.4') && drawReset.eq.includes('× 0.2')
+    && drawReset.eq.includes('泛用性'));
 if (!drawResetOk) failures += 1;
-console.log(`  ${drawResetOk ? '✓' : '✗'} 「恢复默认」把抽卡权重也还原成 1 : 1 : 1 —— ${drawReset.eq}`);
+console.log(`  ${drawResetOk ? '✓' : '✗'} 「恢复默认」把抽卡权重还原成 1 : 1 : 0.5 `
+  + `（归一 0.4 / 0.4 / 0.2）—— ${drawReset.eq}`);
+const drawResetMetaOk = Boolean(drawReset.meta && drawReset.meta.includes('强度 40%')
+  && drawReset.meta.includes('性价比 40%') && drawReset.meta.includes('泛用性 20%'));
+if (!drawResetMetaOk) failures += 1;
+console.log(`  ${drawResetMetaOk ? '✓' : '✗'} 恢复默认后总榜摘要印 40 / 40 / 20 —— ${drawReset.meta}`);
 
 // ---- 总榜行图标 / 详情大窗口 / 文案（用户 2026-10 点名的四条）--------------------
 //
@@ -1521,6 +1531,26 @@ if (!tipTarget) {
       packScores: items.map((it) => (it.querySelector('.advice-packs-score')?.textContent || '')
         .replace('角色得分 +', '')),
       /**
+       * 2026-10-16 第 3 条（本轮）：配队标题变成「（角色头像）xx 的全部配队」，
+       * 行里的花费标签从「整包 N 金」改成「成本 N 金」。三件事都要有据可查：
+       *   * 标题里**真的有一个头像节点**，且它的图**真的加载出来**（naturalWidth > 0，
+       *     只看 src 会把「图挂了」判成绿 —— HANDOFF §6.1 第 12 条的教训）；
+       *   * 标题文字是「<角色名> 的全部配队」（头像不贡献文字，所以 textContent 只有这句）；
+       *   * 每一行的花费格文字是「成本 N 金」，**不许**再出现「整包」。
+       * ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）——
+       *    本轮就在这里多写了一个，整套测试因为「跳过 CDP」而**完全没报**（见 run-tests.mjs
+       *    里那次 node --check 补丁：跳过也要能发现语法坏掉）。
+       */
+      captionAvatar: (() => {
+        const img = tip.querySelector('.advice-packs-caption .advice-packs-avatar');
+        return {
+          present: Boolean(img),
+          loaded: Boolean(img && img.naturalWidth > 0),
+          missingClass: Boolean(img && img.classList.contains('is-missing')),
+        };
+      })(),
+      packGolds: items.map((it) => (it.querySelector('.advice-packs-gold')?.textContent || '').trim()),
+      /**
        * **来源视频**图标（用户 2026-10-14 第 6 条：「界面上每个显示的队伍都要有一个图标，
        * 点击在新界面打开对应的 b 站/油管页面」）。
        *
@@ -1996,9 +2026,28 @@ if (!tipTarget) {
     });
   const titleOk = Boolean(tipReport) && /^角色得分 \+\d+$/.test(tipReport.headText)
     && /^角色得分 \+\d+$/.test(tipReport.title);
-  const renameOk = Boolean(tipReport) && tipReport.caption === '该角色的全部配队'
+  /**
+   * ⚠️ **2026-10-16 第 3 条改过**（原判据是 `caption === '该角色的全部配队'`）：
+   *    标题现在是「**（角色头像）xx 的全部配队**」，`xx` = 角色中文名（随点开的那条整包走）。
+   *    所以判据三件：① 文字是「<名字> 的全部配队」；② **有头像节点**；
+   *    ③ 头像**真的加载出来**（`naturalWidth > 0`）—— 只看 `src` 会把破图判成绿。
+   *    ⚠️ 头像缺失时 `iconImg` 会挂 `is-missing`（保留占位尺寸）；那种情况这里算 **✗**
+   *    （配队标题这一处**必须**有图：角色头像是最不容易缺的那种图标）。
+   */
+  const captionOk = Boolean(tipReport) && /^.+ 的全部配队$/.test(tipReport.caption)
+    && !tipReport.caption.includes('该角色')
+    && tipReport.captionAvatar.present && tipReport.captionAvatar.loaded
+    && !tipReport.captionAvatar.missingClass;
+  const renameOk = Boolean(tipReport) && captionOk
     && /^\d+ 个配队 · 按角色得分从高到低$/.test(tipReport.packCount)
     && (!tipReport.packMore || /^另有 \d+ 个配队未列出（该角色共 \d+ 个）$/.test(tipReport.packMore));
+  /**
+   * 花费标签（2026-10-16 第 3 条）：「整包 N 金」→「**成本 N 金**」。
+   * 逐行断言（`N` 是 ≥0 的整数；隐金减到 0 的整包照样写「成本 0 金」）。
+   */
+  const packsGoldOk = Boolean(tipReport) && tipReport.packRows > 0
+    && tipReport.packGolds.length === tipReport.packRows
+    && tipReport.packGolds.every((t) => /^成本 \d+ 金$/.test(t));
   // ---- 三个分项那张表（用户 2026-10-13 第 1、2 条）--------------------------------
   // 三行（强度 / 性价比 / 泛用性）+ 一行合计；表头固定；**合计 = 标题上那个数**。
   // 这条恒等式是整块改动的锚点：权重接错层、归一化取样集合写错、或者某天有人把
@@ -2129,7 +2178,7 @@ if (!tipTarget) {
     && tipReport.avatars.length > 0 && tipReport.avatars.every((w) => w > 0)
     && tipReport.avatarHidden === 0
     && tipReport.cones.length > 0 && tipReport.cones.every((w) => w > 0)
-    && titleOk && renameOk && orderOk && sourceOk
+    && titleOk && renameOk && packsGoldOk && orderOk && sourceOk
     // 用户 2026-10-13 第 1、2 条：三个分项那张表（列名 / 三行 + 合计 / 合计 = 标题上的数）。
     // 2026-10-15 追加：三行各自要有**与文字同一行**的「查看来源」按钮。
     && splitOk && splitInlineOk
@@ -2255,10 +2304,18 @@ if (!tipTarget) {
       + ` < 全部配队 #${tipReport.order.packs}`
       + ` < 脚注 #${tipReport.order.notes}`
       + `（队伍图标在**表格第一格**里，不再是表上方的一块）`);
-    console.log(`      ${renameOk ? '✓' : '✗'} 改名文案：${JSON.stringify(tipReport.caption)}`
+    console.log(`      ${renameOk ? '✓' : '✗'} 配队标题（2026-10-16 第 3 条）：`
+      + `${JSON.stringify(tipReport.caption)}`
+      + `${tipReport.captionAvatar.present
+        ? `（头像 naturalWidth=${tipReport.captionAvatar.loaded ? '>0 ✓' : '0 ✗'}`
+          + `${tipReport.captionAvatar.missingClass ? ' · is-missing ✗' : ''}）`
+        : '（**没有头像节点** ✗）'}`
       + ` / ${JSON.stringify(tipReport.packCount)}`
       + `${tipReport.packMore ? ` / ${JSON.stringify(tipReport.packMore)}` : '（全部列出，没有「另有 N 个」）'}`
       + `，列出 ${tipReport.packRows} 条，角色得分：${tipReport.packScores.join(' , ') || '(无)'}`);
+    console.log(`      ${packsGoldOk ? '✓' : '✗'} 配队行的花费标签是「成本 N 金」`
+      + `（2026-10-16 第 3 条，不再是「整包 N 金」）：`
+      + `${tipReport.packGolds.join(' , ') || '(无)'}`);
     console.log(`      配队卡片 ${tipReport.cards} 张（空槽 filled=${tipReport.slotFilled}）`
       + ` / 头像 naturalWidth：${JSON.stringify(tipReport.avatars)}`
       + `（藏起来的碎图 ${tipReport.avatarHidden} 张）`
