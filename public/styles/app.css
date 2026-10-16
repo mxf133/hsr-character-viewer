@@ -1351,7 +1351,10 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   .topbar-update.is-outdated { animation: none; }
 }
 /* 结果气泡：挂在这一块下方、右对齐，浮在内容之上（不占标题栏高度）。
-   `min-width` 用 `fit-content` 的自然宽度即可，`max-width` 防止长句子横到屏幕外。 */
+   `min-width` 用 `fit-content` 的自然宽度即可，`max-width` 防止长句子横到屏幕外。
+   ⚠️ 它会自动收起（10 秒 / 悬停暂停 / 点外部 / Esc，见 `app.js` 的
+   `renderUpdateResult()` 头注释）—— 最初那版没有任何收起路径，气泡弹出来就永远挂着
+   （用户 2026-10-16 报的「检查更新的界面不会自动关闭」就是它）。 */
 .topbar-update-result {
   position: absolute;
   top: calc(100% + 8px);

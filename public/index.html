@@ -47,7 +47,9 @@
         <button class="topbar-update" id="appUpdateCheck" type="button" hidden
           title="与 GitHub 上的最新发布比较（只有点这个按钮才会联网）"
           aria-label="检查更新：与 GitHub 上的最新发布比较">检查更新</button>
-        <!-- 结果气泡：绝对定位在版本区下方，不占标题栏宽度（长句子会挤坏那一行）。 -->
+        <!-- 结果气泡：绝对定位在版本区下方，不占标题栏宽度（长句子会挤坏那一行）。
+             ⚠️ 它不是常驻的：10 秒后自动收起，悬停会暂停计时，点外部 / Esc 也能收
+             （收起逻辑在 app.js 的 renderUpdateResult() 附近，四条路径都写在注释里）。 -->
         <span class="topbar-update-result" id="appUpdateResult" hidden
           role="status" aria-live="polite"></span>
       </div>
