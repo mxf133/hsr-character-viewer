@@ -3048,6 +3048,19 @@ if (teamPlanProbe.missing) {
             ?.textContent || '',
           midToggles: card.querySelectorAll('.advice-plan-tip-title .advice-detail-toggle').length,
           altToggles: card.querySelectorAll('.advice-plan-tip-alt-copy .advice-detail-toggle').length,
+          // 用户 2026-10-16：过渡档位（标题行）与每支次选配队（副本行）也要有视频按钮。
+          // 分开数 —— 过渡档位是「同一支队的前缀」，与主卡片共用一条投稿；次选每支是
+          // 各自候选队的投稿，两处必须都能点开才算修好（只补一处就是半成品）。
+          // ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
+          midVideos: card.querySelectorAll('.advice-plan-tip-title .advice-team-video').length,
+          altVideos: card.querySelectorAll('.advice-plan-tip-alt-copy .advice-team-video').length,
+          tipVideos: [ ...card.querySelectorAll('.advice-plan-tip-title .advice-team-video,'
+            + ' .advice-plan-tip-alt-copy .advice-team-video') ].map((a) => ({
+              href: a.getAttribute('href') || '',
+              target: a.getAttribute('target') || '',
+              rel: a.getAttribute('rel') || '',
+              platform: [ ...a.classList ].find((c) => c.startsWith('is-')) || '',
+            })),
           toggles: toggles.length,
           collapsed,
           expandedNow,
@@ -3088,6 +3101,24 @@ if (teamPlanProbe.missing) {
         + `（标题行 ${scoreTip?.headToggle ? '✓' : '✗'}「${scoreTip?.headLabel || ''}」），`
         + `过渡档位按钮 ${scoreTip?.midToggles ?? 0} 个、`
         + `次选配队按钮 ${scoreTip?.altToggles ?? 0} 个 / 次选 ${scoreTip?.alts ?? 0} 支`);
+      /**
+       * **过渡档位与次选配队的来源视频**（用户 2026-10-16：这两处没有视频按钮）。
+       *
+       * 与方案卡片那条同一套要求（真 http(s) + `_blank` + `noopener` + 平台 class），
+       * 差别是位置：过渡档位的图标在它自己的标题行、每支次选的图标在「补金推荐分 xx｜
+       * 补金 n 金」那一行。允许个别没有 —— 那一支的投稿恰好是 `douyin:` / `tiktok:`
+       * 伪串时本来就没有可点的地址；但两处合起来至少要有一个真的画了出来，
+       * 且每一个都必须是能点的真链（半通不通比不画更糟）。
+       */
+      const tipVideoOk = Boolean(scoreTip)
+        && scoreTip.tipVideos.length >= 1
+        && scoreTip.tipVideos.every((v) => /^https?:\/\//.test(v.href)
+          && v.target === '_blank' && /noopener/.test(v.rel)
+          && ['is-bilibili', 'is-youtube', 'is-video'].includes(v.platform));
+      if (!tipVideoOk) failures += 1;
+      console.log(`  ${tipVideoOk ? '✓' : '✗'} 过渡档位 / 次选配队带来源视频外链（用户 2026-10-16）：`
+        + `过渡档位 ${scoreTip?.midVideos ?? 0} 个、次选 ${scoreTip?.altVideos ?? 0} 个`
+        + `（共 ${scoreTip?.tipVideos?.length ?? 0} 个；要求 _blank + noopener + 平台 class）`);
       // ⚠️ 用户 2026-10-12 第 6 条：分数来源**只有真实生效的那几个刻度**，
       //    且不许再出现「压金度 / 性价比得分」。2026-10-13 第 3 条（泛用性也进补金推荐）
       //    之后是**三行** —— v4.6.95/96 时这里钉的是两行。

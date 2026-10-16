@@ -3811,6 +3811,11 @@ const teamPlanTip = (row, plan) => {
     const title = text('strong', 'advice-plan-tip-title',
       `过渡档位：先补前 ${row.mid.items} 笔（${row.mid.gold} 金）`);
     title.appendChild(tipInlineToggle({ id: midId, title: '查看过渡档位的来源' }));
+    // 用户 2026-10-16：过渡档位也要有视频按钮 —— 它画的正是本方案这一支队的投稿
+    // （`mid.video` 与卡片上「最佳证据」同一条，见 `advice.js` 的下发处）。
+    // 放在「查看来源」右边，与次选配队、总榜行的图标同一行风格。
+    const midVideo = videoLink(row.mid.video);
+    if (midVideo) title.appendChild(midVideo);
     box.appendChild(title);
     box.appendChild(tipInlineDetailBlock({ id: midId, node: midSourceNode() }));
     box.appendChild(text('div', 'muted small', midStateText(row.mid)));
@@ -3830,6 +3835,10 @@ const teamPlanTip = (row, plan) => {
       const copy = text('div', 'advice-plan-tip-alt-copy',
         `补金推荐分 ${Number(alt.total).toFixed(1)}｜补金 ${alt.gap} 金`);
       copy.appendChild(tipInlineToggle({ id: altId, title: `查看第 ${j + 1} 支次选配队的来源` }));
+      // 用户 2026-10-16：每支次选配队也要有视频按钮 —— 它自己也是一支候选队，
+      // 点开的是**这支**队伍的最佳证据投稿（`alt.video`，与主方案那条互不相干）。
+      const altVideo = videoLink(alt.video);
+      if (altVideo) copy.appendChild(altVideo);
       item.appendChild(copy);
       item.appendChild(tipInlineDetailBlock({ id: altId, node: altSourceNode(alt) }));
       item.appendChild(planTipTeam(alt.members));

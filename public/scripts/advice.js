@@ -2856,6 +2856,11 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
         items: k,
         gold: acc,
         rest: t.gap - acc,
+        // **来源视频**（用户 2026-10-16：过渡档位与次选配队也要有视频按钮）：
+        // 过渡档位就是本方案这支队的中间状态（同一套成员、只差没补的那几笔），
+        // 所以视频与本方案共用**同一条**最佳证据投稿 —— 没有、也不该另造一个。
+        // ⚠️ 与 `bestEnv.video` 同源（`frontierTiers` 的 `slimFrontierUnit`）。
+        video: t.best?.video ?? null,
         members: t.members.map((m) => {
           const charPending = fill.some((it) => it.kind !== 'cone' && it.name === m.char
             && !boughtKey.has(`${it.kind}|${it.name}`));
@@ -2912,6 +2917,11 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
           versatilityRaw: x.o.versatilityRaw,
           // 账面金数：与卡片上「账面 N 金」同一个口径（来源表用它解释 ② 那一行）。
           gold: x.o.gold,
+          // **来源视频**（用户 2026-10-16：次选配队也要有视频按钮）：这支次选自己也是一支
+          // 候选队（`byRoster` 里的一员），所以有它**自己**的最佳证据投稿 —— 与本方案的
+          // 视频互不相干，必须按 `o.best.video` 逐支取，不能借主方案那条。
+          // ⚠️ 与 `bestEnv.video` 同源（`frontierTiers` 的 `slimFrontierUnit`）。
+          video: x.o.best?.video ?? null,
           members: x.o.members.map((m) => ({
             char: m.char,
             eidolon: eidolonTierOf(m.eidolon),
