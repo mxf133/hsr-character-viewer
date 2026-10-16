@@ -2590,6 +2590,16 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   //     0 行动值」的队伍捞出来 —— 用同一条分母，它们会被没投稿的 4 关稀释到 55.6，
   //     用户要的「登顶」永远不发生。副本权重仍然生效：混合 0 与非 0 成绩的队按权重摊；
   //     版本权重在服务端选行时生效（两处都「受到影响」，与用户原话一致）。
+  //   * ⚠️ **免罚只给「比本队打过的任何一关都更轻」的缺关卡**（v4.6.112，用户报的
+  //     「强度得分的 bug」）。上一版免罚不分轻重，于是反过来奖励了「**根本不打最重的
+  //     那个副本**」：实测（账号 2、强度权重拉满）下发前排 16 条 ① ≥95 **全部**来自
+  //     这一池，最高的一支（98.00、账面 5 金）在**绝境没有任何成绩**，靠虚构 / 末日 /
+  //     混沌 / 异相四关 0 行动值拿满分；而同一支队只要真去打一次绝境（哪怕 294~298
+  //     行动值），分子加 `5 × 72.4`、分母加 5，① 反而掉到 ~80（**倒扣 ~18 分**）。
+  //     判据就是**关卡权重**（绝境 5、其余 1）：所以「只打绝境」的队照旧不被稀释
+  //     （缺的 4 关都更轻），「只打那四关」的队被按 9 归一（缺的绝境更重）。
+  //     总榜那条「缺副本按 0 计」在**权重意义上**仍然只对「更重的关卡」生效 ——
+  //     两池的差别因此只剩「更轻的关卡要不要稀释」，那正是用户点名要的那一点。
   //   * **不参与单调兜底（包络）**：那是「同角色低档位救高档位」的整包级机制，
   //     这里没有对应的档位阶梯，也不需要 —— 强度直接来自这支队自己的行动值。
   //   * ② ③ 与证据池**逐字相同**（同一个循环里装配）：差额、账面金数、隐金减免、
@@ -2668,13 +2678,32 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
         }
         return { ...h, envStrength };
       });
-      const wSum = withStrength.reduce((n, h) => n + h.weight, 0);
-      if (!(wSum > 0)) continue;
-      // 队级行动值表现 = Σ(关卡权重 × 本关强度) ÷ Σ(**本队有数据的**关卡权重)。
+      const ownWeight = withStrength.reduce((n, h) => n + h.weight, 0);
+      if (!(ownWeight > 0)) continue;
+      /**
+       * 缺关卡的**惩罚项**：只有「比本队打过的任何一关都更重」的那些缺关卡计 0 分。
+       *
+       * 上一版分母就是 `ownWeight`（免罚不分轻重），于是「不打最重的副本」成了加分项
+       * （实测：绝境无成绩的队 ① = 98，真去打绝境的队反而 ~80）。这里按**权重**判：
+       * 缺关卡 `weight > max(本队有数据的关卡权重)` 时把它按 0 计进分母 ——
+       * 绝境 5 / 其余 1 的默认表下，就是「跳过了绝境 → 按全部关卡归一」。
+       * ⚠️ 判据必须用 `>`（不是 `>=`）：权重并列时（夹具里两关都是 1、用户把两关都设成 5）
+       *    「只打了其中一关」不算跳过更重的关卡 —— 那正是用户要的「0 行动值队伍登顶」。
+       */
+      const maxOwnWeight = withStrength.reduce((n, h) => Math.max(n, h.weight), 0);
+      const ownIds = new Set(withStrength.map((h) => h.id));
+      const skippedHeavyWeight = (conclusion?.frontierEnvs || []).reduce((n, env) => {
+        if (ownIds.has(env.id)) return n;
+        const w = Number(env.weight) || 0;
+        return w > maxOwnWeight ? n + w : n;
+      }, 0);
+      const wSum = ownWeight + skippedHeavyWeight;
+      // 队级行动值表现 = Σ(关卡权重 × 本关强度) ÷ Σ(本队有数据的关卡权重 + 跳过的更重关卡权重)。
       const strengthTotal = withStrength.reduce((n, h) => n + h.weight * h.envStrength, 0) / wSum;
       const ownTopBand = strengthTotal >= 99.99;
       // 第二维那 5 分（与总榜同一个 `investWeight`）：顶格档按**压金度**
-      // （该版本最便宜金数 ÷ 本队金数，按关卡权重加权），其余按投入档位。
+      // （该版本最便宜金数 ÷ 本队金数，按关卡权重加权，分母与上面同一个 `wSum` ——
+      //  跳过的更重关卡在这一维也按 0 分算，两个维度必须同一把尺子），其余按投入档位。
       const pinched = withStrength.reduce((n, h) => n
         + (h.cost > 0 && h.minCost > 0 ? h.weight * Math.min(1, h.minCost / h.cost) : 0), 0) / wSum;
       const invest = Math.max(0, Math.min(1, av.members.reduce(

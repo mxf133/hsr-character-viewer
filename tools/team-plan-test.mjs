@@ -354,6 +354,43 @@ check('行动值前沿：与证据池**去重**（同一支队不重复，强度
     `① 必须仍是代表整包自己的强度分 30（前沿口径会给 ~97.5），实际 ${rows[0].strengthPct}`);
 });
 
+check('行动值前沿：**跳过更重的副本**要按 0 分计（v4.6.112，用户报的强度 bug）', () => {
+  /**
+   * 用户 2026-10-16 晚报的形态：上一版免罚**不分轻重**，于是「根本不打最重的副本」成了
+   * 加分项 —— 实测方案前排 16 条 ① ≥95 全来自这一池，最高的一支（98.00、账面 5 金）在
+   * 绝境没有任何成绩，靠另外四关 0 行动值拿满分；同一支队真去打一次绝境（哪怕 298
+   * 行动值）反而掉到 ~80。
+   *
+   * 这里把那个形态装成夹具（默认关卡权重 5 / 1 / 1 / 1 / 1 的缩影）：
+   *   * `env1`（权重 1）有数据、av=0；
+   *   * `env2`（权重 1）**没打** —— 不比它打过的更重 → 免罚（与上面 `avZero` 那条同一行为）；
+   *   * `envHeavy`（权重 5）**没打** —— 更重 → 按 0 计进分母。
+   * 期望：`(1×100) ÷ (1+5) = 16.667` → `95% × 16.667 = 15.833`（三个 E0 不装光锥 → 投入加成 0）。
+   */
+  const heavyConclusion = {
+    frontierEnvs: [
+      { id: 'env1', label: '测试副本', weight: 1, tierLines: AV_TIER_LINES,
+        minCostBySeason: { '4.2': 5 }, avTeams: [
+          { cost: 10, av: 0, tier: 'perfect', season: '4.2', members: AV_ZERO_MEMBERS },
+        ] },
+      { id: 'env2', label: '测试副本二', weight: 1, tierLines: AV_TIER_LINES, avTeams: [] },
+      { id: 'envHeavy', label: '重副本', weight: 5, tierLines: AV_TIER_LINES, avTeams: [] },
+    ],
+    frontierUnits: [],
+  };
+  const plan = teamPlan(heavyConclusion, accountFixture, { availability });
+  const row = plan.rows.find((r) => r.members.length === AV_ZERO_MEMBERS.length
+    && AV_ZERO_MEMBERS.every((m) => r.members.some((x) => x.char === m.char)));
+  assert.ok(row, '这一支仍应留在池里（只是分数按全部关卡摊薄），不该被剔除');
+  const expect = (100 - SCORING.investWeight) * ((1 * 100) / (1 + 5)) / 100;
+  assert.ok(near(row.strengthPct, expect),
+    `① 应为 ${expect.toFixed(4)}（跳过的更重关卡按 0 计），实际 ${row.strengthPct}`);
+  assert.ok(row.strengthPct < 30, '跳过最重副本的队不许再拿 95+ 的顶格分');
+  // 同一支队在上面的并列权重夹具里仍是 97.5 —— 判据是「比本队打过的更重」，不是「缺了」。
+  assert.equal(avRowOf(AV_ZERO_MEMBERS).strengthPct, 97.5,
+    '权重并列（都不过更重）时不该被罚，这是用户要的「0 行动值队伍登顶」');
+});
+
 section('A1. 抽卡权重（强度 / 性价比，用户 2026-10-12 第 3、4、8 条）');
 
 /**
@@ -889,27 +926,79 @@ check('真载荷上补金顺序单调（每抽收益降序，被载体约束插�
   }
 });
 
-check('真载荷上：0 行动值队伍经「行动值前沿」进池并登顶（用户 2026-10-16 第 2 条）', () => {
-  const plan = teamPlan(livePayload, {
-    owned: new Set(), eidolons: new Map(), cones: new Map(),
-  }, { availability: livePayload.availability });
+check('真载荷上：行动值前沿池的 0 行动值队（用户 2026-10-16 第 2 条）', () => {
+  const empty = { owned: new Set(), eidolons: new Map(), cones: new Map() };
+  // 断言要看**整个池**，不看下发的 15 条：顶格档的 0 行动值队都很贵（29~48 金），
+  // ② 会把它们压到下发批次之外 —— 只看 `plan.rows` 就量不到它们。
+  const keepRows = SCORING.teamPlanMaxRows;
+  SCORING.teamPlanMaxRows = 100000;
+  let plan; let strengthOnly;
+  try {
+    plan = teamPlan(livePayload, empty, { availability: livePayload.availability });
+    strengthOnly = teamPlan(livePayload, empty, {
+      availability: livePayload.availability,
+      drawWeights: normalizeDrawWeights({ strength: 1, cost: 0, versatility: 0 }),
+    });
+  } finally {
+    SCORING.teamPlanMaxRows = keepRows;
+  }
   // 服务端每关带 8 支前沿队（`archiveTeams().avTeams`）→ 载荷带到 → 池里真的多一个来源。
   assert.ok(plan.poolAv > 0, `行动值前沿应贡献候选，实际 ${plan.poolAv}`);
   assert.ok(plan.poolAll >= plan.poolAv + 50,
     `去重后应有几百支（证据池 + 前沿 ${plan.poolAv}），实际 ${plan.poolAll}`);
   const avRows = plan.rows.filter((r) => r.avSource);
-  // 「登顶」的实测形态：0 行动值队（① = 顶格档 95~100）占据下发批次的前排。
-  // ⚠️ 这不是恒等式 —— 是这条钉的**当前数据集**实测（绝境 0 行动值全在 29~48 金
-  //    满配队里，② 把它们压到后段；前排是各关 0T 的便宜队）。哪天真翻面了，
-  //    先查是不是缺副本稀释 / 副本权重改动，再决定要不要放宽这条。
-  assert.ok(avRows.length > 0, '下发批次里应见到行动值前沿来的队');
-  assert.equal(plan.rows[0].avSource, true, '总分第一名应是 0 行动值队（用户要的「登顶」）');
+  assert.ok(avRows.length > 0, '整池里应见到行动值前沿来的队');
   assert.ok(avRows.every((r) => r.bestEnv && Number(r.bestEnv.actionValue) === 0),
     '前沿行的「最佳证据」必须都是 0 行动值（前沿池按行动值升序选行）');
-  // ① 必须落在顶格档附近（95 + 压金 ≤ 5）：若退回「缺副本按 0 计 ÷ 全部关卡」，
-  // 只在绝境有数据的队会被稀释到 ~55.6，这一条会当场红。
-  assert.ok(avRows.every((r) => r.strengthPct >= 95),
-    `前沿行① 应 ≥ 95（顶格档），实际最低 ${Math.min(...avRows.map((r) => r.strengthPct))}`);
+  /**
+   * ⚠️ **口径 2026-10-16 晚改过**（v4.6.112，用户「查下当前的强度得分的 bug」）：
+   *    上一版这里钉的是「前沿行 ① 一律 ≥95（顶格档）」—— 而顶格档里混着大量
+   *    **在绝境没有任何成绩**的便宜队（实测前排 16 条 ≥95 全是这种，它们在方案里
+   *    还直接压到了第一名），真去打绝境的队反而被摊薄到 ~80。所以那一条**不是**
+   *    要钉的不变式，它钉的正是 bug 的形态。新口径两条：
+   *      ① 只有**覆盖了最重副本**的队才拿得到顶格（≥95）；
+   *      ② 强度权重拉满时 0 行动值队仍然登顶（用户要的「登顶」）。
+   */
+  const heavy = avRows.filter((r) => Number(r.strengthPct) >= 95);
+  assert.ok(heavy.length > 0 && heavy.length < avRows.length,
+    `顶格档应当是前沿行的**真子集**（跳过最重副本的队被摊薄），实际 ${heavy.length}/${avRows.length}`);
+  /**
+   * 直接对着载荷验一遍「覆盖」：把每关 `avTeams` 的阵容键收起来，看这一行打过哪些关。
+   * 判据与 `advice.js` 的 `skippedHeavyWeight` 同源 —— 缺了**比它打过的都更重**的关卡
+   * （默认表下就是绝境 5 vs 其余 1）的队，不许拿到 95+。
+   */
+  const packKeyOf = (m) => `${m.char}|E${eidolonTierOf(m.eidolon)}`
+    + `|${m.lc || '-'}|S${Math.max(1, Math.round(Number(m.superimp) || 1))}`;
+  const rosterKeyOf = (ms) => ms.map(packKeyOf).sort().join('~');
+  const played = new Map();
+  let heaviest = null;
+  for (const env of livePayload.frontierEnvs || []) {
+    const w = Number(env.weight) || 0;
+    if (!heaviest || w > (Number(heaviest.weight) || 0)) heaviest = env;
+    for (const row of env.avTeams || []) {
+      const key = rosterKeyOf(row.members || []);
+      if (!played.has(key)) played.set(key, new Set());
+      played.get(key).add(env.id);
+    }
+  }
+  assert.ok(heaviest && Number(heaviest.weight) > 0, '载荷里应带关卡权重（顶层的 frontierEnvs）');
+  const skippedHeavy = avRows.filter((r) => {
+    const envs = played.get(rosterKeyOf(r.members));
+    return envs && !envs.has(heaviest.id);
+  });
+  assert.ok(skippedHeavy.length > 0,
+    '当前数据集里应当存在「跳过最重副本」的前沿队（这条否证本身也是回归的判据）');
+  assert.ok(skippedHeavy.every((r) => Number(r.strengthPct) < 95),
+    `跳过最重副本（${heaviest.id}）的前沿队不许拿顶格分，实际最高 `
+    + `${Math.max(...skippedHeavy.map((r) => Number(r.strengthPct)))}`);
+  // 强度权重拉满（① 单独说话）时，0 行动值队仍然登顶。
+  assert.equal(strengthOnly.rows[0].avSource, true,
+    '强度权重拉满时，总分第一名仍应是行动值前沿来的 0 行动值队');
+  assert.ok(strengthOnly.rows[0].strengthPct >= 95,
+    `登顶那支的 ① 应 ≥95（顶格档），实际 ${strengthOnly.rows[0].strengthPct}`);
+  assert.ok(played.has(rosterKeyOf(strengthOnly.rows[0].members))
+    && played.get(rosterKeyOf(strengthOnly.rows[0].members)).has(heaviest.id),
+    '登顶那支必须**打过最重的那个副本**（跳过的队不许登顶）');
 });
 
 check('界面现算的差额 = 服务端口径（同一份 availability、同一批持有状态）', () => {
