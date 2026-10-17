@@ -3735,6 +3735,128 @@ HANDOFF §0 的「读哪里」表里加了它的指针。
 直接 `SyntaxError`。同样的坑上一轮已经踩过一次（HANDOFF §4.2AO 记着），
 **写 `tools/check-advice-layout.mjs` 的注释时先自查有没有反引号**。
 
+### 4.2AQ v4.6.116（2026-10-17）：评分口径两改 + 全站排版统一
+
+**起因**：用户四条要求 + 一句长期工作方式「以后按照功能要求.md 实现我的要求，不确定的问我」。
+四条要求里**两条改了评分口径**（强度、泛用性），另外安排子智能体做排版审查。
+不确定的地方**全部先问过用户**再动手（两轮 AskUserQuestion，共 9 问）：
+
+| 追问 | 用户答复 |
+| --- | --- |
+| 0 行动值那一档怎么打分？ | 「每一期的**最省金**的得分最高 **100** 分，其余**等比降分**，注意**不要跨版本对比**，版本权重要按照用户设置的做」 |
+| 非 0 行动值那一档呢？ | 「沿用现有判据线曲线，**封顶 90**」 |
+| (2)「48 金也达不成」与 (3)「其余配队只按行动值」是两档吗？ | 「**是一层**：(2) 只是强调必须低于 (1)」 |
+| 其他副本（混沌 / 虚构 / 末日幻影 / 异相仲裁普通关）同理吗？ | 「**五个副本同一套规则**」 |
+| 泛用性第 1 条要连**队级**一起改吗？ | 「**是，推翻，回到按星魂档分开比较**」 |
+| 强度第 2 条「强度与成本无相关性」保留吗？ | 「**删除，强度只看行动值 / 通关情况**」 |
+
+⚠️ 用户**两次纠正我的术语错误**：把「**0 行动值**」误写成「**0T**」—— 这是两个概念
+（0 行动值 = 绝境王棋关的行动值打满；0T = 轮次制副本的 0 轮）。已记进
+`docs/功能要求.md` §9 第 17 条。
+
+#### ① 强度口径重做（用户第 2、3 条）
+
+**旧口径**是「行动值 + 投入加成」的合成（`95 × 包络 + 5 × 第二维`）：同一个 0 行动值的
+配装，花 48 金的与花 12 金的能同分 ⇒ 用户判「高造价必然等于高强度」不成立。
+
+**新口径**（五个副本同一套；单位口径 `avUnitOf`：绝境王棋关 = 行动值、末日幻影 =
+`4000 − 积分`、其余 = 轮次）：
+
+```
+该关卡强度 = 本期有人打出 a == 0 → 100 × 本期最省金 ÷ 本队金数     （顶格档，等比降分）
+             没人打出 a == 0     → min(90, 90 × 判据线曲线(a))       （非顶格档，封顶 90）
+```
+
+* **不跨版本**：`a === 0` 的判定与「本期最省金」都按版本各算 —— 服务端新字段
+  **`zeroAvGoldBySeason`**，从 `aggregateTeams()` 一路透传到 `projectConclusion`
+  （⚠️ 三层映射漏一层就整列 `undefined`，本轮真踩过：`aggregateTeams` 的 return、
+  `frontierEnvs` 投影、`projectConclusion` 三处都要补）。
+* 跨版本累加时按**用户设的版本权重**加权（`versionWeights`）。
+* `SCORING.investWeight` 置 **0**，`+ 5 × 第二维`（压金度 / 投入档位）**整段删除**，
+  `coneRankOf` 一并删除；计分段单调包络改成「**本档自己的分夹过天花板**」。
+* **天花板按档各自判**：只有非顶格档压 90，顶格档不压（旧口径「第二档天花板对整维
+  统一生效」作废）。
+
+**实测**（theherta，`tools/_probe-strength-*.mjs`）：`zeroAvGoldBySeason` 的 `aa/plight`
+= 各期最省金 48 / 48 / 48 / 29 / 48 金；`as` 从 4.1 的 44 金降到 4.6 的 **5 金**；
+`moc` 4.1~4.4 最省金 1~2 金。整包强度 = 100 的**一条都没有**，top10 上限 **70.2** ——
+90 分的天花板在整包层从未触发。
+
+⚠️ **踩坑**：一度改成按行动值挑代表行（新增 `pack.avSeason` 表），实测与用 `observed`
+只差 **1 个整包**，却**回归了用户报过的 bug** ⇒ 回退，删掉整张表并注释「不许改回去」。
+
+#### ② 泛用性改成两组各自归一（用户第 1 条）
+
+「E6 角色应当仅与 E6 做比较，E0/E1/E2 与 E0/E1/E2 之间做比较（避免不同量级之间的比较）」。
+
+**为什么要改**：原始量是「按版本/关卡加权的不同队友数」，E6 出现在更少的投稿里 ⇒
+原始量系统性偏低（实测候选池成员位：**E6 组 0.21 vs 低档组 1.63**）。混在一把尺子上
+比，就是拿量纲不同的两个数比大小。
+
+**做法** —— 两把尺子，各归一各的：
+
+* **角色级**：`groupMeanOf(name, tiers)` 求组均值（低档组 = E0/E1/E2 三档**各按档平均**
+  再**对档平均**；E6 组 = E6 那一档的平均）→ `versatilityRaw`；
+  尺子 `versatilityExtentOfGroup('low'|'e6')`；`frontierExtents.versatility` 的
+  `lo/hi` 给低档组、`byTier[6]` 给 E6 组。
+* **队级**：`teamPlan()` 里 `groupExtents`（低档 / E6 各一份）+ `memberVersatilityScore()`
+  —— 每个成员**先按自己那一组**归一，再按**成本占比**加权。
+  恒等式：**队级 ③ = 成员们在总榜上泛用性分的成本加权平均**。
+* 服务端 `versatilityByTier` 改成**按档各取一份**（原来四个档共用低档那一份）。
+
+**实测**（`tools/_probe-vers-shape.mjs`）：榜上全部 **261** 个 `角色|E档` 去重后，
+两组**组内相对分均值 10.1（低档）/ 10.7（E6）** —— 持平，量级差确实被抹掉。
+⚠️ **中位数仍差一截**（4.6 vs 2.7）：E6 那把尺子的上界被知更鸟 E6（**7.22**）独自撑高，
+min-max 对离群值敏感。这是**已知特性**，要换成分位 / 秩次尺子是**另一个决策**。
+
+⚠️ **踩坑**：E6 组一开始直接取 `versatilityPerTier`，导致**同一角色 E6 的多个整包拿到
+不同 raw**（知更鸟 9 条整包 9 个值）⇒ 改成与低档组对称的 `groupMeanOf(name, [6])`。
+
+#### ③ 全站排版统一（三个子智能体并行审查的结论）
+
+三个子智能体并行审查（全局骨架 / 详情弹窗 / 榜单与方案卡），共同结论：**仓库本来就是
+深空深色主题**，所以「反转主题」这个前提不成立，不做。其余按高→低落地：
+
+| # | 问题（两个以上 agent 独立点到） | 修法 |
+| --- | --- | --- |
+| 1 | **【高】`.advice-detail-toggle.is-inline` 有一条全局 `position:absolute`**，4 个「查看来源」按钮全被钉到 `.modal` 右上角 | 去掉全局 absolute（默认回流内），只在 `.advice-factor-cell` 里顶到右边 |
+| 2 | **【高】`.advice-plan-team-eq` 的 `white-space:nowrap`** 是唯一的硬溢出源，窄屏把方案卡撑破 | 改 `overflow-wrap:anywhere` |
+| 3 | **「已有 / 缺」三套写法**：总榜行与环境统计用 `.advice-own-badge`（绿 pill），方案卡用自己一套 `.advice-plan-team-own`（青 / 红 pill） | 统一到 `.advice-own-badge` + 新增 `is-gap`，从「槽位最右边」挪到**角色名后面**；删 `.advice-plan-team-own` |
+| 4 | **数字格式与措辞 9 处** | 合计行进 `packScoreText`；「判据线内」→「已达判据线」；两处来源表头「权重」→「关卡权重」（避免与抽卡权重混）；方案卡 facts 与最佳证据走 `goldText()` + 补档位 + 语序「行动值 N」+ 缺数据不画（修「— 金」）；泛用性脚注 `.toFixed(1)` |
+| 5 | **结构一致性** | 总榜 h4 补 `.advice-section-head` 外壳（CSS 加 `.advice-section-head .advice-h4{margin:0}`）；`.advice-plan-team-best` 显式钉 11.5px，消掉 facts 行内 12.5 与 11.5 并排 |
+
+⚠️ 第 3 条有个**隐藏坑**：`.advice-plan-team-label` 是 `display:grid`，徽标直接 append
+会**独占一行**（变成「名字 / 徽标 / 星魂 / 光锥」四行）⇒ 必须单独包一层 flex 行
+（`.advice-plan-team-name`）。
+
+#### 改过的文件
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `public/scripts/advice.js` | 强度两档规则（`SCORING.investWeight: 0`、第二趟 `accStrength`、删 `coneRankOf` / `avSeason` / 计分段包络）；泛用性两组原始量 + 两把尺子 + 队级 `groupExtents` / `memberVersatilityScore` |
+| `src/server/conclusion.js` | `zeroAvGoldBySeason` 三层透传；`versatilityByTier` 按档各取一份；`conclusionEnvs` / `projectConclusion` 同步 |
+| `public/scripts/advice-view.js` | 数字格式与措辞 9 处；「已有 / 缺」徽章统一并挪位；总榜 / 方案卡结构一致性 |
+| `public/styles/app.css` | `.advice-plan-team-eq` 去 nowrap；`.advice-own-badge.is-gap`；删 `.advice-plan-team-own`；`.advice-plan-team-name`；`.advice-section-head .advice-h4{margin:0}`；`.advice-plan-team-best` 字号 |
+| `public/styles/advice-tip-window.css` | `.advice-detail-toggle.is-inline` 不再全局 absolute；760px 媒体查询补 `.advice-factor-cell` padding 与按钮 static |
+| `public/index.html` | 总榜 h4 补 `.advice-section-head` 外壳 |
+| `tools/herta-test.mjs` | 泛用性那条**整条重写**为两组口径（E6 用自己那份、E0/E1/E2 用三档平均、两把尺子、成员名单按组） |
+| `tools/e2e-test.mjs` | 三条断言反过来钉：E0/E1/E2 相同 / E6 不同；`byTier` 的 0/1/2 同值、6 不同值；packs 顶层 `versatilityRaw` 与该档 raw **严格相等** |
+| `tools/team-plan-test.mjs` | `TEAMS` 新增 `carrierE6`（charX E6 无光锥，7 金）与 `carrierLow`（charX E2 + coneB S4，7 金）—— **金数相同、只差星魂档**；新增一条「队级 ③ 按组归一」；「差额相同时同分」那条把 ③ 显式置 0 |
+| `tools/check-advice-layout.mjs` | `SOURCE_HEADERS` / `STRENGTH_HEADERS`「权重」→「关卡权重」；`versRaw` 正则改 `(\d+)\s*个` |
+| `tools/_probe-vers-shape.mjs` | **新增**（两组分布形状 + 归一后是否持平） |
+| `tools/_probe-team-vers.mjs` | 修正一处**误导性注释**：成员级那两行的取样集合是「下发的 15 支」这个**被总分挑过的子集**，不能用来回答「组间量级差有没有被抹掉」 |
+| `src/version.js` / `package.json` | changelog 加 v4.6.116 / version 4.6.116 |
+| `docs/功能要求.md` | §4 强度**整节重写**、§5 泛用性**整节重写**、§6.3 三分项表、§8 边缘用例 +10 条、§9 取舍 +4 条、§10 本轮清单 |
+
+#### 实测
+
+* **A 无依赖**：`node tools/run-tests.mjs` 全套 **21 个套件通过**（`herta-test` /
+  `team-plan-test` / `e2e` 192 / 强度不变式……）。
+* **C 需 9222 调试浏览器**：本机没起浏览器，`check-advice-layout` 只跑了跳过时的
+  语法自检（`node --check` 两个文件均通过）—— 本轮新加的排版判据**待补跑**。
+* 两个探针：`_probe-vers-shape.mjs`（两组持平 10.1 / 10.7）、`_probe-team-vers.mjs`
+  （同一 roster 的星魂变体 ③ 不再系统性偏高）。
+
 ---
 
 ## 9. Git 约定

@@ -1687,10 +1687,14 @@ if (!tipTarget) {
         const t = versBlock?.querySelector('.advice-score-split-title')?.textContent || '';
         // ⚠️ 2026-10-15：标题里的量词从「共 N 个」改成了「**并集** N 个」
         //    （v4.6.106 起名单是**并集**、原始量是**加权**值，两个量纲必须分开说，
-        //    见 versatilitySourceBlock() 的注释）。两个词都收，免得下次再改措辞
-        //    又把这条判据判红 —— 它要钉的是「标题上那个数 = 名单里数出来的个数」。
+        //    见 versatilitySourceBlock() 的注释）。
+        // ⚠️ 2026-10-17 第 1 条：标题按组换了两种说法 —— 低档组是
+        //    「E0/E1/E2 三档队友的**并集** N 个」，E6 组是「**E6 自己的队友** N 个」。
+        //    所以量词不能再枚举（共 / 并集），改成**取标题里第一个「N 个」**：
+        //    两种说法里都只有一个数字，且这条判据要钉的一直是
+        //    「标题上那个数 = 名单里数出来的个数」，与量词怎么写无关。
         //    ⚠️ 本段是模板字符串，注释里不能出现反引号（HANDOFF §6.1 第 16 条）。
-        return Number((t.match(/(?:共|并集)\\s*(\\d+)\\s*个/) || [])[1]);
+        return Number((t.match(/(\\d+)\\s*个/) || [])[1]);
       })(),
       splitTotal: String(splitTable
         ?.querySelector(':scope > tbody > tr.is-total > td:last-child')?.textContent || ''),
@@ -1861,7 +1865,9 @@ if (!tipTarget) {
   //    改为"关卡"，并备注关卡的版本号」）。第一列的内容没变（仍是两级写法：副本一行 /
   //    关卡一行），变的是表头这两个字 —— 它原来把「副本」也写进去了，与第一列实际
   //    在认的东西（关卡）不一致。
-  const SOURCE_HEADERS = ['关卡', '权重', '表现', '金数', '跨版本发挥', '贡献'];
+  // ⚠️ 2026-10-17：第 2 列从「权重」改名「**关卡权重**」—— 与三分项表里那一列同名不同义
+  //    （那边是抽卡权重、印百分比），两个名字必须在界面上分开。见 advice-view.js 的表头处。
+  const SOURCE_HEADERS = ['关卡', '关卡权重', '表现', '金数', '跨版本发挥', '贡献'];
   const factorCellsOk = (cells) => cells.length === SOURCE_HEADERS.length
     && cells.slice(1).every((c) => c.length > 0 && !/NaN|undefined|Infinity/.test(c));
   const headValue = tipReport ? ((tipReport.headText.match(/(\+\d+)$/) || [])[1] || null) : null;
@@ -2153,7 +2159,8 @@ if (!tipTarget) {
   //    行动值不再取「该整包在这个副本里任意一支队伍的最快成绩」，而是取**这一关最佳证据
   //    那一支队自己的**行动值 —— 所以列名写成「行动值（这支队自己）」，与卡片上那个数同源。
   //    改这组列名必须同时改 `advice-view.js` 的 `strengthSourceBlock()`（两边是同一份契约）。
-  const STRENGTH_HEADERS = ['关卡', '行动值（这支队自己）', '本副本强度', '权重', '贡献'];
+  // ⚠️ 2026-10-17：第 4 列同样从「权重」改名「关卡权重」（理由见 SOURCE_HEADERS 那段）。
+  const STRENGTH_HEADERS = ['关卡', '行动值（这支队自己）', '本副本强度', '关卡权重', '贡献'];
   const strengthSourceOk = Boolean(tipReport)
     && JSON.stringify(tipReport.strengthHeaders) === JSON.stringify(STRENGTH_HEADERS)
     && tipReport.strengthRowCount > 0

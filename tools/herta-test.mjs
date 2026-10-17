@@ -951,28 +951,36 @@ check('界面源码里不许再出现「满分 / 达标 / 及格」这类自造�
     `这些行还在往界面上写模糊用语（应改走 tierTextOf()）：\n${offenders.join('\n')}`);
 });
 
-check('强度详情窗口的「叠影档」必须与算分同一把尺子（只有要金的光锥才算投入）（v4.6.113）', () => {
+check('强度详情窗口：投入项与单调包络的文案都不许回来（用户 2026-10-17 第 2 条）', () => {
   /**
-   * 源码级护栏（与上面那条「不许写满分 / 达标 / 及格」同一个路数）：详情窗口那行
-   * 「投入加成」曾经写的是 `min(E, 6) + (有光锥 ? 叠影 : 0)`，而算分用的是
-   * `eidolonTierOf(E) + coneRankOf`（**只有要金的光锥**才算叠影、E3~E5 折进 E2）。
-   * 实测 261 条整包里有 **52 条**界面印着「叠影档 5 → +2.27 分」而实际加 **0 分**
-   * （免费 / 4★ 锥）—— 正是 v4.6.102 在算分侧修过、显示侧没跟着改的那个 bug。
-   * 这条钉「那一行必须走 `coneCostOf(` 与 `eidolonTierOf(`」：回到旧写法当场红。
+   * 源码级护栏（与上面那条「不许写满分 / 达标 / 及格」同一个路数）。
+   *
+   * 2026-10-17 第 2 条把强度里的**投入这一维整条删掉**了（用户原话：「角色/队伍强度与
+   * 成本改为无相关性，不需要遵守高造价必然等于高强度」），同时删掉的还有
+   * 「投入越高不会更弱」的单调包络。所以详情窗口那块现在只剩两步：本档自身合计 →
+   * 第二档天花板 / 顶格档说明。这条护栏钉住**旧的文案与旧的两步不许复活**：
+   *   * 「投入加成」「这 5 分」= 已删除的投入项；
+   *   * 「单调兜底」= 已删除的包络；
+   *   * `unit.lc ? Math.max(1, Number(unit.superimp)` = v4.6.113 修掉的旧尺子。
    */
   const src = readFileSync(resolve('public/scripts/advice-view.js'), 'utf8');
   const from = src.indexOf('const strengthSourceBlock');
   const to = src.indexOf('const versatilitySourceBlock');
   assert.ok(from > 0 && to > from, '找不到 strengthSourceBlock / versatilitySourceBlock');
-  const block = src.slice(from, to);
-  assert.ok(block.includes('coneCostOf('),
-    '叠影档必须用 coneCostOf() 判「这把光锥要不要金」（免费 / 4★ 锥的叠影不算投入）');
-  assert.ok(block.includes('eidolonTierOf('),
-    '星魂档必须用 eidolonTierOf()（E3~E5 折进 E2，与算分同一把尺子）');
-  assert.ok(!/unit\.lc \? Math\.max\(1, Number\(unit\.superimp\)/.test(block),
+  // ⚠️ 判据只查**会印到界面上的文案**：先把注释剥掉，否则「改前这里写的是……」这类
+  //    历史说明会被当成复活的旧文案判红（实测踩过，注释越写越长越容易假红）。
+  const stripComments = (code) => code
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1 ');
+  const live = stripComments(src.slice(from, to));
+  assert.ok(live.includes('第二档天花板'), '90 分那道天花板必须在详情里写出来');
+  assert.ok(live.includes('顶格档'), '顶格档的判据必须写清楚');
+  assert.ok(!/投入加成/.test(live), '投入项已删除，它的文案不许回来');
+  assert.ok(!/这 5 分/.test(live), '投入维那一项已删除，文案不许回来');
+  assert.ok(!/那 5 分/.test(live), '投入维那一项已删除，文案不许回来');
+  assert.ok(!/单调兜底/.test(live), '单调包络已删除，它的文案不许回来');
+  assert.ok(!/unit\.lc \? Math\.max\(1, Number\(unit\.superimp\)/.test(live),
     '旧的「有光锥就算叠影档」写法不许回来');
-  assert.ok(block.includes('ownTopBand'),
-    '顶格档那 5 分是**压金度**、不是投入档 —— 这一格必须分开写');
 });
 
 /** 造一个环境：base 是 0 抽可照抄的基线，cands 里每项是 [阵容, 档位, avgAv, 配装]。 */
@@ -3951,7 +3959,7 @@ check('⭐ 强度两档：打出 0 行动值 = 顶格档 100；没打出 = ≤ 9
   assert.ok(strengthOf(0) > strengthOf(1), '顶格档必须严格高于任何第二档');
 });
 
-check('⭐ 第二档天花板对整维统一封顶，且不吃掉「投入越高不会更弱」（v4.6.113）', () => {
+check('⭐ 第二档天花板对整维统一封顶（用户 2026-10-16 第 1 条）', () => {
   /**
    * 用户 2026-10-16 晚「都修」的第 ② 条，**查证后定性改了**：这不是包络越权，而是
    * **两档天花板本身**。`strengthTotal` 是**逐关卡**两档的加权平均 —— 某一关打出
@@ -3959,10 +3967,10 @@ check('⭐ 第二档天花板对整维统一封顶，且不吃掉「投入越高
    * 爻光 E6 90.48 / 黄泉 E2 90.27。而「没打出 0 行动值的队伍，再好也够不到顶格那一档」
    * 是用户 2026-10-16 第 1 条点名的规则 ⇒ 非顶格档在**整包层也封顶 90**。
    *
-   * ⚠️ 试过「先跟自己取 max」（豁免天花板）：强度不变式当场红
-   *    `Tribbie: E1C0(87.7) > E1C1(86.4)`（951 组里翻面 1 组）—— 自身 91.84 的那档
-   *    豁免了、投入更高的那档没豁免，1.84 分的差 > 投入项那一步 0.45 分。所以这条
-   *    同时钉两件事：**封顶对所有人一视同仁** + **投入维仍然单调**。
+   * ⚠️ 2026-10-17 第 2 条起，这条用例里**原来那条「投入维仍然单调」断言删了**：
+   *    用户原话「角色/队伍强度与成本**改为无相关性**，不需要遵守高造价必然等于高强度」，
+   *    而星魂档就是成本 —— 「E2 必须 ≥ E0」正是被否掉的那条单向性。现在改钉**反面**：
+   *    每一档的强度分只能是它自己的成绩（见 ④）。
    */
   const availability = {
     characters: { Hero: { rarity: 5, limited: true } },
@@ -4007,63 +4015,128 @@ check('⭐ 第二档天花板对整维统一封顶，且不吃掉「投入越高
     assert.equal(u.strengthFloor, SCORING.strengthSecondBandCap,
       `自身越过天花板时应正好取天花板，实际 ${u.strengthFloor}`);
   }
-  // ② 投入维仍然单调：E2+金光锥（投入档 3）必须**不低于** E0+金光锥（投入档 1）。
-  assert.ok(z.strengthScore > x.strengthScore + 1e-6,
-    `封顶之后投入维必须还单调：E0+锥 ${x.strengthScore} vs E2+锥 ${z.strengthScore}`);
-  // ③ 顶格档（自己每关都 0 行动值）不受天花板影响。
+  // ② 顶格档（自己每关都 0 行动值）不受天花板影响。
   assert.equal(y.strengthFloor, 100, '顶格档自己打出 0 行动值 → 兜底就是 100');
+  // ③ 单调包络已删除（用户 2026-10-17 第 2 条）：E2 那一档**不许**借 E0 的成绩。
+  //    两条 env 的输入对 E0 与 E2 完全同构（同为 0 行动值 / 同为 1 行动值），
+  //    所以包络若还在，两档会拿到同一个数；现在各自算各自的。
+  assert.ok(Math.abs(Number(z.strengthTotal) - Number(x.strengthTotal)) < 1e-6,
+    `夹具让 E0/E2 两档同构，自身合计理应相同（实际 ${x.strengthTotal} vs ${z.strengthTotal}）`);
+  assert.equal(z.strengthScore, x.strengthScore,
+    '同构的两档强度分必须相同 —— 既不许被包络拉平，也不许被投入项拉开');
 });
 
-check('⭐ 泛用性只看 E0/E1/E2 的平均值、固定给所有档位（E6 完全不参与）（用户 2026-10-16 第 3 条）', () => {
-  // 用户原话：「仅参考该角色 E0/1/2 的泛用性的平均值，**完全不考虑 E6 的泛用性**，
-  // 将这一结果固定为该角色的**全局泛用性**」。
-  // 夹具让三档的队友集大小各不相同：E0 → 2、E1 → 3、E2 → 4，而 E6 只有 1 ——
-  // 期望：四档全部等于 (2+3+4)/3 = 3（E6 那个 1 完全不参与）。
+check('⭐ 泛用性分两组各自归一：E6 用自己那份、E0/E1/E2 用三档平均（用户 2026-10-17 第 1 条）', () => {
+  // 用户原话：「角色/队伍泛用性，**E6 角色应当仅与 E6 做比较**，E0/1/2 与 E0/1/2 之间
+  // 做比较（**避免不同量级之间的比较**）」。
+  //
+  // 夹具故意让三个角色的两组原始量**互不相同**，且同角色内 E6 与低档组也差得很远：
+  //   角色    E0     E1     E2     E6  →  低档组平均      E6 自己那份
+  //   Hero    2      3      4      1  →  (2+3+4)/3 = 3            1
+  //   Side    3      —      —      4  →  3                        4
+  //   Villain 5      —      —      2  →  5                        2
+  // 于是两把尺子也分开了：低档组 lo=3 hi=5；E6 组 lo=1 hi=4。
+  // 若退回到「整榜一把尺子」或「四档同一把」，Villain E6 的得分会变成
+  // 100×(2−2.8333)/(5−2.8333) < 0（被夹成 0）或 100×(2−1)/(5−1) = 25，都对不上。
+  // A~E 是**纯队友**：写成 4★，它们自己不会作为「角色」进 `all`（也就不会带着自己的
+  // 一套泛用性把两把尺子的极值搅乱）。写成 5★ 限定时它们自己也会变成榜上的角色 ——
+  // 实测低档组的 hi 会从 5 被抬到 7（A 的队友最多），与本条要钉的东西无关。
   const availability = {
     characters: {
-      Hero: { rarity: 5, limited: true }, A: { rarity: 5, limited: true },
-      B: { rarity: 5, limited: true }, C: { rarity: 5, limited: true },
-      D: { rarity: 5, limited: true },
+      Hero: { rarity: 5, limited: true }, Side: { rarity: 5, limited: true },
+      Villain: { rarity: 5, limited: true }, A: { rarity: 4 }, B: { rarity: 4 },
+      C: { rarity: 4 }, D: { rarity: 4 }, E: { rarity: 4 },
     },
     lightCones: {},
   };
-  const mk = (heroEido, mates) => ({
+  // `lc` 只在 Hero|E2 那两条上不同：整包键是 `角色|E档|光锥|叠影`，所以那是**两条独立整包**。
+  // ⚠️ 但泛用性的主体键**不带光锥**（`versatilityKeyOf` 只到 `角色|E档`）—— 同档不同光锥
+  // 的队友集合是先**并起来**再算的，所以两条都拿到 4。这正是「先按档平均」那一步在当前
+  // 实现下恒等于自身的原因（同档所有配装共享一个 `versatilityPerTier`）；保留那一步只为
+  // 防御（见 advice.js `perTierValues` 的注释）。
+  const mk = (char, eido, mates, lc) => ({
     cost: 1,
     tier: 'perfect',
     actionValue: 0,
-    members: [{ char: 'Hero', eidolon: heroEido },
+    members: [{ char, eidolon: eido, lc: lc || null },
       ...mates.map((c) => ({ char: c, eidolon: 0 }))],
   });
-  const env = envFixture('moc', [], {
-    frontierRows: [
-      mk(0, ['A', 'B']),
-      mk(1, ['A', 'B', 'C']),
-      mk(2, ['A', 'B', 'C']),
-      mk(2, ['A', 'D']),
-      mk(6, ['A']),
-    ],
-  });
+  const rows = [
+    mk('Hero', 0, ['A', 'B']),
+    mk('Hero', 1, ['A', 'B', 'C']),
+    mk('Hero', 2, ['A', 'B', 'C'], 'Cone A'),
+    mk('Hero', 2, ['A', 'B', 'C', 'D'], 'Cone B'),
+    mk('Hero', 6, ['A']),
+    mk('Side', 0, ['A', 'B', 'C']),
+    mk('Side', 6, ['A', 'B', 'C', 'D']),
+    mk('Villain', 0, ['A', 'B', 'C', 'D', 'E']),
+    mk('Villain', 6, ['A', 'B']),
+  ];
+  const env = envFixture('moc', [], { frontierRows: rows });
   const out = buildConclusion([env], { availability });
-  const heroRows = out.frontierPacksByChar?.Hero || [];
-  const rawOf = (eido) => heroRows.find((u) => Number(u.eidolon) === eido)?.versatilityRaw;
-  // 各档自己那一份（`versatilityPerTier`）—— 分档的值仍在，只是**不再直接用于算分**。
-  const perTierOf = (eido) => heroRows.find((u) => Number(u.eidolon) === eido)?.versatilityPerTier;
-  assert.equal(perTierOf(0), 2, 'Hero|E0 的队友集 = {A,B}');
-  assert.equal(perTierOf(1), 3, 'Hero|E1 的队友集 = {A,B,C}');
-  assert.equal(perTierOf(2), 4, 'Hero|E2 的队友集 = {A,B,C,D}（两条行并起来）');
-  assert.equal(perTierOf(6), 1, 'Hero|E6 的队友集 = {A}（它**不参与**平均）');
-  const avg = (2 + 3 + 4) / 3;
-  for (const eido of [0, 1, 2, 6]) {
-    assert.equal(rawOf(eido), avg,
-      `E${eido} 的泛用性原始量应当是 E0/E1/E2 的平均值 ${avg}（实际 ${rawOf(eido)}）`);
+  const rowsOf = (char) => out.frontierPacksByChar?.[char] || [];
+  const rawOf = (char, eido) => rowsOf(char).find((u) => Number(u.eidolon) === eido)?.versatilityRaw;
+  // E2 有两条（不同光锥），取任意一条都应拿到同一个组平均值。
+  const perTierOf = (char, eido, lc) => rowsOf(char)
+    .find((u) => Number(u.eidolon) === eido && (lc === undefined || u.lc === lc))
+    ?.versatilityPerTier;
+
+  // ① 各档自己那一份（`versatilityPerTier`）仍然按档算，没被合并掉。
+  assert.equal(perTierOf('Hero', 0), 2, 'Hero|E0 的队友集 = {A,B}');
+  assert.equal(perTierOf('Hero', 1), 3, 'Hero|E1 的队友集 = {A,B,C}');
+  assert.equal(perTierOf('Hero', 2, 'Cone A'), 4, 'Hero|E2|Cone A 的队友集 = 同档并集 {A,B,C,D}');
+  assert.equal(perTierOf('Hero', 2, 'Cone B'), 4, 'Hero|E2|Cone B 同上（同档共享一个值）');
+  assert.equal(perTierOf('Hero', 6), 1, 'Hero|E6 的队友集 = {A}');
+  assert.equal(perTierOf('Villain', 6), 2, 'Villain|E6 的队友集 = {A,B}');
+
+  // ② **低档组**：E0/E1/E2 三档共享同一个值（三档各自先平均、再对档平均）。
+  const heroLow = (2 + 3 + 4) / 3;
+  for (const eido of [0, 1, 2]) {
+    assert.equal(rawOf('Hero', eido), heroLow,
+      `Hero|E${eido} 的原始量应是三档平均 ${heroLow}（实际 ${rawOf('Hero', eido)}）`);
   }
-  assert.notEqual(rawOf(6), 1, 'E6 自己那份队友集（1 个）不许参与，也不许留下');
-  // 四个档位的榜面值也必须一致（原始量一致 ⇒ 得分一致，因为现在是整榜一把尺子）。
-  const scoreOf = (eido) => (out.frontierTiers?.[eido] || [])
-    .find((u) => u.name === 'Hero')?.versatilityScore;
-  const scores = [0, 1, 2, 6].map(scoreOf).filter((v) => Number.isFinite(Number(v)));
-  assert.ok(scores.length >= 2 && new Set(scores).size === 1,
-    `各档的泛用性得分必须相同，实际 ${JSON.stringify(scores)}`);
+  assert.equal(rawOf('Side', 0), 3, 'Side 只有 E0 一档 → 低档组原始量就是那一档的值');
+  assert.equal(rawOf('Villain', 0), 5, 'Villain 只有 E0 一档');
+
+  // ③ **E6 组**：E6 用**自己那一份**，绝不被低档组的平均值盖掉。
+  assert.equal(rawOf('Hero', 6), 1,
+    `Hero|E6 必须用自己那份 1，而不是低档组平均 ${heroLow}（实际 ${rawOf('Hero', 6)}）`);
+  assert.equal(rawOf('Villain', 6), 2,
+    `Villain|E6 必须用自己那份 2，而不是低档组平均 5（实际 ${rawOf('Villain', 6)}）`);
+  assert.equal(rawOf('Side', 6), 4, 'Side|E6 用自己那份 4');
+
+  // ④ 两把尺子：低档组一把（E0/E1/E2 共用）、E6 组一把，值必须不同。
+  const v = out.frontierExtents?.versatility;
+  assert.ok(v && Number.isFinite(Number(v.lo)) && Number.isFinite(Number(v.hi)),
+    `frontierExtents.versatility 应有 lo/hi，实际 ${JSON.stringify(v)}`);
+  assert.ok(Math.abs(Number(v.lo) - heroLow) < 1e-6 && Math.abs(Number(v.hi) - 5) < 1e-6,
+    `顶层 lo/hi 取低档组那把（${heroLow} ~ 5），实际 ${JSON.stringify(v)}`);
+  const bt = v.byTier || {};
+  for (const t of ['0', '1', '2']) {
+    assert.deepEqual(bt[t], { lo: heroLow, hi: 5 },
+      `byTier['${t}'] 必须指回低档组那把，实际 ${JSON.stringify(bt[t])}`);
+  }
+  assert.deepEqual(bt['6'], { lo: 1, hi: 4 },
+    `byTier['6'] 必须是 E6 组那一把（1 ~ 4），实际 ${JSON.stringify(bt['6'])}`);
+
+  // ⑤ 得分按组各归各的：低档组里 Villain 满分、Hero 0 分；E6 组里 Side 满分、
+  //    Villain 33.33（换整榜尺子会得到 25 或负数）。
+  const scoreOf = (char, eido) => (out.frontierTiers?.[eido] || [])
+    .find((u) => u.name === char)?.versatilityScore;
+  // ⚠️ 容差 1e-3：得分过了 `toFixed(4)`，33.333333… 会变成 33.3333。
+  const near = (a, b) => Math.abs(Number(a) - b) < 1e-3;
+  assert.ok(near(scoreOf('Villain', 0), 100), `Villain E0 在低档组里应满分，实际 ${scoreOf('Villain', 0)}`);
+  assert.ok(near(scoreOf('Hero', 0), 0), `Hero 在低档组里应 0 分，实际 ${scoreOf('Hero', 0)}`);
+  assert.ok(near(scoreOf('Side', 6), 100), `Side E6 在 E6 组里应满分，实际 ${scoreOf('Side', 6)}`);
+  assert.ok(near(scoreOf('Villain', 6), 100 / 3),
+    `Villain E6 在 E6 组里应 100×(2−1)/(4−1)=33.33，实际 ${scoreOf('Villain', 6)}`);
+
+  // ⑥ 来源名单也按组分（E6 一份、低档组三档并集）—— 否则窗口里印出的名单与得分对不上。
+  const membersOf = (char, eido) => rowsOf(char)
+    .find((u) => Number(u.eidolon) === eido)?.versatilityMembers;
+  assert.deepEqual(membersOf('Hero', 6), ['A'], 'Hero E6 的名单只有它自己见过的 A');
+  assert.deepEqual(membersOf('Hero', 0), ['A', 'B', 'C', 'D'],
+    'Hero 低档组的名单是三档队友的并集');
 });
 
 check('⭐ 泛用性按**关卡权重**加权：在低权重关卡百搭 ≠ 在高权重关卡百搭（用户 2026-10-16 第 4 条）', () => {

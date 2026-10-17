@@ -1194,25 +1194,37 @@ export const SCORING = {
    */
   drawWeight: { strength: 1, cost: 1, versatility: 0.5 },
   /**
-   * **强度分项**的几个常数（用户 2026-10-14 定的新口径，见 `frontierBoard` 里那段注释）。
+   * **强度分项**的几个常数（用户 2026-10-14 定口径，**2026-10-17 第 2、3 条整条重做**）。
    *
-   * 用户原话（三句，缺一不可）：
-   *   * 「强度分应当围绕**行动值**决定，此角色参与的队伍，行动值越低则强度分越高，
-   *     **仅取最少行动值**」；
-   *   * 「按照已有的用户设置的关卡权重，**各自贡献**」；
-   *   * 「任何角色的只考虑强度权重都必须是 **E6S5 > E6S1 > E2S1 > E0S0**，也就是说哪怕
-   *     E6S1 就能达到 0 行动值（从而压金），E6S5 的此角色的强度仍然必须在 E6S1 之上」，
-   *     并且「E6S5 的限定角色+限定光锥**不算隐金**应当是 **12** 成本」。
+   * ## 2026-10-17 新口径（用户原话，三句缺一不可）
    *
-   * ⚠️ 最后一条**推翻了**最初那句「若达成 0 行动值通关，则成本越低越强」在**强度**里的
-   * 用法：省金是**性价比**那一项的事；强度的第二维是**投入**（投入越高越强）。
+   *   * 「角色/队伍强度与成本**改为无相关性**，不需要遵守高造价必然等于高强度」；
+   *   * 「此时的强度定义为，若某个队伍达成**最低金 0 行动值绝境**，则此配队视为
+   *     **100 强度分（最高值）**，其它关卡同理」；
+   *   * 「其余强度得分**必须低于 100 分**：(1) 需要更多金达成 0 行动值的投稿，降低强度分；
+   *     (2) 48 金也达不成 0 行动值的队伍，强度分低于 (1)；(3) 其余配队的强度分
+   *     **仅按照行动值**提供」。
+   *
+   * ## 落地规则（`buildConclusionInner` 第二趟逐版本算，再按版本权重加权）
    *
    * ```
-   *   某副本的强度 = 100 × 判据线曲线(avBest)      ← 0 行动值 = 100、满分线 80、达标线 45…
-   *   整包行动值表现 = Σ(关卡权重 × 某副本强度) ÷ Σ(**全部**副本的关卡权重)   ← 缺副本按 0
-   *   单调包络 = max(自身表现, 同角色「星魂 ≤、叠影 ≤」的所有整包的表现)
-   *   强度分   = (100 − investWeight) × 单调包络 + investWeight × 投入占比
+   *   某副本某版本的强度 =
+   *     0 行动值  → 100 × (该版本 0 行动值配置的最省金 ÷ 本队金数)   ← 顶格档，逐期各自为 0
+   *     否则      → min(90, 该版本 0 行动值档的最低分) × 强度曲线(行动值)
+   *   整包强度 = Σ 关卡权重 × 该副本强度 ÷ Σ(**全部**)副本的关卡权重    ← 缺副本按 0
    * ```
+   *
+   * ⚠️ **「不跨版本对比」**：基准（最省金）按**版本**各自取，所以 4.5 期的 29 金是那一期的
+   *    满分、4.6 期的 48 金是那一期的满分 —— 两者不可比，也不该比。跨版本只按用户设置的
+   *    **版本权重**加权（`VERSION_WEIGHTS`，界面上的版本权重槽位）。
+   * ⚠️ **实测基准**（theherta 数据集，绝境王棋关逐期 0 行动值最省金）：
+   *    3.6/3.8/4.1 期**一条 0 行动值都没有**（这些期没有顶格档，全部走第二档）；
+   *    3.7/4.2/4.3/4.4/4.6 期各 1~2 条且全是 **48 金**（= 该期满分就是满配）；
+   *    4.0 期 6 条、最省 **40 金**；4.5 期 20 条、最省 **29 金**（那一期 48 金 ≈ 60.4 分）。
+   * ⚠️ **投入项整条删除**（用户 2026-10-17 第 2 条）：改前强度分 =
+   *    `(100 − investWeight) × 行动值表现 + investWeight × 投入占比`，那 5 分就是
+   *    「E6S5 天生比 E0S0 高 5 分」的来源 —— 用户明确说**不**需要「高造价必然等于高强度」。
+   *    连带作废 2026-10-14 点名的「E6S5 > E6S1 > E2S1 > E0S0」不变式（用户本轮自己推翻的）。
    *
    * * `strengthLineWeights` —— 强度曲线自己的判据线锚点。**不能复用性价比那张**
    *   （`frontierPerfLineByEnv` 把绝境的满分线锚点定成 1.00 = 满分线以内全平，
@@ -1221,17 +1233,18 @@ export const SCORING = {
    *   0.80 / 0.45 / 0.20 = 满分线 / 达标线 / 及格线 三处锚点（顶点 av=0 恒为 1.00）。
    */
   /**
-   * **强度分里留给「投入」的那几分**（用户 2026-10-14 的口径，见 `frontierBoard` 的计分段）。
+   * **强度分里「投入」的那几分**（用户 2026-10-14 的口径，**2026-10-17 第 2 条已作废**）。
    *
-   * 强度分 = `(100 − investWeight) × 行动值表现 + investWeight × 投入占比`，所以：
-   *   * 行动值（0 行动值 = 满分那一档）决定 95 分 —— 「行动值越低则强度分越高」；
-   *   * 投入（星魂 + 叠影，`rawGold / fullInvestGold`）决定最后 5 分 —— 保证
-   *     「E6S5 > E6S1 > E2S1 > E0S0」这条不变式在**行动值饱和**（都 0 行动值通关）时
-   *     仍然严格成立（用户原话：「哪怕 E6S1 就能达到 0 行动值（从而压金），E6S5 的
-   *     此角色的强度仍然必须在 E6S1 之上」）。
-   * ⚠️ 它是**强度**里的投入项，与**性价比**里的省金项是两件事（用户明确把「省金」归给性价比）。
+   * ⚠️ 用户 2026-10-17 原话：「角色/队伍强度与成本**改为无相关性**，不需要遵守
+   *    高造价必然等于高强度」。所以这一维**整条删除**，`investWeight` 恒为 0，
+   *    两处公式（`frontierBoard` 与 `teamPlan`）都不再乘它。
+   * ⚠️ 连带作废：2026-10-14 的「任何角色的只考虑强度权重都必须是
+   *    E6S5 > E6S1 > E2S1 > E0S0，也就是说哪怕 E6S1 就能达到 0 行动值（从而压金），
+   *    E6S5 的此角色的强度仍然必须在 E6S1 之上」—— 那是**上一轮**用户自己推翻的。
+   * ⚠️ 保留常量本身（值为 0）只为不让历史引用点炸，**不要再把它调回非 0**：
+   *    想改回去先问用户（`docs/功能要求.md` §9 待确认里记着这条）。
    */
-  investWeight: 5,
+  investWeight: 0,
   /**
    * 投入占比的**分母档位** = 星魂上限 6 + 叠影上限 5 = **11**（用户给的成本 12 里，
    * 本体那 1 金不算"投入"—— 任何一档都有本体）。
@@ -2511,6 +2524,62 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
       versatilityOfTier.set(key, value);
     }
   }
+  /**
+   * **两组的归一尺子**（用户 2026-10-17 第 1 条原话：「角色/队伍泛用性，E6 角色应当
+   * 仅与 E6 做比较，E0/1/2 与 E0/1/2 之间做比较（避免不同量级之间的比较）」）。
+   *
+   * 为什么**队级**也必须分组：`versatilityRaw` 是「能通关的队伍里出现过的不同队友数」，
+   * 两组的量纲**并不一致** —— 本机实测 E6 组与低档组的原始量**中位比值只有 0.88**
+   * （看着接近），但**单个角色能差到 11.5 倍**（March 7th (Hunt)：E6 那份是低档组的
+   * 11.52 倍），极值也从 6.01 抬到 7.22。队级 ③ 恰恰是「各成员的原始量按成本占比
+   * 加权」，于是只要 E6 成员直接拿自己那一档的原始量、低档成员拿低档的，两个量纲就会
+   * 在**同一支队里相加**：实测同一支 roster 的星魂变体，旧口径下「E6 更多那一版」的 ③
+   * 原始量平均高 **+0.34 ~ +0.38**（账号 2/3，9 对里 7 对是涨的）。把换档成员的
+   * raw→组内分都摊开看，那部分涨势里混着「E6 原始量天生更大」这个与配队质量无关的
+   * 成分 —— 典型如 银狼LV.999 E2→E6，raw 从 0.87 跳到 2.36（2.7 倍），旧口径直接按
+   * 2.36 计；新口径先问「这在 E6 组里排什么位置」（组内分 14 → 32）。
+   *
+   * 所以每个成员先按**自己那一组**的尺子归一成 0~100 的组内相对分，再加权求和。
+   * 尺子优先取 `conclusion.frontierExtents.versatility`（= 角色总榜那一列用的同一把，
+   * 于是「队级 ③ = 成员们在总榜上泛用性分的成本加权平均」这个恒等式成立，读者能验算）；
+   * 取不到时（工具/探针直接调 `teamPlan`、夹具没带这个字段）退回**按候选池现算**，
+   * 分组口径不变。
+   *
+   * ⚠️ **不要退回「直接拿原始量加权」**：那条路正是上面那个 +0.34 偏差的来源，
+   *    `tools/team-plan-test.mjs` 有一条专门钉着（金数相同时只换星魂档，③ 不许变）。
+   */
+  const groupExtents = (() => {
+    const num = (x) => (Number.isFinite(Number(x)) ? Number(x) : null);
+    const pick = (lo, hi) => (num(lo) !== null && num(hi) !== null
+      ? { lo: num(lo), hi: num(hi) } : null);
+    // 候选池现算的那两把（只在前者缺失时用）：分组判据与角色总榜一致 —— E6 档一组、其余一组。
+    const pool = { low: { lo: Infinity, hi: -Infinity }, e6: { lo: Infinity, hi: -Infinity } };
+    for (const unit of units) {
+      const g = eidolonTierOf(unit.eidolon) === 6 ? 'e6' : 'low';
+      const v = Number(unit.versatilityRaw) || 0;
+      if (v < pool[g].lo) pool[g].lo = v;
+      if (v > pool[g].hi) pool[g].hi = v;
+    }
+    const fixed = (x) => (Number.isFinite(x.lo) && Number.isFinite(x.hi) ? x : { lo: 0, hi: 0 });
+    const v = conclusion?.frontierExtents?.versatility || null;
+    return {
+      low: pick(v?.lo, v?.hi) ?? fixed(pool.low),
+      e6: pick(v?.byTier?.['6']?.lo, v?.byTier?.['6']?.hi) ?? fixed(pool.e6),
+    };
+  })();
+  /**
+   * 一个成员的**组内相对分**（0~100）—— 与角色总榜的 `versatilityScore` 同一算法：
+   * `100 × (原始量 − 组下限) ÷ (组上限 − 组下限)`，夹到 0~100。
+   * 查不到该 `角色|E档` 的成员按 **0** 参与（「冷门角色不许抬高整队」同一条约定）。
+   * 组内极值退化（全员同值）时给 100 —— 与 `spanOf` 对退化区间的约定一致。
+   */
+  const memberVersatilityScore = (name, eidolon) => {
+    const raw = versatilityOfTier.get(versatilityKeyOfMember(name, eidolon));
+    if (raw === undefined) return 0;
+    const ext = eidolonTierOf(eidolon) === 6 ? groupExtents.e6 : groupExtents.low;
+    const span = ext.hi - ext.lo > 1e-9 ? (raw - ext.lo) / (ext.hi - ext.lo) : 1;
+    return 100 * Math.max(0, Math.min(1, span));
+  };
   // 抽卡权重（用户 2026-10-12 第 3、4 条 + 2026-10-13 第 3 条）：只认**相对大小**，
   // 归一到和为 1 —— 与角色总榜**共用同一个 `normalizeDrawWeights`**（单一来源）。
   //
@@ -2630,10 +2699,6 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   {
     const avUnitByKey = new Map();
     for (const u of units) avUnitByKey.set(packKeyOf(u.name, u.eidolon, u.lc, u.superimp), u);
-    // 光锥那一维的投入档位：**只有要金的光锥**（限定 / 活动 5★）的叠影才算 ——
-    // 与 `buildConclusionInner` 的 `coneRankOf` 同一个口径（免费 / 4★ 锥叠影不计金）。
-    const avConeRankOf = (m) => (m.lc && coneCostOf(m.lc, availability) > 0
-      ? Math.max(1, Math.round(Number(m.superimp) || 1)) : 0);
     // 同一支队在多个副本的前沿里各有一条：合并成 `{hits:[{id,weight,av,tier,season,cost,minCost}]}`。
     const avByRoster = new Map();
     for (const env of conclusion?.frontierEnvs || []) {
@@ -2644,6 +2709,14 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
       const lowerIsBetter = env.lowerIsBetter !== false;
       const avLo = Number(env.avLo);
       const avHi = Number(env.avHi);
+      /**
+       * 逐版本的「0 行动值」金数区间（用户 2026-10-17 第 2、3 条：强度新口径的基准）。
+       *
+       * 与 `buildConclusionInner` 的 `frontierBoard` **读同一份**（服务端 `archive.js`
+       * 的 `zeroAvGoldBySeason`，随 `conclusionEnvs` 下发到 `frontierEnvs`）——
+       * 两个榜的强度口径不许分叉。`{ [版本]: { min, max } }`。
+       */
+      const zeroAvGoldBySeason = env.zeroAvGoldBySeason || null;
       for (const row of list) {
         const members = Array.isArray(row?.members) ? row.members : [];
         if (!members.length) continue;
@@ -2672,6 +2745,8 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
           lowerIsBetter,
           avLo,
           avHi,
+          // 这一关**这一版**的 0 行动值金数区间（强度顶格档的基准，见上面那段注释）。
+          zeroAv: zeroAvGoldBySeason ? (zeroAvGoldBySeason[row?.season] ?? null) : null,
         };
         const prev = avByRoster.get(key);
         if (!prev) {
@@ -2686,24 +2761,52 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     for (const av of avByRoster.values()) {
       const hitEnvs = av.hits.filter((h) => Number.isFinite(h.av));
       if (!hitEnvs.length) continue;
-      // 逐关强度：两档规则（与 `frontierBoard` 的 `envStrengthNew` 逐字一致的两条分支）。
+      // 逐关强度：**新两档规则**（用户 2026-10-17 第 2、3 条，与 `frontierBoard` 逐字一致）。
+      //
+      // ```
+      //   0 行动值 → 100 × (该版本 0 行动值配置的最省金 ÷ 本队金数)   顶格档
+      //   否则     → min(90, 该版本 0 行动值档的最低分) × 强度曲线(行动值)
+      // ```
+      //
+      // 用户原话：「若某个队伍达成**最低金 0 行动值绝境**，则此配队视为 **100 强度分
+      // （最高值）**」+「其余必须低于 100 分：(1) 需要更多金达成 0 行动值的投稿，降低
+      // 强度分；(2) 48 金也达不成的低于 (1)；(3) 其余仅按照行动值提供」。
+      // ⚠️ **逐版本各自比**：基准 `h.zeroAv` 按版本各取一份，不跨版本对比；跨版本只按
+      //    用户设置的版本权重加权（在服务端选行时生效）。
+      // ⚠️ 该版本没有 0 行动值基准时（绝境 3.6/3.8/4.1 期实测如此）**没有顶格档**，
+      //    全部走第二档，封顶退回 `strengthSecondBandCap` = 90。
       const withStrength = hitEnvs.map((h) => {
+        const zero = h.zeroAv && h.zeroAv.min > 0 ? h.zeroAv : null;
         let envStrength;
         if (h.tierLines) {
           const perf = perfFactorOf(h.av, h.tierLines, h.lowerIsBetter, h.tier,
             SCORING.strengthLineWeights);
-          envStrength = h.av === 0
-            ? 100
-            : SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
+          if (h.av === 0) {
+            envStrength = zero ? (100 * zero.min) / Math.max(1, h.cost) : 100;
+          } else {
+            const zeroFloor = zero ? (100 * zero.min) / Math.max(1, zero.max) : 0;
+            const cap = zeroFloor > 0
+              ? Math.min(SCORING.strengthSecondBandCap, zeroFloor)
+              : SCORING.strengthSecondBandCap;
+            envStrength = cap * Math.max(0, Math.min(1, perf));
+          }
         } else if (Number.isFinite(h.avLo) && Number.isFinite(h.avHi) && h.avHi > h.avLo) {
           // 判据线取不到（老载荷）但有行动值区间：按区间线性折算，不猜满分线。
           const perf = 1 - (h.av - h.avLo) / (h.avHi - h.avLo);
-          envStrength = h.av === 0
-            ? 100
-            : SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
+          if (h.av === 0) {
+            envStrength = zero ? (100 * zero.min) / Math.max(1, h.cost) : 100;
+          } else {
+            const zeroFloor = zero ? (100 * zero.min) / Math.max(1, zero.max) : 0;
+            const cap = zeroFloor > 0
+              ? Math.min(SCORING.strengthSecondBandCap, zeroFloor)
+              : SCORING.strengthSecondBandCap;
+            envStrength = cap * Math.max(0, Math.min(1, perf));
+          }
         } else {
           // 什么都没有（合成夹具）：0 行动值仍是顶格，其余按第二档天花板记 —— 确定的退路。
-          envStrength = h.av === 0 ? 100 : SCORING.strengthSecondBandCap;
+          envStrength = h.av === 0
+            ? (zero ? (100 * zero.min) / Math.max(1, h.cost) : 100)
+            : SCORING.strengthSecondBandCap;
         }
         return { ...h, envStrength };
       });
@@ -2729,16 +2832,14 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
       const wSum = ownWeight + skippedHeavyWeight;
       // 队级行动值表现 = Σ(关卡权重 × 本关强度) ÷ Σ(本队有数据的关卡权重 + 跳过的更重关卡权重)。
       const strengthTotal = withStrength.reduce((n, h) => n + h.weight * h.envStrength, 0) / wSum;
+      // 队伍强度 = **就是** `strengthTotal`（用户 2026-10-17 第 2 条：投入项整条删除）。
+      //
+      // 改前这里是 `(100 − investWeight) × strengthTotal/100 + investWeight × 第二维`，
+      // 第二维分两种（顶格档按**压金度**、其余按**投入档位** = E6S5 > E6S1 那条不变式）。
+      // 用户原话：「角色/队伍强度与成本**改为无相关性**，不需要遵守高造价必然等于高强度」。
+      // ⚠️ `ownTopBand` 仍留着：界面要靠它写「这一档自己在每个有数据的关卡都打出 0 行动值」。
       const ownTopBand = strengthTotal >= 99.99;
-      // 第二维那 5 分（与总榜同一个 `investWeight`）：顶格档按**压金度**
-      // （该版本最便宜金数 ÷ 本队金数，按关卡权重加权，分母与上面同一个 `wSum` ——
-      //  跳过的更重关卡在这一维也按 0 分算，两个维度必须同一把尺子），其余按投入档位。
-      const pinched = withStrength.reduce((n, h) => n
-        + (h.cost > 0 && h.minCost > 0 ? h.weight * Math.min(1, h.minCost / h.cost) : 0), 0) / wSum;
-      const invest = Math.max(0, Math.min(1, av.members.reduce(
-        (n, m) => n + eidolonTierOf(m.eidolon) + avConeRankOf(m), 0) / SCORING.fullInvestRank));
-      const strength = (100 - SCORING.investWeight) * (strengthTotal / 100)
-        + SCORING.investWeight * (ownTopBand ? pinched : invest);
+      const strength = strengthTotal;
       // 队分（展示 + 同分兜底排序）取成员里总分最高的那个整包 —— 与 `byRoster` 的
       // 「代表整包」同一个取法（那一条取的是 `total` 最高的成员整包）。
       let rep = null;
@@ -2812,15 +2913,17 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     const hiddenCut = hiddenReductionOf(team.members, availability,
       conclusion?.hiddenCosts, 'dataset').team;
     /**
-     * 这支队的 **③ 泛用性原始量** = 队内成员**各自**泛用性按**成本占比**加权（用户
-     * 2026-10-14 第 1 条后半句原话：「整个队伍的泛用性根据不同角色的成本占整个队伍的
-     * 成本权重而定」）。
+     * 这支队的 **③ 泛用性原始量** = 队内成员**各自**的泛用性**组内相对分**按**成本占比**
+     * 加权（用户 2026-10-14 第 1 条后半句原话：「整个队伍的泛用性根据不同角色的成本占
+     * 整个队伍的成本权重而定」+ 2026-10-17 第 1 条「E6 仅与 E6 比、E0/1/2 与 E0/1/2 比」）。
      *
      * 「一支队的成员越百搭，这支队越好抄、越好换人」—— 与榜上那个数同源（同一个
-     * `角色|E档` 取法），差别只在**怎么合成队级的一个数**：
+     * `角色|E档` 取法、同一把组内尺子），差别只在**怎么合成队级的一个数**：
      *   * 改前（v4.6.97）是**简单平均**，四个成员一人四分之一；
      *   * 现在按**各自的金数 ÷ 队伍总金数**加权 —— 一支 11 金的队里，7 金的那个成员
-     *     的话语权就是 0 金的那个的若干倍，符合「整队的泛用性由成本结构决定」。
+     *     的话语权就是 0 金的那个的若干倍，符合「整队的泛用性由成本结构决定」；
+     *   * 2026-10-17 第 1 条起每个成员**先按自己那一组归一**（`memberVersatilityScore`），
+     *     再进这个加权 —— 否则 E6 与低档两个量纲会在一支队里相加（见上面的实测数字）。
      *
      * ⚠️ 权重用**账面金数**（`datasetGoldOf`，与上面那个 `gold` 同源）而不是「你还差几金」：
      *    用户说的是「角色的成本**占整个队伍的成本**」，那是**配装本身**的成本结构，
@@ -2838,7 +2941,7 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
       const weights = memberGoldSum > 0 ? memberGold : team.members.map(() => 1);
       const weightSum = memberGoldSum > 0 ? memberGoldSum : team.members.length;
       const sum = team.members.reduce((n, m, i) => n
-        + (versatilityOfTier.get(versatilityKeyOfMember(m.char, m.eidolon)) || 0) * weights[i], 0);
+        + memberVersatilityScore(m.char, m.eidolon) * weights[i], 0);
       return sum / weightSum;
     })();
     candidates.push({
@@ -2894,11 +2997,15 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   const strengthLo = 0;
   const strengthHi = 100;
   /**
-   * ③ **泛用性得分**的刻度：候选池里**队级泛用性**（各成员按成本占比加权）的最小 ~ 最大值
-   * （用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」+ 2026-10-14 第 1 条的加权口径）。
+   * ③ **泛用性得分**的刻度：候选池里**队级泛用性**（各成员的组内相对分按成本占比加权）的
+   * 最小 ~ 最大值（用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」+
+   * 2026-10-14 第 1 条的加权口径 + 2026-10-17 第 1 条的组内归一）。
    *
-   * 与 ① 完全同一条写法（**池内** min-max，不是角色总榜那把榜内的尺子）：
-   * 卡片上那三个分量因此都是「这支队在候选池里的位置」，可以直接加权相加。
+   * ⚠️ 这里**仍然是池内 min-max**，与 ① 不同（① 自 2026-10-15 起是绝对刻度 0~100）：
+   *    成员那一层已经是绝对的了（= 总榜那把组内尺子），队级再池内归一只是把候选池的
+   *    跨度铺满 0~100，让「泛用性 20%」这个权重在任何池子里都真的使上力。
+   *    （2026-10-15 之前那句「与 ① 完全同一条写法」是说当时 ① 也是池内 min-max，
+   *     ① 换成绝对刻度之后它就没再跟上 —— 别按那句话去改 ①。）
    * 极值退化（池里每支队一样）时 `span` 给 1，对该分项排序无影响 —— 与 ① 同一条约定。
    */
   const versatilityLo = candidates.length
@@ -4417,6 +4524,35 @@ const buildConclusionInner = (envs, options = {}) => {
         const denomCostOf = (season) => minCostBySeasonBest.get(season)
           ?? minCostBySeason.get(season) ?? minCost;
 
+        /**
+         * **逐版本的「0 行动值」金数区间**（用户 2026-10-17 第 2、3 条：强度新口径的基准）。
+         *
+         *   key = 版本；value = `{ min, max }` = 该版本**所有 0 行动值配置**的（隐金前）金数范围。
+         *
+         * 顶格档的分数 = `100 × min ÷ 本队金数`，所以：
+         *   * `min` 是这一期的**满分基准**（最省金打通的那一支）；
+         *   * `max` 用来算第二档的封顶（`100 × min ÷ max` = 这一期 0 行动值档的**最低分**）——
+         *     用户确认「(2) 48 金也达不成 0 行动值」与「(3) 其余按行动值」是**一层**，
+         *     所以非 0 行动值的第二档整体封顶在 0 行动值档最低分之下。
+         *
+         * ⚠️ **单一来源**：这份数是**服务端** `archiveTeams` 按原始 `frontier` 行算好的
+         *    （`archive.js` 的 `zeroAvGoldBySeason`，随 `conclusionEnvs` 下发），
+         *    这里只做 Map 化、**不重算** —— 重算会拿 `packRows`（已按 `storedCost > 0`
+         *    筛过）当取样集合，与 `teamPlan` 用的那份分叉，两个榜的强度口径就不一致了。
+         * ⚠️ **按版本各自取、不跨版本合并**：用户原话「每一期的最省金的得分最高 100 分，
+         *    其余等比降分，**注意不要跨版本对比**，版本权重要按照用户设置的做」。
+         *    绝境实测：4.5 期最省 29 金、4.6 期最省 48 金 —— 两个 100 分不可比，
+         *    跨版本只按 `VERSION_WEIGHTS`（界面上的版本权重槽位）加权。
+         * ⚠️ 该版本一条 0 行动值都没有时（绝境 3.6/3.8/4.1 期实测如此）**这一期没有顶格档**，
+         *    全部走第二档（封顶退回 `strengthSecondBandCap` = 90）。
+         */
+        const zeroAvGoldBySeason = new Map(
+          Object.entries(env.zeroAvGoldBySeason || {})
+            .map(([s, v]) => [s, {
+              min: Number(v?.min) || 0, max: Number(v?.max) || 0,
+            }]),
+        );
+
         // ---- 第一趟：逐条配置算分，按「整包 × 版本」留下该版本最好的一条
         for (const row of packRows) {
           // 表现分：**档位与行动值合并成一条连续曲线**（用户 2026-10-11 缺陷 3 修）。
@@ -4447,6 +4583,16 @@ const buildConclusionInner = (envs, options = {}) => {
           // 是 `frontierZeroGoldBonus`(1.2)、不是 `min(1, ·)`，除回去会得到 > 100 的假强度。
           // 所以这里如实算第二遍 —— 两把尺子同源、同一条证据。
           const strength = SCORING.frontierPackScale * perf;
+          /**
+           * **强度曲线自己的表现分**（用户 2026-10-17 起两把尺子正式分开）。
+           *
+           * `perf` 用的是性价比那条曲线（`perfLineWeightsOf(env)`，绝境满分线以内 1.00），
+           * 强度要的是 `SCORING.strengthLineWeights`（0.80 / 0.45 / 0.20）——
+           * 满分线以内继续按行动值分强弱。两把尺子在**同一条证据**上各算一遍，
+           * 所以 `strength`（= 100 × strengthPerf）与 `score` 不会互相污染。
+           */
+          const strengthPerf = perfFactorOf(row.actionValue, env.tierLines,
+            lowerIsBetter, row.tier, SCORING.strengthLineWeights);
           // 同一条配置里的成员共享这份证据 —— 这是「只看队伍整体强度」的直接推论，
           // 所以同一支队伍的成员必然同分。
           const rosterKey = packRosterKeyOf(row.members);
@@ -4460,7 +4606,13 @@ const buildConclusionInner = (envs, options = {}) => {
             // 兼容旧字段名：界面与浮层拆因子时读它（现在 = 合并后的表现分）。
             avScore: perf,
             perf,
+            // 强度曲线的表现分（`strengthLineWeights` 那把尺子）—— 第二趟的
+            // `pack.bestPerf` 存的是它，不是 `perf`。
+            strengthPerf,
             cost: row.cost,
+            // **隐金前**的原始金数：强度口径（用户 2026-10-17）拿它当「本队金数」，
+            // 与 `zeroAvGoldBySeason` 的基准同一把尺子（都不过隐金）。
+            storedCost: row.storedCost,
             // 这条证据所在版本的「最便宜金数」—— 算分时它就是这个版本的金数项分母，
             // 界面要把贡献拆成「来源」就得拿到同一个数（见 `frontierFactorsOf`）。
             seasonMinCost,
@@ -4492,10 +4644,17 @@ const buildConclusionInner = (envs, options = {}) => {
                 // `gold` 是**原始**整包金数：进榜判据与「隐金后印多少」都由它推出来。
                 gold,
                 bySeason: new Map(),
-                // 「强度」那一档的版本证据：`版本 -> 该版本表现分最高的那条的 perf`。
+                // 「强度」那一档的版本证据：`版本 -> 该版本强度曲线分最高的那条`。
                 // 与 `bySeason`（按含金数项的 `score` 挑）**不是同一行** —— 最便宜的队伍
                 // 未必是表现最高的那支，两个分项要分开量（用户 2026-10-13 第 1、2 条）。
+                // ⚠️ 2026-10-17 起存的是 `hit.strengthPerf`（`strengthLineWeights` 那把
+                //    尺子），**不是** `hit.perf`（性价比那把）—— 两把尺子的锚点不同，
+                //    混用会让强度的第二档按性价比的曲线打分。
                 bestPerf: new Map(),
+                // ⚠️ 2026-10-17 起**不再有**「按行动值挑代表行」的那张表（`avSeason`）：
+                //    强度改用 `bySeason` 那一行（= 卡片上印的最佳证据），理由见第二趟
+                //    `accStrength` 那段 —— 2026-10-16 用户报的「卡片写 457 行动值、
+                //    强度按 0 给满分」正是那张表造出来的，不能回去。
                 // 证据广度只用于展示（「出现在 N 条达标配置」），不参与排序。
                 configs: new Set(),
                 seasons: new Set(),
@@ -4516,8 +4675,8 @@ const buildConclusionInner = (envs, options = {}) => {
             // ⚠️ 第二趟的「已登场 / 早于登场」两态判定必须**共用同一个存在性判据**
             // （`pack.bySeason`），两份 hit map 会让版本覆盖判据分叉。
             const perfCur = pack.bestPerf.get(season);
-            if (perfCur === undefined || hit.perf > perfCur) {
-              pack.bestPerf.set(season, hit.perf);
+            if (perfCur === undefined || hit.strengthPerf > perfCur) {
+              pack.bestPerf.set(season, hit.strengthPerf);
             }
           }
         }
@@ -4607,8 +4766,9 @@ const buildConclusionInner = (envs, options = {}) => {
           const born = firstSeenOf(pack);
           let wSum = 0;
           let acc = 0;
-          // 「强度」分项的**独立累计器**（用户 2026-10-13 第 1、2 条）：分子用
-          // `pack.bestPerf`（该版本表现分最高那条），**不乘金数项**；分母 `wSum` 与
+          // 「强度」分项的**独立累计器**（用户 2026-10-13 第 1、2 条定，
+          // **2026-10-17 第 2、3 条整条重做口径**）：分子 = 该版本按**新两档规则**算出的
+          // 本副本强度（见下面 `envStrength` 那段），**不乘金数项**；分母 `wSum` 与
           // 性价比那条**完全共用**，所以两个分项的版本覆盖口径天然一致。
           let accStrength = 0;
           /**
@@ -4622,7 +4782,7 @@ const buildConclusionInner = (envs, options = {}) => {
            */
           let accVersa = 0;
           /**
-           * 强度分项里**最好的那一版**（与 `accStrength` 同一条 `bestPerf` 尺子取 max）。
+           * 强度分项里**最好的那一版**（与 `accStrength` 同一条尺子取 max）。
            *
            * 用途只有一个：详情窗口那张「强度来源」表要能写出**跨版本发挥**这一列 ——
            * `跨版本发挥 = 版本加权平均 ÷ 最好的那一版`，与性价比表里的同名列同义。
@@ -4632,6 +4792,9 @@ const buildConclusionInner = (envs, options = {}) => {
            * ⚠️ 只累计**参与平均**的版本（就是下面 `observed` 那支分支），与 `accStrength`
            * 走同一批 `continue` —— 否则「早于登场」的版本也会被算成最好的那一版，
            * 算出来的因子会 > 1。
+           * ⚠️ 2026-10-17 起它是**新口径下的该副本强度**（顶格档按「该期最省金 ÷ 本队金数」
+           *    折过），所以「跨版本发挥」也可能 > 1（某一期恰好是那一期的满分基准）。
+           *    界面那一列因此必须能写小数，别拿它当百分比用。
            */
           let accStrengthBest = 0;
           /** 早于登场的版本数（不参与平均，见下）。 */
@@ -4645,11 +4808,67 @@ const buildConclusionInner = (envs, options = {}) => {
             if (observed) {
               wSum += w;
               acc += w * observed.score;
-              // 强度那一档：`bestPerf` = 该版本**表现分最高**那条（不乘金数项）。
-              const strengthPerf = SCORING.frontierPackScale
-                * (pack.bestPerf.get(s) ?? observed.perf);
-              accStrength += w * strengthPerf;
-              accStrengthBest = Math.max(accStrengthBest, strengthPerf);
+              // ---- 强度那一档：**新两档规则**（用户 2026-10-17 第 2、3 条）----------
+              //
+              // ```
+              //   0 行动值 → 100 × (该版本 0 行动值配置的最省金 ÷ 本队金数)   顶格档
+              //   否则     → min(90, 该版本 0 行动值档的最低分) × 强度曲线(行动值)
+              // ```
+              //
+              // 用户原话三句：①「强度与成本改为无相关性，不需要遵守高造价必然等于高强度」
+              // （所以投入项整条删除，见 `SCORING.investWeight`）；②「若某个队伍达成
+              // **最低金 0 行动值绝境**，则此配队视为 **100 强度分（最高值）**」；
+              // ③「其余必须低于 100 分：(1) 需要更多金达成 0 行动值的投稿降低强度分；
+              // (2) 48 金也达不成的低于 (1)；(3) 其余仅按照行动值提供」。
+              //
+              // ⚠️ **逐版本各自算、再按版本权重加权**（用户：「每一期的最省金的得分最高
+              //    100 分，其余等比降分，注意不要跨版本对比，版本权重要按照用户设置的做」）：
+              //    基准 `zeroAvGoldBySeason` 按版本各取一份，所以 4.5 期的 29 金与 4.6 期的
+              //    48 金**不可比**；跨版本只按 `VERSION_WEIGHTS`（界面上的版本权重槽位）加权。
+              // ⚠️ **金数用 `storedCost`（隐金前）**：强度与「我手上有没有」无关，
+              //    否则同一个整包换个账号就算出另一个强度分。
+              // ⚠️ **`actionValue === 0` 是有效成绩**（绝境用它表示 0 行动值通关），
+              //    `null` 才是缺失 —— 两者不能混（`Number(null) === 0` 是本仓库的老坑）。
+              // ⚠️ 实测基准（绝境王棋关）：4.5 期最省 **29 金**（20 条 0 行动值）、
+              //    4.6 期最省 **48 金**（2 条）、3.6/3.8/4.1 期**一条都没有**。
+              // ⚠️ **三个输入全部来自 `observed`** —— 就是 `bySeason` 那一行，也就是
+              //    卡片上「最佳证据」印出来的那一队。**不许**改成「该版本行动值最小的
+              //    那条」（曾经这么做过，2026-10-17 上午）：那正是用户 2026-10-16 报的
+              //    「缇宝 E6S5 卡片写着绝境 26 金 · 457 行动值、强度却是 100」——
+              //    「仅仅只是存在一个 6+5 的角色而已」。用户的判据是
+              //    「**一个队伍的强度得分和此队伍的实际行动值有关**」，所以强度必须与
+              //    卡片上那个行动值同源。两种取法在实测数据上只差 1 个整包
+              //    （绝境单关 =100 的从 1 个变 0 个、整包强度上限 73.3 → 70.2），
+              //    不值得为它换回一个已经修掉的 bug。
+              // ⚠️ `finiteOrNull`：`actionValue` 可能是 `null`（缺失），而
+              //    `Number(null) === 0` 会把「没测到」当成「0 行动值满分」（老坑）。
+              const avHere = finiteOrNull(observed.actionValue);
+              const goldHere = Math.max(1, Number(observed.storedCost) || 0);
+              const zeroHere = zeroAvGoldBySeason.get(s);
+              // 强度曲线的表现分（`strengthLineWeights` 那把尺子，0~1）——
+              // 与 `observed` 同一条证据，不用 `pack.bestPerf`（那把是按全版本挑的）。
+              const perfHere = Math.max(0, Math.min(1,
+                Number(observed.strengthPerf) || 0));
+              let envStrength;
+              if (avHere === 0) {
+                // ---- 顶格档：0 行动值 ----
+                // 100 × 该期最省金 ÷ 本队金数。该期没有 0 行动值基准时（理论上不可能：
+                // 这一行自己就是 0 行动值 ⇒ 基准里必然含它）退回 100，不猜。
+                envStrength = zeroHere ? (100 * zeroHere.min) / goldHere : 100;
+              } else {
+                // ---- 第二档：判据线曲线 ----
+                // 封顶 = min(90, 该期 0 行动值档的最低分)。用户确认 (2)(3) 是**一层**：
+                // 「48 金也达不成」只是强调**必须低于 (1)**，所以所有非 0 行动值的队
+                // 整体压在 0 行动值档最低分之下；该期没有 0 行动值时封顶就是 90。
+                const zeroFloor = zeroHere
+                  ? (100 * zeroHere.min) / Math.max(1, zeroHere.max) : 0;
+                const cap = zeroFloor > 0
+                  ? Math.min(SCORING.strengthSecondBandCap, zeroFloor)
+                  : SCORING.strengthSecondBandCap;
+                envStrength = cap * perfHere;
+              }
+              accStrength += w * envStrength;
+              accStrengthBest = Math.max(accStrengthBest, envStrength);
               // 泛用性那一档（用户 2026-10-15）：该版本**本副本**的队友集合大小。
               // `observed` 成立 ⇒ 这条整包在该版本有达标行 ⇒ 它的成员出现在那些
               // 队伍里 ⇒ 分桶里一定有这份集合（两趟遍历的是同一批 `packRows`）。
@@ -4778,6 +4997,15 @@ const buildConclusionInner = (envs, options = {}) => {
             // 而这三条线只存在数据里，编不出来 —— 必须随副本元数据一起发给界面。
             // 见 `tierTextOf()` 与 `frontierEnvs` 的下发处。
             tierLines: env.tierLines || null,
+            /**
+             * 逐版本的「0 行动值」金数区间（用户 2026-10-17 第 2、3 条：强度新口径的基准）。
+             *
+             * `{ [版本]: { min, max } }`，服务端 `archive.js` 按原始 `frontier` 行算好、
+             * 由 `conclusionEnvs` 透传到这里。**必须随 `frontierEnvs` 下发**：
+             * `teamPlan`（抽卡方案的队伍强度）只读 `conclusion.frontierEnvs`，
+             * 漏了它那一侧就全会退回「没有顶格档」。
+             */
+            zeroAvGoldBySeason: env.zeroAvGoldBySeason || null,
             // ⚠️ 口径必须显式写 `'frontier'`：总榜只吃界面上「关卡权重」那一行，
             // 抽卡方案那边调权重不该动它（用户 2026-10 要求两套权重相互独立）。
             // 服务端已经按请求的 frontierWeights 计算了环境权重；没有服务端前沿表
@@ -5784,62 +6012,39 @@ const buildConclusionInner = (envs, options = {}) => {
         const lowerIsBetter = meta.lowerIsBetter !== false;
         const perfectAv = tierLines ? avLinesOf(tierLines, lowerIsBetter).perfect : undefined;
         /**
-         * 强度口径的输入 = **这一关自己的最佳证据行**（`evidence`）的行动值。
+         * **本副本的强度**（用户 2026-10-17 第 2、3 条新口径）。
          *
-         * 用户 2026-10-16 原话：「**一个队伍的强度得分和此队伍的实际行动值有关**」。
+         * ⚠️ 它**不再是**这里按「最佳证据那一行」单算的那个数，而是第二趟已经按
+         *    **逐版本新两档规则 + 版本权重**算好的 `pack.strength`：
          *
-         * ⚠️ 改前用的是 `pack.strengthAvHit` —— 该整包在这个副本里**任意一支队伍**的
-         *    最少行动值（跨队伍取 min）。那会让「行动值越低越强」被**别的队伍**代言：
-         *    实测全服 2301 条绝境投稿里只有 **32 条**是 0 行动值，且**全部来自 32~48 金的
-         *    「四 6+5」满配队** —— 于是任何只要在那种满配队里出现过的整包，都会拿到
-         *    「整包自己在绝境打出 0 行动值」的满分。用户报的原话：缇宝 E6S5 的卡片写着
-         *    「最佳证据：绝境 26 金 · 457 行动值」，强度却是 100 ——「仅仅只是存在一个 6+5
-         *    的角色而已，这不足以支撑如此高的强度」。
-         * ⚠️ 现在这一行与**下面推给界面的 `actionValue` / 版本 / 金数同源**（都来自
-         *    `evidence`）：卡片上写多少行动值，这一关就按那个数算分，界面上再也看不到
-         *    「显示 457、按 0 给满分」这种对不上的两套数。
+         *    ```
+         *    0 行动值 → 100 × (该版本 0 行动值配置的最省金 ÷ 本队金数)    顶格档
+         *    否则     → min(90, 该版本 0 行动值档的最低分) × 强度曲线(行动值)
+         *    ```
+         *
+         *    改前这里另写一遍两档规则（`isTopBand ? 100 : 90 × 曲线`），用的是
+         *    `evidence.actionValue` —— 即「按含金数项的 score 挑出来的那一版」。于是
+         *    「版本加权」与「单版判据」两套数在同一条链上并存，详情表与整包强度会互相矛盾。
+         *    用户本轮明确「每一期的最省金的得分最高 100 分…**版本权重要按照用户设置的做**」，
+         *    所以唯一正确的写法就是**只算一次**（第二趟），这里原样取用。
+         *
+         * ⚠️ `pack.strength` 缺失时（老载荷 / 合成夹具没有该字段）退回 `pack.score`，
+         *    不出现 NaN；那种情况下口径退化为「含金数项的性价比分」，只在测试夹具里出现。
          */
+        const envStrengthNew = Number(pack.strength) || Number(pack.score) || 0;
+        // 顶格标记仍然下发：界面要靠它写「这一档自己在每个有数据的关卡都打出 0 行动值」。
+        // ⚠️ 它现在只回答「这一关的最佳证据是不是 0 行动值」，**不**再是强度分的判据
+        //    （判据在第二趟，见 `zeroAvGoldBySeason` 那段）。
         const avBest = Number(evidence.actionValue);
-        const bestPerf = Number(pack.strengthBest ?? pack.strength ?? pack.score) || 0;
+        const isTopBand = Number.isFinite(avBest) && avBest === 0;
+        // 「满分档」标记（= 行动值达到该副本的满分线，`perfect` 那条判据线）：
+        // 与强度分的顶格档**不是同一个判据**（满分线是 av ≤ perfectLine，顶格档是 av === 0），
+        // 界面两处都要用，所以各自算各自的那一个。
+        // ⚠️ 判据线取不到（老数据集 / 合成夹具没给 `tierLines`）时只能是 `false`。
         const perfectLine = Number(perfectAv);
-        // ⚠️ 判据取不到（老数据集 / 合成夹具没给 `tierLines`）时退回旧口径：
-        //    直接用「最好的那一版表现分」，不猜满分线、也不扣成本。
         const isPerfect = tierLines
           && Number.isFinite(perfectAv) && Number.isFinite(avBest)
           && avBest <= perfectLine + 1e-9;
-        /**
-         * **顶格**：这一关的行动值 = 0（且这一关是「越小越好」）。
-         *
-         * 用户 2026-10-16 第 1 条：「应该是 29 金 0 行动值 > 48 金 0 行动值 > **其他不足
-         * 0 行动值**的队伍，也就是**先看行动值**，再看是否压金」。所以 0 行动值必须是
-         * 一个**独立的最高档**，不是曲线上的一个点 —— 曲线在 0 附近太平（0 与 1 行动值
-         * 只差 0.3 分），顶格与否会被噪声盖过去。
-         *
-         * ⚠️ **不要拿 `lowerIsBetter` 当额外的门槛**：数据里的 `actionValue` **一律是
-         *    「越小越好」的那个数**（末日幻影的积分也已经在建库侧换算过，实测该副本
-         *    窗口内 av ∈ [0, 300] 而判据线 {4000, 3700, 3400} 由 `avLinesOf` 同样换算），
-         *    所以 `av == 0` 在**每个副本**里都是理论最好成绩。
-         *    （`lowerIsBetter` 只用于把判据线换到同一个方向，见 `avLinesOf`。）
-         */
-        const isTopBand = Number.isFinite(avBest) && avBest === 0;
-        let envStrengthNew;
-        if (!tierLines) {
-          // 判据取不到（老数据集 / 合成夹具）：退回「该副本最好的那一版表现分」，
-          // 不猜判据线 —— 与改前的数值一致，避免老载荷算出 NaN。
-          envStrengthNew = bestPerf;
-        } else {
-          // ---- 某副本的强度 = **纯按行动值**：0 行动值 = 100（顶点），满分线 80、
-          //      达标线 45、及格线 20，越差越低（`strengthLineWeights` 那三个锚点）。
-          // ⚠️ **投入不在这里**：这一层只回答「打得多快」。投入那 5 分在整包层面加
-          //（见 `frontierBoard` 的计分段）—— 理由是**同一份副本成绩必须可加可比**：
-          // 塞进这里会让「同一个 0 行动值成绩」因为整包不同而给出不同的副本分，
-          // 逐副本的强度来源表当场自相矛盾。
-          const perf = perfFactorOf(avBest, tierLines, lowerIsBetter,
-            evidence.tier, SCORING.strengthLineWeights);
-          envStrengthNew = isTopBand
-            ? 100
-            : 90 * Math.max(0, Math.min(1, perf));
-        }
         unit.envs.push({
           id: envId,
           envLabel: meta.envLabel || envId,
@@ -6012,56 +6217,81 @@ const buildConclusionInner = (envs, options = {}) => {
       });
     }
     /**
-     * 泛用性的**全局化**：只看 E0/E1/E2，三档取平均，再把平均值固定给这个角色的**所有**档位
-     * （含 E6）—— 用户 2026-10-16 第 3 条。
+     * 泛用性的**分组归一**（用户 2026-10-17 第 1 条）。
      *
-     * 用户原话：「目前的泛用性得分偏向高星魂角色（因为其更有可能与任意角色搭配通关），
-     * 因此要改为仅参考该角色 E0/1/2 的泛用性的平均值，**完全不考虑 E6 的泛用性**，
-     * 将这一结果固定为该角色的**全局泛用性**」。
+     * 用户原话：「角色/队伍泛用性，**E6 角色应当仅与 E6 做比较**，E0/1/2 与 E0/1/2 之间
+     * 做比较（**避免不同量级之间的比较**）」。
      *
-     * 为什么：高星魂能配更多队是**强度**的功劳（E6 当然比 E0 更能带飞），在泛用性上再给一次
-     * 加成就是**同一个事实算两遍**。所以这一项现在回答的是「**这个角色有多百搭**」，
-     * 而不是「这个角色的这一档有多百搭」。
+     * 为什么必须分两组：E6 能配的队天然比 E0 多（那是**强度**的功劳），两组原始量不在
+     * 同一个量纲上。放进同一把尺子里归一，等于让 E6 靠「多抽了几命」在泛用性上再赢一次
+     * —— 正是用户 2026-10-16 报的那个观感（「泛用性得分偏向高星魂角色」）。
      *
-     * 口径细节（都别改回去）：
-     *   * **先按档取平均、再对三档取平均**：同一档可能有多种配装（同星魂不同光锥），
-     *     它们的原始量可能略有不同（版本覆盖不同），先在各档内部平均，避免「配装多的档」
-     *     因为条数多而在最终平均值里占更大权重。
-     *   * **E6 完全不参与**：既不进平均，也不单独保留。E6 整包的泛用性 = 该角色的平均值。
-     *   * **只有 E6 数据的角色**（没有 E0/E1/E2 任何一档）→ 泛用性原始量记为 **0**：
-     *     用户要的是「不考虑 E6」，那就没有可用的证据，而不是拿 E6 顶上。
-     *   * 第 5 条（常驻/大隐金不参与）已经在收集阶段剔除：那些角色的集合是空的 →
-     *     这里算出来就是 0，不需要在这里再判一次。
+     * 两组各自的原始量（都别改回去）：
+     *   * **低档组（E0/E1/E2）** = 该角色三档**先按档平均、再对档取平均**。先按档平均是
+     *     为了避免「配装多的档」因为条数多而在最终平均值里占更大权重（同一档可能有
+     *     多种光锥配装，版本覆盖不同、值略有差异）。
+     *   * **E6 组** = 这一档**自己**的平均值。2026-10-16 第 3 条说的「完全不考虑 E6」
+     *     在本轮改成「E6 只与 E6 比」—— 不是把它算低，而是**换一把尺子**。
      *
-     * ⚠️ 它必须在 `extentOf(...versatilityRaw)` **之前**跑完：榜内刻度（分母）与逐条得分
-     *    都必须建立在最终值上。早于它就等于拿旧口径取极值，界面上的验算会当场对不上。
+     * ⚠️ **E6 也必须先按档平均**（`versatilityPerTier` 是**逐配装**的：同一个角色同一档
+     *    的不同光锥，证据落在不同版本 → 加权值不同）。第一版图省事直接写了
+     *    `unit.versatilityPerTier`，实测同一角色 E6 的 9 条整包拿到 **9 个不同的 raw**
+     *    （知更鸟 18.85 / 18.70 / 15.35 / … / 0.15）—— 于是 ① `versatilityByTier['6'].raw`
+     *    只能靠 `find` 抓到**任意一条**（排序漂移）；② 同一支 E6 队伍在总榜与面板上会印出
+     *    两个「泛用性」；③ E6 组的尺子实际上混进了「哪条配装的证据版本新」这个噪声。
+     *    改成与低档组完全对称的「该档全部配装的平均」之后，三条一起消失。
+     *
+     * 只有一组有数据的角色：另一组没有整包，自然不进那一组的刻度，也不需要兜底值
+     * （2026-10-16 曾把「只有 E6」的角色记 0 分，那是当时「E6 不参与」的产物，现在不适用）。
+     *
+     * ⚠️ 第 5 条（常驻 / 大隐金不参与）在收集阶段就已经剔除（`isVersatilityIgnored`）：
+     *    那些角色的集合是空的 → 原始量 0；而**刻度取样**也另有跳过（见下面两把尺子）。
+     *
+     * ⚠️ 它必须在两把尺子取极值**之前**跑完：榜内刻度（分母）与逐条得分都必须建立在
+     *    最终值上。早于它就等于拿旧口径取极值，界面上的验算会当场对不上。
      */
-    const versatilityTiers = new Map();
+    const perTierValues = new Map();   // 角色 → Map(星魂档 → [该档各配装的值])
     for (const unit of all) {
       const tier = eidolonTierOf(unit.eidolon);
-      if (tier !== 0 && tier !== 1 && tier !== 2) continue;
-      let byTier = versatilityTiers.get(unit.name);
-      if (!byTier) { byTier = new Map(); versatilityTiers.set(unit.name, byTier); }
+      let byTier = perTierValues.get(unit.name);
+      if (!byTier) { byTier = new Map(); perTierValues.set(unit.name, byTier); }
       const list = byTier.get(tier) || [];
       list.push(Number(unit.versatilityPerTier) || 0);
       byTier.set(tier, list);
     }
-    const versatilityGlobal = new Map();
-    for (const [name, byTier] of versatilityTiers) {
-      const means = [...byTier.values()].map((list) => list.reduce((n, v) => n + v, 0) / list.length);
-      versatilityGlobal.set(name,
-        means.reduce((n, v) => n + v, 0) / Math.max(1, means.length));
+    /** 某一组里「先按档平均、再对档取平均」的那一步（低档组跨三档、E6 组只有一档）。 */
+    const groupMeanOf = (name, tiers) => {
+      const byTier = perTierValues.get(name);
+      if (!byTier) return null;
+      const means = tiers.filter((t) => byTier.has(t))
+        .map((t) => {
+          const list = byTier.get(t);
+          return list.reduce((n, v) => n + v, 0) / list.length;
+        });
+      return means.length ? means.reduce((n, v) => n + v, 0) / means.length : null;
+    };
+    const lowGroupRaw = new Map();     // 角色 → 低档组原始量（E0/E1/E2 的平均）
+    const e6GroupRaw = new Map();      // 角色 → E6 组原始量（E6 这一档配装的平均）
+    for (const name of perTierValues.keys()) {
+      const low = groupMeanOf(name, [0, 1, 2]);
+      if (low !== null) lowGroupRaw.set(name, low);
+      const e6 = groupMeanOf(name, [6]);
+      if (e6 !== null) e6GroupRaw.set(name, e6);
     }
     for (const unit of all) {
-      unit.versatilityRaw = Number((versatilityGlobal.get(unit.name) ?? 0).toFixed(4));
-      // 来源名单 = 该角色 E0/E1/E2 三档队友的**并集**（与上面那个平均值同一批数据，
-      // 不再按星魂档各给一份 —— 分档的名单与「全局泛用性」对不上，只会误导读者）。
+      const tier = eidolonTierOf(unit.eidolon);
+      const isE6 = tier === 6;
+      unit.versatilityRaw = Number((isE6
+        ? e6GroupRaw.get(unit.name) ?? 0
+        : lowGroupRaw.get(unit.name) ?? 0).toFixed(4));
+      // 来源名单与原始量同源：低档组取 E0/E1/E2 三档队友的**并集**；E6 组取 E6 自己那一份
+      //（分档的名单与分档的原始量必须对上，否则读者拿名单验算时会对不上账）。
       // ⚠️ 这里的键必须用 `unit.name`（`all` 的元素把角色键放在 `name` 上，`char` 是
       //    收敛前那个对象的字段）—— 写 `unit.char` 会静默取到 `undefined`，
       //    于是每一条的名单都是空数组（实测踩过：e2e 那条「名单非空」当场判红）。
       const union = new Set();
-      for (const tier of [0, 1, 2]) {
-        for (const m of teammateVariety.get(versatilityKeyOf(unit.name, tier)) || []) union.add(m);
+      for (const t of (isE6 ? [6] : [0, 1, 2])) {
+        for (const m of teammateVariety.get(versatilityKeyOf(unit.name, t)) || []) union.add(m);
       }
       unit.versatilityMembers = [...union].sort();
     }
@@ -6104,40 +6334,49 @@ const buildConclusionInner = (envs, options = {}) => {
     };
     const costExtent = extentOf((u) => u.total);
     /**
-     * 泛用性的**榜内刻度**（分母）。
+     * 泛用性的**两把尺子**（用户 2026-10-17 第 1 条：E6 只与 E6 比，E0/1/2 与 E0/1/2 比）。
      *
-     * ⚠️ **2026-10-16 起是整榜一把尺子**（用户第 3 条把「不同星魂各自比较」整条推翻了）：
-     *    所有档位共用同一个 `versatilityRaw`（= 该角色 E0/E1/E2 的平均值），所以「按档
-     *    分组取极值」已经没有意义 —— 同一角色的四条整包拿到的原始量完全相同。
+     * 分组判据就是**整包自己的星魂档**：`eidolonTierOf(E) === 6` → E6 组，其余 → 低档组。
+     * 两把尺子各自在自己的组里取极值，互不参与 —— 这正是「避免不同量级之间的比较」。
      *
      * ⚠️ **取样时跳过「不用抽就有」的角色**（用户第 5 条：「分子分母都不应当考虑常驻角色」）：
      *    它们的原始量恒为 0（收集阶段就没攒），留在样本里只会把尺子往 0 那端拉长，
-     *    连带把真正要比较的限定角色全部挤到高分那一头。
+     *    连带把真正要比较的限定角色全部挤到高分那一头。**两组都要跳**。
+     * ⚠️ 某一组**一个样本都没有**时给 `{lo: 0, hi: 0}`：`spanOf` 对退化区间返回 1，
+     *    该组全体同分（排序不受影响，只影响绝对值）—— 与另两个分项同一条约定。
      */
-    const versatilityExtent = (() => {
+    const versatilityGroupOf = (unit) => (eidolonTierOf(unit.eidolon) === 6 ? 'e6' : 'low');
+    const versatilityExtentOfGroup = (group) => {
       let lo = Number.POSITIVE_INFINITY;
       let hi = Number.NEGATIVE_INFINITY;
       for (const unit of all) {
+        if (versatilityGroupOf(unit) !== group) continue;
         if (isVersatilityIgnored(unit.name, availability)) continue;
         const v = Number(unit.versatilityRaw) || 0;
         if (v < lo) lo = v;
         if (v > hi) hi = v;
       }
       return Number.isFinite(lo) ? { lo, hi } : { lo: 0, hi: 0 };
-    })();
+    };
+    /** 低档组（E0/E1/E2）的尺子 —— 同时是载荷 `versatility.lo/hi` 的默认值（低档组条数最多）。 */
+    const versatilityExtent = versatilityExtentOfGroup('low');
+    /** E6 组的尺子。 */
+    const versatilityExtentE6 = versatilityExtentOfGroup('e6');
     /**
-     * `byTier` —— **保留这个形状只为载荷兼容**（`/conclusion` 的 `frontierExtents.versatility`
-     * 与详情窗口的验算公式都在读 `byTier[档]`），每个档位都指向**同一个**整榜区间。
+     * `byTier` —— 详情窗口的验算公式按**整包自己的档**取尺子（`advice-view.js` 的
+     * `versatilitySourceBlock`），所以这里必须给**真对象**的四个键，且 6 与 0/1/2 **不同值**。
      *
-     * ⚠️ 2026-10-14 它曾经是「按档各取极值」（用户当时说「不同星魂需要各自比较泛用性」）；
-     *    2026-10-16 用户第 3 条把那一套推翻了（E6 完全不参与、全局一个值），所以这里
-     *    退化成一个**真对象**的四个键 —— 不要再改成 Proxy 之类的假对象：这个对象会被
-     *    `JSON.stringify` 下发给浏览器（Proxy 没有 own keys，序列化出来是 `{}`，
-     *    界面就只能退回整榜那一把，等于悄悄换了刻度）。
+     * ⚠️ 不要改成 Proxy 之类的假对象：这个对象会被 `JSON.stringify` 下发给浏览器
+     *    （Proxy 没有 own keys，序列化出来是 `{}`，界面就只能退回 `lo/hi` 那一把，
+     *    等于悄悄换了刻度）。
+     * ⚠️ 历史：2026-10-14 是「按档各取极值」→ 2026-10-16 第 3 条改成「四档同一把」
+     *    → 2026-10-17 第 1 条改成「两把：低档组一把、E6 组一把」。E3~E5 在
+     *    `eidolonTierOf` 里折进 E2，所以它们走低档组那把（与强度那一侧同一个折法）。
      */
     const versatilityExtentsByTier = {};
     for (const tier of EIDOLON_TIERS) {
-      versatilityExtentsByTier[String(tier)] = { lo: versatilityExtent.lo, hi: versatilityExtent.hi };
+      const e = tier === 6 ? versatilityExtentE6 : versatilityExtent;
+      versatilityExtentsByTier[String(tier)] = { lo: e.lo, hi: e.hi };
     }
     /**
      * 三个分项的**归一上下限**（用户 2026-10-13：「需要给出强度、性价比、泛用性的
@@ -6155,7 +6394,8 @@ const buildConclusionInner = (envs, options = {}) => {
      * 界面从 `state.conclusion.frontierExtents` 读它（那边的 `drawWeights` 也是同一读法）。
      *
      * ⚠️ 同一份 `all` 算出来的，所以四个星魂档视图与「全部」共用同一份**取样集合**
-     * （泛用性的区间 2026-10-16 起也是整榜一把，见 `versatilityExtentsByTier`）。
+     * （泛用性的区间 2026-10-17 第 1 条起分成两把：低档组一把、E6 组一把，
+     * 见 `versatilityExtentsByTier`）。
      */
     const extents = {
       // ⚠️ 强度是**绝对刻度**（用户 2026-10-14 新口径），不再榜内归一：
@@ -6165,9 +6405,11 @@ const buildConclusionInner = (envs, options = {}) => {
       //    整包顶满，于是「普遍偏高、还一堆并列 100」——正是用户报的那个观感。
       strength: { lo: 0, hi: 100 },
       cost: { lo: costExtent.lo, hi: costExtent.hi },
-      // ⚠️ 泛用性的区间 2026-10-16 起**只有一把**（用户第 3 条：E6 完全不参与、全局一个值）：
-      //    `lo` / `hi` 与 `byTier` 的四个键**指向同一对数**。保留 `byTier` 这个形状只为
-      //    载荷兼容（详情窗口的验算公式仍按 `byTier[档] ?? 整榜` 取）。
+      // ⚠️ 泛用性的区间 2026-10-17 第 1 条起**两把**（用户原话：「E6 角色应当仅与 E6 做
+      //    比较，E0/1/2 与 E0/1/2 之间做比较」—— 避免不同量级之间的比较）：
+      //    `lo` / `hi` 取**低档组**那把（E0/E1/E2 一起归一）；`byTier[6]` 取 **E6 组**那把，
+      //    `byTier[0..2]` 仍指回低档组那把。`byTier` 这个形状保留只为载荷兼容
+      //    （详情窗口的验算公式按 `byTier[档] ?? 整榜` 取，天然就分对了组）。
       // ⚠️ `byTier` **嵌在 `versatility` 里**而不是与它平级：`herta-test.mjs` 有一条通用
       //    断言遍历 `frontierExtents` 的每个值检查 `{lo, hi}` 合法 —— 平级会多出一个
       //    「不是 {lo,hi}」的键，把那条与本改动无关的判据判红。
@@ -6179,122 +6421,69 @@ const buildConclusionInner = (envs, options = {}) => {
     };
     const drawWeights = normalizeDrawWeights(options.drawWeights);
     /**
-     * **「投入越高，强度不可能更低」的单调包络**（用户 2026-10-14 的不变式）。
+     * **强度分的唯一一步：把本档自己的逐关卡加权分夹到第二档天花板之下**
+     * （用户 2026-10-17 第 2 条）。
      *
-     * 用户原话：「任何角色的只考虑强度权重都必须是 **E6S5 > E6S1 > E2S1 > E0S0**，
-     * 也就是说哪怕 E6S1 就能达到 0 行动值（从而压金），E6S5 的此角色的强度仍然必须在
-     * E6S1 之上」。
+     * ```
+     *   顶格档（本档自己在每个有数据的关卡都打出 0 行动值、且都取到该期最省金）
+     *     → `strengthTotal` 本身（= 100）
+     *   其余 → min(`strengthTotal`, 90)
+     * ```
      *
-     * 为什么需要它：强度是「取该整包**最少行动值**那一次成绩」，而**投稿是稀疏的** ——
-     * 实测同一角色 E0S1 能拿到 88.6 而 E0S2 只有 10.6（S2 那一档几乎没人投稿，最好成绩
-     * 自然差）。可 gaming 上「多一叠影只会更强、不会更弱」，所以 E6S5 这一档**至少**
-     * 和它下面任何一档一样强 —— 这是**定义上成立**的，不该被数据缺失推翻。
-     *
-     * 做法：对每个整包，取**同角色、星魂 ≤、叠影 ≤** 的所有整包里最强的那个值兜底
-     * （二维偏序上的前缀最大）。它只向上兜底、绝不下压，所以「行动值越低越强」这条
-     * 主序在同一投入内部完全不变 —— 变的只是「更高投入的档位不会再被稀疏数据冤枉」。
-     *
-     * ⚠️ `undefined` 的叠影按 1 算；**没装光锥**的整包叠影记 0（它是这条偏序的最小元，
-     * 不参与给别档兜底）。
+     * ⚠️ **「投入越高，强度不可能更低」的单调包络在 2026-10-17 第 2 条整条删除**。
+     *    它是 2026-10-14 为治「投稿稀疏冤枉高档位」立的（用户当时的不变式原话：
+     *    「任何角色…必须是 E6S5 > E6S1 > E2S1 > E0S0」），而本轮用户自己推翻了这个方向：
+     *    「角色/队伍强度与成本**改为无相关性**，不需要遵守高造价必然等于高强度」。
+     *    星魂档与叠影档**就是成本**，所以「低档位救高档位」正是被否掉的那条成本单调性。
+     *    留着它的实测后果：真珠 E0/E1/E2/E6 四档强度分**全部等于 73.33**（= E0 自己的分），
+     *    E6 在绝境单关 87.6 反而被 E0 的 77.8 代表 —— 强度列读不出任何档位差异。
+     *    删掉之后每一档的强度分就是它**自己**的成绩，E6 与 E0 各自独立（与用户同轮第 1 条
+     *    「E6 仅与 E6 比、E0/1/2 与 E0/1/2 比」是同一个方向：不同量级不要互相代表）。
+     * ⚠️ **90 分天花板保留**（用户 2026-10-16 第 1 条：「没打出 0 行动值的队伍，再好也
+     *    够不到顶格那一档」）。`strengthTotal` 是**逐关卡**两档的加权平均：某一关打出
+     *    0 行动值（那关 100）、其余关不是，平均下来就可以落在 (90, 100)（实测缇宝 E6
+     *    91.61 / 爻光 E6 90.48 / 黄泉 E2 90.27）。这一刀对**整维统一生效**（含整包自己
+     *    的加权分），不是只压「借来的那部分」—— v4.6.113 查清「包络把 3 条整包压到低于
+     *    自身成绩」时确认过：那是两档天花板本身，不是包络在下压。
      */
-    /**
-     * 光锥那一维的**投入档位**：**只有要金的光锥**（限定 / 活动跃迁 5★）的叠影才算。
-     *
-     * ⚠️ 2026-10-14 用户报的第 4 个漏洞（原话「从纯粹强度考虑，1+1 爻光为什么不如 1+0 爻光」）：
-     * 改前这里只看 `superimp`，于是**免费 / 4★ 光锥的 S5 也被算成 5 档投入** ——
-     * 实测爻光 E1 档：`菇菇嘎嘎历险记 S5`（免费锥，整包 2 金）**95.0** 反而高于
-     * `当她决定看见 S1`（专武，整包 3 金）**93.2** —— 前者一分钱没多花却拿走了 5/11 的投入分。
-     * 用户给的成本口径是「E6S5 的**限定**角色 + **限定**光锥不算隐金应当是 12」，所以
-     * 「投入」必须按**金**算、不能按叠影次数算。4★ 锥叠影多少次都是 0 金 `coneCostOf()`。
-     */
-    const coneRankOf = (u) => (u.lc && coneCostOf(u.lc, availability) > 0
-      ? Math.max(1, Math.round(Number(u.superimp) || 1)) : 0);
-    /**
-     * 「投入档位」= 星魂档 + **要金光锥的**叠影档（0~11）。它是强度分里那 5 分的分子，
-     * 与 `coneRankOf` / `eidolonTierOf` **同一个偏序** —— 这是单调性成立的关键：
-     * 包络与投入项必须用同一把尺子，否则同一 (E,S) 档位会因为光锥不同而互相打架
-     * （实测抓到过两回：`E2S1 > E2S5`（4★ 锥不计金）、以及上面爻光那条）。
-     */
-    const investRankOf = (u) => eidolonTierOf(u.eidolon) + coneRankOf(u);
     for (const unit of all) {
-      // 包络在**0~1 的行动值表现**上取前缀最大（`strengthTotal` 是 0~100，先除回去）。
-      const eUnit = eidolonTierOf(unit.eidolon);
-      const cUnit = coneRankOf(unit);
-      let floor = (Number(unit.strengthTotal) || 0) / 100;
-      for (const other of all) {
-        if (other === unit || other.name !== unit.name) continue;
-        const eOther = eidolonTierOf(other.eidolon);
-        const cOther = coneRankOf(other);
-        if (eOther > eUnit || cOther > cUnit) continue;
-        // ⚠️ 必须**至少一维严格更低**：档位完全相同（同星魂、同「要金光锥」的叠影）时互相
-        //    兜底会把「不装光锥」抬到「装了免费锥」的水平 —— 而免费锥是实打实的提升，
-        //    只是不花钱（用户 2026-10-14 报的那条要的正是「花钱的那个不该更低」）。
-        if (eOther === eUnit && cOther === cUnit) continue;
-        const v = (Number(other.strengthTotal) || 0) / 100;
-        if (v > floor) floor = v;
-      }
+      const own = (Number(unit.strengthTotal) || 0) / 100;
+      const ownTopBand = own >= 0.9999;
+      const floor = ownTopBand ? own
+        : Math.min(own, SCORING.strengthSecondBandCap / 100);
       /**
-       * ⚠️ **兜底不许把「自己没打出 0 行动值」的整包抬进顶格档**（用户 2026-10-16 第 1 条）。
-       *
-       * 顶格档（100 分）是「这一档自己在**每个有数据的关卡**都打出了 0 行动值」——
-       * 那是**打出来的**成绩，不是从别人身上推出来的。不夹这一刀的话，包络会让
-       * 「同角色一个低投入档位打出过 0 行动值」把高投入档位整档抬到 100，
-       * 于是「0 行动值队伍」与「没打出 0 行动值的贵队」又搅在一起 ——
-       * 用户 2026-10-16 上午报的那条（「仅仅只是存在一个 6+5 的角色而已」）正是这个病。
-       * 夹到 90 = 非顶格档的天花板（见上面 `envStrengthNew` 的两档）：**这条天花板对
-       * 整维统一生效**（含整包自己的加权分），不是只压「借来的那部分」。
-       *
-       * ⚠️ **这一刀砍的是「整个行动值那一维」，不只是借来的那部分**（v4.6.113 查清的）：
-       * 用户 2026-10-16 晚让查「包络把 3 条整包压到低于自身成绩」——查下来**那不是包络的
-       * 越权，而是两档天花板本身**。`strengthTotal` 是**逐关卡**两档的加权平均：某一关
-       * 打出 0 行动值（那关 100）、其余关不是，平均下来就可以落在 (90, 100)（实测缇宝 E6
-       * 91.61 / 爻光 E6 90.48 / 黄泉 E2 90.27）。而用户第 1 条要的是「**没打出 0 行动值的
-       * 队伍，再好也够不到顶格那一档**」—— 第二档的上限就是 90，所以这 10 分空档必须
-       * **在整包层也对自身生效**，否则「一关 0 行动值 + 其余很差」的队会顶到 90 以上。
-       * 试过改成「先跟自己取 max」（`Math.max(ownNorm, cap/100)`）：强度不变式**当场红**
-       * —— `Tribbie: E1C0(87.7) > E1C1(86.4)`（951 组可比档位里翻面 1 组）：自身 91.84 的
-       * E1C0 豁免了天花板，而投入更高的 E1C1（借来的兜底被压到 90）没有，两者差值 1.84 分
-       * > 投入项那一步 0.45 分 → 直接违反用户 2026-10-14 点名的「投入越高强度不可能更低」。
-       * 所以这里唯一的正确写法是**对整维统一封顶**：`floor = min(max(自身, 兜底), 90)`。
-       * 界面那边靠 `strengthSourceBlock` 的一条小字把这条天花板写出来（读者拿「本档自身
-       * 合计」对账时不会以为算错了）。
+       * ⚠️ `strengthFloor` 这个名字留着（`conclusion.js` 与 `advice-view.js` 都读它），
+       *    但它**不再是包络**，只是「本档自己的分夹过天花板之后的那个数」：
+       *    恒 ≤ `strengthTotal`，且非顶格档恒 ≤ 90。
        */
-      const ownTopBand = (Number(unit.strengthTotal) || 0) >= 99.99;
-      if (!ownTopBand && floor > SCORING.strengthSecondBandCap / 100) {
-        floor = SCORING.strengthSecondBandCap / 100;
-      }
-      // 兜底的方向只有一个：向上（稀疏数据被下面几档救回来）——`strengthFloor` **不保证**
-      // ≥ `strengthTotal`，因为非顶格档还要过上面那道 90 分天花板（`own` 落在 (90,100) 时
-      // 会被它压下来，那是两档规则本身，不是包络在下压）。
       unit.strengthFloor = Number((floor * 100).toFixed(4));
     }
     for (const unit of all) {
       /**
-       * 强度分 = **95 分给行动值 + 5 分给「第二维」**，第二维分两种（用户 2026-10-16 第 1 条）：
+       * 强度分 = **就是 `strengthFloor` 本身**（用户 2026-10-17 第 2 条）。
        *
-       * ```
-       *   行动值那 95 分：`strengthFloor / 100`（单调包络 —— 高投入档位至少和低投入一样强），
-       *                   其中「每关都 0 行动值」= 100（顶格档），其余 ≤ 90（第二档）
-       *   第二维那 5 分： · 顶格档（自己打出了 0 行动值）→ **压金度**
-       *                 · 其余                        → **投入档位**（E6S5 > E6S1 那条不变式）
-       * ```
-       *
-       * **为什么第二维要分两种**（用户两句话的取舍，都写在这里免得以后互相打架）：
-       *   * 用户 2026-10-14：「若达成 **0 行动值通关**，则**成本越低越强**」+
-       *     用户 2026-10-16：「应该是 **29 金 0 行动值 > 48 金 0 行动值** > 其他不足 0 行动值
-       *     的队伍，也就是**先看行动值，再看是否压金**」—— 0 行动值那一档内按**金数**排。
-       *   * 用户 2026-10-14（另一句）：「强度权重必须 E6S5 > E6S1 > E2S1 > E0S0」——
-       *     这说的是「同一档内、行动值打平时，投入越高越强」，所以**没顶格**的那一档保留投入分。
-       *   * 两句话在「都 0 行动值」时直接冲突（压金会让 E6S1 高于 E6S5）。这里按**最新的那句**
-       *     实现：**顶格档按压金、其余按投入**。想全局改按压金，只需把下面 `addOn` 那一行
-       *    的 `invest` 换成 `pinched`。
-       *
-       * `压金度` = `min(1, 该关卡该版本最便宜金数 ÷ 本次成绩的队伍金数)`（按关卡权重加权）——
-       * 与性价比的金数项同一个形状，但**只用在顶格档里**，不参与其余档位。
+       * ⚠️ **投入项整条删除**：改前这里是
+       *    `(100 − investWeight) × 行动值表现 + investWeight × 第二维`，第二维分两种
+       *    （顶格档按**压金度**、其余按**投入档位**）。用户 2026-10-17 原话：
+       *    「角色/队伍强度与成本**改为无相关性**，不需要遵守高造价必然等于高强度」——
+       *    那 5 分正是「E6S5 天生比 E0S0 高 5 分」的来源，所以连**压金度**一起删。
+       * ⚠️ 连带作废 2026-10-14 的「E6S5 > E6S1 > E2S1 > E0S0」不变式（本轮用户自己推翻的），
+       *    `tools/strength-invariant-test.mjs` 已按新口径改写。
+       * ⚠️ `strengthFloor`（单调包络）**保留**：它与成本无关，只是「同角色低档位
+       *    救高档位」的稀疏数据兜底，方向向上。
        */
-      const invest = Math.max(0, Math.min(1,
-        investRankOf(unit) / SCORING.fullInvestRank));
-      const pinched = (() => {
+      unit.strengthScore = Number(
+        (Number(unit.strengthFloor ?? unit.strengthTotal) || 0).toFixed(4));
+      // 给界面 / 探针看的中间量（「为什么这一档是顶格」才解释得清）。
+      unit.strengthTopBand = (Number(unit.strengthTotal) || 0) >= 99.99;
+      /**
+       * **压金度**（只作展示，**不再进强度分**）。
+       *
+       * `min(1, 该关卡该版本最便宜金数 ÷ 本次成绩的队伍金数)` 按关卡权重加权。
+       * 2026-10-17 之前它在顶格档里占那 5 分；现在强度与成本无相关性，它只剩探针
+       * 与详情窗口的参考价值（读者想知道「这一档省了多少金」时看性价比那一列）。
+       */
+      unit.strengthPinched = Number((() => {
         let acc = 0;
         for (const e of unit.envs || []) {
           const gold = Number(e.bestTeamGold) || 0;
@@ -6303,26 +6492,18 @@ const buildConclusionInner = (envs, options = {}) => {
           acc += e.weight * Math.min(1, minCost / gold);
         }
         return allEnvWeight > 0 ? acc / allEnvWeight : 0;
-      })();
-      const ownTopBand = (Number(unit.strengthTotal) || 0) >= 99.99;
-      const addOn = ownTopBand ? pinched : invest;
-      const avPart = (Number(unit.strengthFloor ?? unit.strengthTotal) || 0) / 100;
-      unit.strengthScore = Number(((100 - SCORING.investWeight) * avPart
-        + SCORING.investWeight * addOn).toFixed(4));
-      // 给界面 / 探针看的中间量（「为什么这一档是顶格」才解释得清）。
-      unit.strengthTopBand = ownTopBand;
-      unit.strengthPinched = Number(pinched.toFixed(4));
+      })().toFixed(4));
       // 性价比分项就是老口径的 `total`（含金数项）归一后的值 —— 口径一字未改，
       // 只是**进了加权**、并且界面上那个数改叫「角色得分」。
       unit.costScore = Number((100 * spanOf(
         costExtent.lo, costExtent.hi, unit.total,
       )).toFixed(4));
-      // 泛用性：**整榜一把尺子**（用户 2026-10-16 第 3 条把「按星魂档各自比较」推翻了 ——
-      // 所有档位共用同一个原始量，按档分组取极值已经没有意义）。
+      // 泛用性：**按组取尺子**（用户 2026-10-17 第 1 条：E6 只与 E6 比、E0/1/2 与 E0/1/2 比）。
       // ⚠️ 夹到 0：第 5 条把「不用抽就有」的角色排除在刻度样本之外，而它们的原始量是 0，
       //    不夹的话 `spanOf` 会给出负数分（界面上会印出「泛用性 −12.3 分」）。
+      const vExt = versatilityGroupOf(unit) === 'e6' ? versatilityExtentE6 : versatilityExtent;
       unit.versatilityScore = Number((100 * Math.max(0, Math.min(1, spanOf(
-        versatilityExtent.lo, versatilityExtent.hi, unit.versatilityRaw,
+        vExt.lo, vExt.hi, unit.versatilityRaw,
       )))).toFixed(4));
       unit.characterScore = Number((drawWeights.strength * unit.strengthScore
         + drawWeights.cost * unit.costScore
@@ -6886,6 +7067,15 @@ const buildConclusionInner = (envs, options = {}) => {
       // ⚠️ **必须下发** —— 这三条线只存在数据集里（`herta-build.mjs` 的 `TIER_LINES`），
       // 界面编不出来；缺了就退回「最好一档 / 次好一档」这种没有信息量的兜底写法。
       tierLines: meta.tierLines || null,
+      /**
+       * 逐版本的「0 行动值」金数区间（用户 2026-10-17 第 2、3 条：强度新口径的基准）。
+       *
+       * `{ [版本]: { min, max } }`。⚠️ **必须真的下发**：`teamPlan`（抽卡方案的队伍强度）
+       * 只读 `conclusion.frontierEnvs`，`frontierBoard` 那一侧读的是 `envs[]` 上的同一份 ——
+       * 这里漏一层映射，那一侧就会静默退回「没有顶格档」（实测踩过：`meta` 里加了字段、
+       * 投影时没加，`frontierEnvs[].zeroAvGoldBySeason` 是 `undefined`）。
+       */
+      zeroAvGoldBySeason: meta.zeroAvGoldBySeason || null,
       // ⚠️ 这两个字段必须**真的下发**：`frontierFactorsOf` 用它复现金数项，缺了它就会
       // 退回 `minCost`（全窗口最小值）—— 那正是用户 2026-10-10 第 5 轮要修的口径，
       // 表现为「浮层里的金数项与榜上的分对不上」（实测踩过：meta 少一层映射，

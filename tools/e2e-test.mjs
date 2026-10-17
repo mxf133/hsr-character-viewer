@@ -377,20 +377,25 @@ const main = async () => {
         `distinct versatilityRaw=${new Set((hiddenOn.body?.frontierUnits || [])
           .map((u) => Number(u.versatilityRaw))).size}`);
       /**
-       * **泛用性关联到具体的星魂**（用户 2026-10-14 第 1 条：原话「一个角色的 E0 的泛用性
-       * 和 E6 的泛用性其实关系不大，不同星魂需要各自比较泛用性」）。
+       * **泛用性按星魂组分两份**（用户 2026-10-17 第 1 条：原话「E6 角色应当仅与 E6 做
+       * 比较，E0/1/2 与 E0/1/2 之间做比较（避免不同量级之间的比较）」）。
        *
        * 两件事一起钉：
-       *   ① 区间是**按星魂档分组**的（`frontierExtents.versatility.byTier`）——
-       *      界面靠它写出「E6 这一档的最小 ~ 最大」，拿整榜那一把尺子会与榜上的分对不上；
-       *   ② 同一角色的不同档**真的拿到不同的原始量** —— 改前是角色级的一个数，
-       *      这条断言会红。取「档位最多的那个角色」来比，避免挑到一个只有单档的角色。
+       *   ① 区间是**按组**分两把的（`frontierExtents.versatility.byTier`）——
+       *      界面靠它写出「E6 这一组的最小 ~ 最大」，拿低档组那一把尺子会与榜上的分对不上；
+       *   ② 同一角色的 **E0/E1/E2 三档拿到同一个原始量**（三档平均），而 **E6 拿到自己
+       *      那一份** —— 改前（2026-10-16）四档完全相同，改前之前（2026-10-14）四档
+       *      各不同，两种都会把这条断言判红。取「横跨低档组与 E6 组的角色」来比。
        */
       const byTier = hiddenOn.body?.frontierExtents?.versatility?.byTier || {};
-      check('⭐ 泛用性的归一区间按星魂档分组（byTier，四档各一把尺子）',
+      check('⭐ 泛用性的归一区间按组分两把（byTier：0/1/2 同值、6 另一把）',
         ['0', '1', '2', '6'].every((t) => byTier[t] === undefined
           || (Number.isFinite(Number(byTier[t].lo)) && Number.isFinite(Number(byTier[t].hi))
             && Number(byTier[t].hi) >= Number(byTier[t].lo))),
+        `byTier=${JSON.stringify(byTier)}`);
+      const lowKey = ['0', '1', '2'].map((t) => JSON.stringify(byTier[t])).join('|');
+      check('⭐ `byTier` 的 E0/E1/E2 三档指向同一把尺子（低档组）',
+        Object.keys(byTier).length === 0 || new Set(lowKey.split('|')).size === 1,
         `byTier=${JSON.stringify(byTier)}`);
       const tierRawOfChar = new Map();
       for (const t of ['0', '1', '2', '6']) {
@@ -400,21 +405,24 @@ const main = async () => {
         }
       }
       const multiTierChar = [...tierRawOfChar.entries()].find(([, m]) => m.size >= 2);
-      // ⚠️ **2026-10-16 反向**（用户第 3 条：只看 E0/E1/E2 的平均值、E6 完全不参与，
-      //    并把这个结果固定成该角色的**全局泛用性**）：改前这条断言钉的是「同一角色
-      //    不同档拿到**不同**的原始量」，现在必须是**完全相同** —— 否则第 3 条根本没生效。
-      check('⭐ 同一角色在各星魂档拿到**相同**的泛用性原始量（全局泛用性，E6 不再单独算）',
+      // ⚠️ **2026-10-17 第 1 条**：低档组三档**相同**（三档平均），E6 **不同**（自己那份）。
+      //    所以判据是「去掉 E6 之后只剩一个值，且原表至少两个不同的值」。
+      const lowOnly = multiTierChar
+        ? new Set([...multiTierChar[1].entries()].filter(([t]) => t !== '6').map(([, v]) => v))
+        : null;
+      const allVals = multiTierChar ? new Set([...multiTierChar[1].values()]) : null;
+      check('⭐ 同一角色的 E0/E1/E2 拿到**相同**的泛用性原始量，E6 拿到**不同**的一份',
         Boolean(multiTierChar)
-        && new Set([...multiTierChar[1].values()]).size === 1,
+        && lowOnly.size === 1
+        && (allVals.size >= 2 || multiTierChar[1].size <= 3),
         multiTierChar
           ? `${multiTierChar[0]}: ${JSON.stringify([...multiTierChar[1].entries()])}`
           : '没有任何角色横跨两个星魂档，这条断言无从验证');
-      // 同一角色的四个档位必须指向**同一把尺子**（`byTier` 的四个键同值，见 advice.js）。
-      const byTierKeys = Object.keys(hiddenOn.body?.frontierExtents?.versatility?.byTier || {});
-      check('泛用性的 `byTier` 四个档位指向同一对上下限（不再按档分组）',
-        byTierKeys.length === 0 || new Set(byTierKeys
-          .map((t) => JSON.stringify(hiddenOn.body.frontierExtents.versatility.byTier[t]))).size === 1,
-        `byTier=${JSON.stringify(hiddenOn.body?.frontierExtents?.versatility?.byTier)}`);
+      // E6 组那一把尺子必须与低档组不同（同一对就说明两组又混成一把了）。
+      check('⭐ `byTier[6]` 与低档组那把尺子不同值（两组各自归一）',
+        Object.keys(byTier).length === 0 || byTier['6'] === undefined
+        || JSON.stringify(byTier['6']) !== JSON.stringify(byTier['0']),
+        `byTier=${JSON.stringify(byTier)}`);
       // 队伍口径的抽卡方案在**界面**现算差额，所以 availability 必须真的发过去；
       // 缺它时界面会把 4★ 也算成 1 金（见 conclusion.js 的 slimAvailability 注释）。
       check('conclusion 带成本口径表 availability（星级 / 常驻标记）',
@@ -610,11 +618,11 @@ const main = async () => {
           === packsHidden.body.versatilityMembers.length,
         `${packsHidden.body?.versatilityMembers?.length} 个`);
       /**
-       * **泛用性按星魂档分份**（用户 2026-10-14 第 1 条）。
+       * **泛用性按星魂组分两份**（用户 2026-10-17 第 1 条）。
        *
        * 老字段 `versatilityMembers` 是「最佳那条配装所属档位」的一份；新字段
-       * `versatilityByTier` 才是这个角色**每一档各一份**。界面必须按整包自己的档去取，
-       * 否则 E6 的窗口里会列出 E0 的队友。
+       * `versatilityByTier` 才是这个角色**每一组各一份**（E6 一份、E0/E1/E2 一份）。
+       * 界面必须按整包自己的档去取，否则 E6 的窗口里会列出 E0 的队友。
        */
       const versByTier = packsHidden.body?.versatilityByTier;
       check('⭐ packs 顶层带按星魂档分份的泛用性名单 versatilityByTier',
@@ -625,17 +633,17 @@ const main = async () => {
           && new Set(v.members).size === v.members.length
           && Number.isFinite(Number(v.raw))),
         `versatilityByTier=${versByTier ? JSON.stringify(Object.keys(versByTier)) : '（没有）'}`);
-      // ⚠️ 2026-10-15 起原始量按版本/关卡双重加权、**随整包自己的证据走**，同档不同
-      // 配装不再共享同一个数 —— `versatilityByTier[tier].raw` 取的是该档**最大**的那条。
-      // 所以这里的同源判据从「相等」放宽成「档位表 ≥ 每条整包自己的值」（最大值恒被
-      // 该档某条整包取到，构造上成立）。
-      check('⭐ 每个兼有文档的整包的 versatilityRaw 都 ≤ 自己那一档的 raw（档表取最大）',
+      // ⚠️ 2026-10-17 第 1 条起，同组的所有整包**共享同一个原始量**（E0/E1/E2 用三档平均、
+      //    E6 用自己那份），所以同源判据从 2026-10-15 的「档表取最大」收紧成**严格相等**。
+      //    真出现了不等，只有两种可能：档表又退回了「按档各取极值」，或者整包那一侧
+      //    又被改成了「按行动值挑代表行」—— 两种都是回归，必须红。
+      check('⭐ 每个整包的 versatilityRaw 都**等于**自己那一档的 raw（同组共享一个值）',
         (packsHidden.body?.packs || []).every((p) => {
           const tier = String([0, 1, 2, 3, 4, 5, 6].filter((t) => t <= (Number(p.eidolon) || 0)).pop());
           return !versByTier || versByTier[tier] === undefined
-            || Number(versByTier[tier].raw) >= Number(p.versatilityRaw) - 1e-9;
+            || Math.abs(Number(versByTier[tier].raw) - Number(p.versatilityRaw)) < 1e-9;
         }),
-        '档位表的 raw 应是该档内各整包的最大值，不应小于任何一条');
+        '档表的 raw 应与同组每条整包严格相等（组内共享一个原始量）');
       // 面板这条路界面**可能没加载过结论**，所以归一上下限随包一起给（见 advice-view 的
       // `frontierExtentsNow()`）。
       check('packs 带 frontierExtents（面板可能没加载过结论）',

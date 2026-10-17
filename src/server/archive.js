@@ -1020,6 +1020,25 @@ const aggregateTeams = (scope, i18n, options = {}) => {
   })() : null;
   let seasonRuns = 0;
   let windowRuns = 0;
+  /**
+   * **逐版本的「0 行动值」金数区间**（用户 2026-10-17 第 2、3 条：强度新口径的基准）。
+   *
+   *   key = 版本；value = `{ min, max }` = 该版本**所有 0 行动值前沿行**的金数范围。
+   *
+   * 强度顶格档 = `100 × min ÷ 本队金数`，第二档封顶 = `100 × min ÷ max`
+   * （= 这一期 0 行动值档的最低分，用户确认「48 金也达不成」与「其余按行动值」是一层）。
+   *
+   * ⚠️ **按版本各自取、不跨版本合并**：用户原话「每一期的最省金的得分最高 100 分，
+   *    其余等比降分，**注意不要跨版本对比**，版本权重要按照用户设置的做」。
+   *    绝境王棋关实测：4.5 期最省 **29 金**（20 条 0 行动值）、4.6 期最省 **48 金**（2 条）、
+   *    3.6 / 3.8 / 4.1 期**一条 0 行动值都没有**（那些期没有顶格档）。
+   * ⚠️ **用 `Math.max(1, c)`**：数据集里存在 0 金行（混沌回忆 3.3 期最省金就是 0），
+   *    让 0 进 `min` 会把那一期的满分基准打成 0 → 顶格档整体退化成 0 分。
+   * ⚠️ **`a === 0` 是有效成绩**（见下面 `actionValue` 的注释：绝境用它表示 0 行动值通关），
+   *    缺失是 `null` —— 两者不能混。
+   * ⚠️ 只在 `withFrontier`（= 综合结论那条路）时算：主榜不读它，白扫一遍是浪费。
+   */
+  const zeroAvGoldBySeason = withFrontier ? new Map() : null;
 
   for (const s of recent) {
     const sd = stageData.seasons[s];
@@ -1051,6 +1070,17 @@ const aggregateTeams = (scope, i18n, options = {}) => {
         const actionValue = Number.isFinite(parsedAction) && parsedAction >= 0
           ? parsedAction : null;
         const tier = Number(entry.t) === 2 ? 'target' : 'perfect';
+        // 逐版本的「0 行动值」金数区间（用户 2026-10-17 第 2、3 条，基准的单一来源）：
+        // 只有 **0 行动值**的前沿行进这个区间，`min` 是这一期的满分基准。
+        if (zeroAvGoldBySeason && actionValue === 0) {
+          const gold = Math.max(1, cost);
+          const cur = zeroAvGoldBySeason.get(s);
+          if (!cur) zeroAvGoldBySeason.set(s, { min: gold, max: gold });
+          else {
+            if (gold < cur.min) cur.min = gold;
+            if (gold > cur.max) cur.max = gold;
+          }
+        }
         // 这一条前沿行对应的**投稿视频**：前沿数据自己不带地址，按 `版本|阵容` 回查
         // `teams[].sample.video`（用户 2026-10-17 第 5 条，索引见上方注释）。
         // ⚠️ 键的口径必须与 `archiveFrontier` 逐字相同（成员**角色名**排序 + `' + '`）：
@@ -1301,6 +1331,19 @@ const aggregateTeams = (scope, i18n, options = {}) => {
     teams,
     seasonRuns,
     windowRuns,
+    /**
+     * 逐版本的「0 行动值」金数区间（用户 2026-10-17 第 2、3 条：强度新口径的基准）。
+     *
+     * `{ [版本]: { min, max } }`；没有 `withFrontier` 时是 `undefined`（主榜不读它）。
+     * 消费方：`advice.js` 的 `frontierBoard`（角色总榜强度）与 `teamPlan`
+     * （抽卡方案队伍强度）—— **两边必须读同一份**，否则两个榜的强度口径会分叉。
+     * 由 `conclusionEnvs` 原样透传到 `frontierEnvs[].zeroAvGoldBySeason`。
+     */
+    zeroAvGoldBySeason: zeroAvGoldBySeason
+      ? Object.fromEntries([...zeroAvGoldBySeason.entries()].map(([s, v]) => [s, {
+        min: v.min, max: v.max,
+      }]))
+      : undefined,
     frontierRows: withFrontier ? [...frontierByBuild.values()] : undefined,
     // 「行动值前沿」：本关卡**最近一版**行动值最好的几支队伍（用户 2026-10-16 第 2 条）。
     // 见 `buildAvTeams` 的注释 —— 它服务「抽卡推荐里各种 0 行动值队伍要能登顶」。
@@ -1322,7 +1365,9 @@ export const archiveTeams = async (mode, options = {}) => {
   const i18n = await loadI18n();
   const scope = resolveScope(data, mode, options.season, options);
   if (!scope.ok) return scope;
-  const { teams, seasonRuns, windowRuns, frontierRows, avTeams } = aggregateTeams(scope, i18n, {
+  const {
+    teams, seasonRuns, windowRuns, frontierRows, avTeams, zeroAvGoldBySeason,
+  } = aggregateTeams(scope, i18n, {
     withEidoPerf: options.withEidoPerf === true,
     withFrontier: options.withFrontier === true,
   });
@@ -1352,7 +1397,14 @@ export const archiveTeams = async (mode, options = {}) => {
     reliable: wantedSeason.reliable !== false,
     teams,
     ...(options.withFrontier === true
-      ? { frontierRows: frontierRows || [], avTeams: avTeams || [] } : {}),
+      ? {
+        frontierRows: frontierRows || [], avTeams: avTeams || [],
+        // 逐版本的「0 行动值」金数区间（用户 2026-10-17 第 2、3 条：强度新口径的基准）。
+        // 由 `aggregateTeams` 算好、经 `conclusionEnvs` 透传给 `advice.js` 的
+        // `frontierBoard`（角色总榜）与 `teamPlan`（抽卡方案）—— 两边读同一份。
+        zeroAvGoldBySeason: zeroAvGoldBySeason || null,
+      }
+      : {}),
   };
 };
 

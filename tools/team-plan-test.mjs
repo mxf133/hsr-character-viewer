@@ -79,6 +79,13 @@ const TEAMS = {
   // → 光锥的**每抽收益更高**，纯按每抽收益会把它排前面；**载体约束**必须让本体先来。
   //   （两个 `from` 都是 0，因为 `marginalCostOf` 把 -1 夹成了 0，所以判据只能用 kind。）
   carrier: [member('charX', 1, 'coneB'), member('charB'), member('freeC')],
+  // 下面两条**只差星魂档、且账面金数相同**（charX 都花 7 金：E2+S4 = 1+2+4、E6 = 1+6）
+  //   —— 专门用来钉「队级 ③ 按组归一」：把金数这个变量按住，两支的 ③ 差异就**只能**
+  //   来自组间量级差（用户 2026-10-17 第 1 条，见下面那条用例）。
+  // ⚠️ 它们**不在** `conclusionFixture.frontierUnits` 里，所以不会改动候选池条数
+  //    （候选池由**整包**来，不由 TEAMS 来）。
+  carrierE6: [member('charX', 6), member('charB'), member('freeC')],
+  carrierLow: [member('charX', 2, 'coneB', 4), member('charB'), member('freeC')],
 };
 const conclusionFixture = {
   frontierEnvs: [
@@ -271,6 +278,11 @@ const avConclusion = {
       id: 'env1', label: '测试副本', weight: 1, tierLines: AV_TIER_LINES,
       avLo: 0, avHi: 400, lowerIsBetter: true,
       minCostBySeason: { '4.2': 5, '4.4': 4 },
+      // 逐版本的「0 行动值」金数区间（用户 2026-10-17 第 2、3 条：顶格档的基准）。
+      // 4.2 期有两条 0 行动值行：10 金（AV_ZERO）与 12 金（AV_MIXED）→ 最省 10、最贵 12。
+      // ⚠️ env2 故意**不给**：那一期一条 0 行动值都没有（对应绝境 3.6/3.8/4.1 期实测），
+      //    所以它没有顶格档、第二档封顶退回 `strengthSecondBandCap` = 90。
+      zeroAvGoldBySeason: { '4.2': { min: 10, max: 12 } },
       avTeams: [
         { cost: 10, av: 0, tier: 'perfect', season: '4.2', members: AV_ZERO_MEMBERS },
         { cost: 12, av: 0, tier: 'perfect', season: '4.2', members: AV_MIXED_MEMBERS },
@@ -305,12 +317,14 @@ check('行动值前沿：只在 env1 打出 0 行动值的队**进得了池**（
   assert.ok(row.strengthPct > avRowOf(AV_MIXED_MEMBERS).strengthPct, '顶格档必须高于混合成绩');
 });
 
-check('行动值前沿：0 行动值 = 顶格档 95 + 5×压金，**不被没投稿的副本稀释**', () => {
+check('行动值前沿：0 行动值且取到该期最省金 = 顶格档 100，**不被没投稿的副本稀释**', () => {
   const row = avRowOf(AV_ZERO_MEMBERS);
-  // 只有 env1 有数据（av=0）：缺副本按 0 计的老规矩会把 (1×100)÷(1+1) 摊成 50
-  // → 强度 47.5。用户要的是「登顶」，所以这一池按**本队有数据的关卡**归一。
-  assert.equal(row.strengthPct, 97.5,
-    `① 应为 95 + 5×min(1, 5/10) = 97.5，实际 ${row.strengthPct}`);
+  // 只有 env1 有数据（av=0）：缺副本按 0 计的老规矩会把 (1×100)÷(1+1) 摊成 50。
+  // 用户要的是「登顶」，所以这一池按**本队有数据的关卡**归一。
+  // 2026-10-17 第 2 条起顶格档 = 100 × (该期 0 行动值最省金 ÷ 本队金数) = 100×10/10 = 100
+  //（投入项与压金度那 5 分整条删除，见 `SCORING.investWeight === 0`）。
+  assert.equal(row.strengthPct, 100,
+    `① 应为 100×10/10 = 100，实际 ${row.strengthPct}`);
   // 最佳证据 = 这支队自己最快的那一关（行动值并列时取关卡权重高的）。
   assert.equal(row.bestEnv.label, '测试副本');
   assert.equal(row.bestEnv.bestTeamGold, 10, '最佳证据金数取 avTeams 的 cost');
@@ -322,15 +336,18 @@ check('行动值前沿：0 行动值 = 顶格档 95 + 5×压金，**不被没投
 
 check('行动值前沿：混合成绩按**副本权重**摊薄（0 与非 0 各占一关）', () => {
   const row = avRowOf(AV_MIXED_MEMBERS);
-  // 期望值现算：env1 av=0 → 100；env2 av=320 → 90 × 强度曲线(320)。
+  // 期望值现算：
+  //   env1 av=0 但花 12 金（该期最省 10）→ 顶格档 100×10/12 = 83.333…
+  //   env2 av=320（那一期没有 0 行动值基准）→ 封顶 90 × 强度曲线(320)
   const perf = perfFactorOf(320, AV_TIER_LINES, true, 'target', SCORING.strengthLineWeights);
   const env2Strength = SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
-  const total = (1 * 100 + 1 * env2Strength) / 2;     // 两关权重都是 1
-  // 没有顶格 → 第二维按投入档位；三个 E0 不装光锥 → 0。
-  const expect = (100 - SCORING.investWeight) * (total / 100) + SCORING.investWeight * 0;
+  const env1Strength = (100 * 10) / 12;
+  const total = (1 * env1Strength + 1 * env2Strength) / 2;   // 两关权重都是 1
+  // 投入项已整条删除（用户 2026-10-17 第 2 条）：强度就是逐关加权平均本身。
+  const expect = total;
   assert.ok(near(row.strengthPct, expect),
     `① 应为 ${expect.toFixed(4)}（副本权重加权），实际 ${row.strengthPct}`);
-  assert.ok(row.strengthPct < 97.5, '混合成绩必须低于顶格档');
+  assert.ok(row.strengthPct < 100, '混合成绩必须低于顶格档');
   assert.ok(row.strengthPct > 50, '也不该被稀释到「只有一关数据」那么低');
 });
 
@@ -356,7 +373,7 @@ check('行动值前沿：与证据池**去重**（同一支队不重复，强度
   assert.equal(rows.length, 1, '同一支队只能出现一次');
   assert.equal(rows[0].avSource, false, '去重后走证据池那条路（不标 avSource）');
   assert.equal(rows[0].strengthPct, 30,
-    `① 必须仍是代表整包自己的强度分 30（前沿口径会给 ~97.5），实际 ${rows[0].strengthPct}`);
+    `① 必须仍是代表整包自己的强度分 30（前沿口径会给 100），实际 ${rows[0].strengthPct}`);
 });
 
 check('行动值前沿：**跳过更重的副本**要按 0 分计（v4.6.112，用户报的强度 bug）', () => {
@@ -370,12 +387,14 @@ check('行动值前沿：**跳过更重的副本**要按 0 分计（v4.6.112，�
    *   * `env1`（权重 1）有数据、av=0；
    *   * `env2`（权重 1）**没打** —— 不比它打过的更重 → 免罚（与上面 `avZero` 那条同一行为）；
    *   * `envHeavy`（权重 5）**没打** —— 更重 → 按 0 计进分母。
-   * 期望：`(1×100) ÷ (1+5) = 16.667` → `95% × 16.667 = 15.833`（三个 E0 不装光锥 → 投入加成 0）。
+   * 期望：`(1×100) ÷ (1+5) = 16.667`（投入项已删除，强度就是逐关加权平均本身）。
    */
   const heavyConclusion = {
     frontierEnvs: [
       { id: 'env1', label: '测试副本', weight: 1, tierLines: AV_TIER_LINES,
-        minCostBySeason: { '4.2': 5 }, avTeams: [
+        minCostBySeason: { '4.2': 5 },
+        zeroAvGoldBySeason: { '4.2': { min: 10, max: 10 } },
+        avTeams: [
           { cost: 10, av: 0, tier: 'perfect', season: '4.2', members: AV_ZERO_MEMBERS },
         ] },
       { id: 'env2', label: '测试副本二', weight: 1, tierLines: AV_TIER_LINES, avTeams: [] },
@@ -387,12 +406,12 @@ check('行动值前沿：**跳过更重的副本**要按 0 分计（v4.6.112，�
   const row = plan.rows.find((r) => r.members.length === AV_ZERO_MEMBERS.length
     && AV_ZERO_MEMBERS.every((m) => r.members.some((x) => x.char === m.char)));
   assert.ok(row, '这一支仍应留在池里（只是分数按全部关卡摊薄），不该被剔除');
-  const expect = (100 - SCORING.investWeight) * ((1 * 100) / (1 + 5)) / 100;
+  const expect = (1 * 100) / (1 + 5);
   assert.ok(near(row.strengthPct, expect),
     `① 应为 ${expect.toFixed(4)}（跳过的更重关卡按 0 计），实际 ${row.strengthPct}`);
-  assert.ok(row.strengthPct < 30, '跳过最重副本的队不许再拿 95+ 的顶格分');
-  // 同一支队在上面的并列权重夹具里仍是 97.5 —— 判据是「比本队打过的更重」，不是「缺了」。
-  assert.equal(avRowOf(AV_ZERO_MEMBERS).strengthPct, 97.5,
+  assert.ok(row.strengthPct < 30, '跳过最重副本的队不许再拿顶格分');
+  // 同一支队在上面的并列权重夹具里仍是 100 —— 判据是「比本队打过的更重」，不是「缺了」。
+  assert.equal(avRowOf(AV_ZERO_MEMBERS).strengthPct, 100,
     '权重并列（都不过更重）时不该被罚，这是用户要的「0 行动值队伍登顶」');
 });
 
@@ -413,12 +432,24 @@ section('A1. 抽卡权重（强度 / 性价比，用户 2026-10-12 第 3、4、8
  */
 const strengthFixture = {
   ...conclusionFixture,
-  // ⚠️ `versatilityRaw` 必须给（用户 2026-10-13 第 3 条）：队级 ③ = 队内成员各自那个数
-  //    按**成本占比**加权（2026-10-14 第 1 条改的口径，见下面那条专门的用例），
-  //    而 `teamPlan()` 是从 `frontierUnits` 建「角色 + 星魂档 → 泛用性」那张表的 ——
-  //    夹具里不带这个字段的话，两队都算成 0，③ 退化成「全池同分」（`span` 给 1），
-  //    于是「泛用性权重起作用」这件事**在夹具上根本测不出来**。
-  //    两个数刻意不同（40 / 10），让 ③ 真的分得开。
+  // ⚠️ **两把组内尺子必须显式给**（用户 2026-10-17 第 1 条）：`teamPlan()` 现在先把每个
+  //    成员按**自己那一组**归一成 0~100（`memberVersatilityScore`）再加权，尺子优先读
+  //    `conclusion.frontierExtents.versatility`。不带这个字段时会退回「按候选池现算」，
+  //    于是 charY(E0) 的 10 会被当成低档组下限 → 得 0 分，下面那条用例就钉不住成本加权了。
+  //    取 `低档 0 ~ 40 / E6 20 ~ 60`：charX(E1, 40) → 100 分、charY(E0, 10) → 25 分，
+  //    两个数都落在刻度中段，③ 真的分得开。
+  frontierExtents: {
+    versatility: {
+      lo: 0, hi: 40,
+      byTier: { '6': { lo: 20, hi: 60 } },
+    },
+  },
+  // ⚠️ `versatilityRaw` 必须给（用户 2026-10-13 第 3 条）：队级 ③ = 队内成员各自的
+  //    **组内相对分**按**成本占比**加权（2026-10-14 第 1 条的加权口径 + 2026-10-17 第 1 条
+  //    的组内归一，见下面那条专门的用例），而 `teamPlan()` 是从 `frontierUnits` 建
+  //    「角色 + 星魂档 → 泛用性」那张表的 —— 夹具里不带这个字段的话，成员全查不到、
+  //    ③ 退化成「全池同分」（`span` 给 1），于是「泛用性权重起作用」这件事
+  //    **在夹具上根本测不出来**。两个数刻意不同（40 / 10），让 ③ 真的分得开。
   // ⚠️ `strengthScore` 同样必须给（理由见上）：两个数刻意差得远（96 / 20）。
   // ⚠️ 整包自己的 `eidolon` / `lc` 必须与它在 `TEAMS.*` 里的**成员条目一致** ——
   //    ① 是按**成员的整包键**去查强度分的，对不上就查成 0（真实数据里天然一致：
@@ -483,15 +514,15 @@ check('⭐ 抽卡权重只认**相对大小**：3:1:1 与 0.6:0.2:0.2 得到同�
     assert.ok(Math.abs(r.total - r.versatilityPct) < 1e-4,
       `${r.key}: 总分应当只等于 ③（${r.total} vs ${r.versatilityPct}）`);
   }
-  // ③ 真的分得开才说明它**在算**（夹具 charX 40 / charY 10 人）：
-  // 队级 ③ 的原始量是「队内平均」，刻度是候选池的 min ~ max。
+  // ③ 真的分得开才说明它**在算**（夹具 charX 100 分 / charY 25 分，见下面那条用例）：
+  // 队级 ③ 的原始量是「队内成员组内相对分的成本加权平均」，刻度是候选池的 min ~ max。
   assert.ok(onlyVersatility.versatilityHi > onlyVersatility.versatilityLo,
     `③ 的刻度不该退化：${onlyVersatility.versatilityLo} ~ ${onlyVersatility.versatilityHi}`);
   assert.equal(Math.round(onlyVersatility.rows[0].versatilityPct), 100,
     '泛用性拉满时该由「队内平均泛用性最高」的那支排第一');
 });
 
-check('⭐ 队级泛用性 = 成员各自泛用性按**成本占比**加权（用户 2026-10-14 第 1 条）', () => {
+check('⭐ 队级泛用性 = 成员各自的**组内相对分**按**成本占比**加权（2026-10-14 第 1 条 + 2026-10-17 第 1 条）', () => {
   // 用户原话：「整个队伍的泛用性根据不同角色的成本占整个队伍的成本的权重而定」。
   // 改前（v4.6.97）是**简单平均**（四个成员一人一份），现在按各自金数占比加权。
   const plan = strengthPlan({ strength: 0, cost: 0, versatility: 1 });
@@ -499,16 +530,71 @@ check('⭐ 队级泛用性 = 成员各自泛用性按**成本占比**加权（�
   const carrier = rowOf('charX');
   const bodyGap = rowOf('charY');
   // 夹具只有两个整包带 `versatilityRaw`（charX 40 / charY 10），其余成员查不到 → 按 0 参与。
+  // ⚠️ 2026-10-17 第 1 条起，进加权的**不再是原始量**，而是各自的**组内相对分**
+  //    （尺子见 `strengthFixture.frontierExtents`，低档组 0 ~ 40）：
+  //      charX|E1 原始量 40 → 100×(40−0)/40 = **100 分**；charY|E0 原始量 10 → **25 分**
   //   carrier = charX(E1 + coneB S1 = 1 本体 + 1 星魂 + 1 光锥 = 3 金) + charB(1 金) + freeC(0)
-  //             → 总金 4 → (40×3 + 0×1 + 0×0) / 4 = **30**
-  //   bodyGap = charY(E0 = 1 金) + charB(1 金) + freeC(0) → 总金 2 → (10×1 + 0 + 0) / 2 = **5**
-  // ⚠️ 简单平均会给 13.33 / 3.33 —— 两组数都咬得住「退回简单平均」这个回归；
-  //    而「分母用成员数而不是总金数」会给出 30 / 5 之外的值（40×3/3 = 40、10×1/2 = 5），
-  //    所以 carrier 那个 30 同时钉住了分母。
-  assert.ok(near(carrier.versatilityRaw, 30),
-    `carrier 的成本加权泛用性应为 30，实际 ${carrier.versatilityRaw}`);
-  assert.ok(near(bodyGap.versatilityRaw, 5),
-    `bodyGap 的成本加权泛用性应为 5，实际 ${bodyGap.versatilityRaw}`);
+  //             → 总金 4 → (100×3 + 0×1 + 0×0) / 4 = **75**
+  //   bodyGap = charY(E0 = 1 金) + charB(1 金) + freeC(0) → 总金 2 → (25×1 + 0 + 0) / 2 = **12.5**
+  // ⚠️ 简单平均会给 33.33 / 8.33；「分母用成员数而不是总金数」会给 100 / 8.33 ——
+  //    carrier 那个 75 同时钉住这两个回归，bodyGap 那个 12.5 钉住「按金数加权」。
+  assert.ok(near(carrier.versatilityRaw, 75),
+    `carrier 的成本加权泛用性应为 75，实际 ${carrier.versatilityRaw}`);
+  assert.ok(near(bodyGap.versatilityRaw, 12.5),
+    `bodyGap 的成本加权泛用性应为 12.5，实际 ${bodyGap.versatilityRaw}`);
+});
+
+check('⭐ 队级 ③ 按组归一：金数相同、只换星魂档，③ 不许凭空变高（用户 2026-10-17 第 1 条）', () => {
+  // 用户原话：「角色/队伍泛用性，E6 角色应当仅与 E6 做比较，E0/1/2 与 E0/1/2 之间做比较
+  // （避免不同量级之间的比较）」—— **队级**也在这一条里（原话写的是「角色/队伍」）。
+  //
+  // 为什么要专门钉：`versatilityRaw` 是「能通关的队伍里出现过的不同队友数」，两组的量纲
+  // **并不一致** —— 本机实测中位比值只有 0.88（看着接近），但单个角色能差到 **11.5 倍**
+  // （March 7th (Hunt)），极值从 6.01 抬到 7.22。改前 `teamPlan()` 让每个成员直接拿
+  // **自己那一档的原始量**再按成本占比加权，两个量纲于是在同一支队里相加 —— 实测同一支
+  // roster 的星魂变体，旧口径下「E6 更多那一版」的 ③ 原始量平均高 **+0.34 ~ +0.38**
+  // （账号 2/3，9 对里 7 对是涨的）。
+  //
+  // 夹具的设计：两支 roster 的 charX **都花 7 金**（E2 + coneB S4 = 1+2+4；E6 无光锥 = 1+6），
+  // 于是「成本占比」这个变量被按住，③ 的差异就**只能**来自组间量级差。两个原始量刻意差得远
+  // （40 vs 60），但两把尺子按同一比例给（低档 0~40、E6 20~60），组内相对分**都是 100**：
+  //   charX|E2 原始量 40，低档组尺子 0 ~ 40 → 100 分
+  //   charX|E6 原始量 60，E6   组尺子 20 ~ 60 → 100 分
+  // 于是两支的 ③ 必须**相等**；改前会给 35 vs 52.5（E6 那支高 17.5）。
+  const e6Fixture = {
+    ...conclusionFixture,
+    frontierExtents: {
+      versatility: { lo: 0, hi: 40, byTier: { '6': { lo: 20, hi: 60 } } },
+    },
+    frontierUnits: [
+      { key: 'u-low', name: 'charX', eidolon: 2, lc: 'coneB', superimp: 4, total: 900,
+        strengthScore: 96, envCount: 1, versatilityRaw: 40,
+        envs: [{ id: 'env1', value: 900, bestTeamGold: 7, members: TEAMS.carrierLow }] },
+      { key: 'u-e6', name: 'charX', eidolon: 6, lc: null, superimp: 1, total: 900,
+        strengthScore: 96, envCount: 1, versatilityRaw: 60,
+        envs: [{ id: 'env1', value: 900, bestTeamGold: 7, members: TEAMS.carrierE6 }] },
+    ],
+  };
+  const plan = teamPlan(e6Fixture, accountFixture,
+    { availability, drawWeights: { strength: 0, cost: 0, versatility: 1 } });
+  const rowOf = (eido, lc) => plan.rows.find((r) => r.members.some((m) => m.char === 'charX'
+    && eidolonTierOf(m.eidolon) === eido && (m.lc || null) === (lc || null)));
+  const low = rowOf(2, 'coneB');
+  const e6 = rowOf(6, null);
+  assert.ok(low && e6, '两支 roster（charX E2+coneB / charX E6）都该进候选池');
+  // 账面金数必须**相同**（charX 7 金 + charB 1 金 = 8）—— 否则测的就不是组间量级差了。
+  assert.equal(low.gold, e6.gold, `两支的账面金数必须相同，实际 ${low.gold} vs ${e6.gold}`);
+  // 7 金（charX）+ 1 金（charB）+ 0（freeC）= 8 金，charX 占 7/8。
+  assert.ok(near(low.versatilityRaw, 87.5),
+    `E2 那支应为 (100×7)/8 = 87.5，实际 ${low.versatilityRaw}`);
+  assert.ok(near(e6.versatilityRaw, 87.5),
+    `E6 那支应为 (100×7)/8 = 87.5，实际 ${e6.versatilityRaw}`);
+  // 旧口径（直接拿原始量加权）会给 35 / 52.5 —— 两个数都不许出现。
+  assert.ok(!near(low.versatilityRaw, 35) && !near(e6.versatilityRaw, 52.5),
+    `不许回到「直接拿原始量加权」（那会给 35 / 52.5），实际 ${low.versatilityRaw} / ${e6.versatilityRaw}`);
+  // 金数相同、组内相对分相同 ⇒ ③ 必须**完全同分**。
+  assert.equal(e6.versatilityPct, low.versatilityPct,
+    `两支在 ③ 上必须同分，实际 ${low.versatilityPct} vs ${e6.versatilityPct}`);
 });
 
 check('⭐ 强度权重高 → 强度分高的在前；性价比权重高 → 补金少的在前；泛用性高 → 队内平均高的在前', () => {
@@ -576,8 +662,11 @@ check('⭐ 性价比只有**差额接近度**一个刻度：差额与整包分�
       envs: [{ id: 'env2', value: 500, bestTeamGold: 3,
         members: [member('charY', 0, 'coneB'), member('charB'), member('freeC')] }] },
   ];
+  // ⚠️ 2026-10-17 第 1 条起 ③ 也随成员的**组内相对分**走，而两支的金数结构不同
+  //    （4 vs 3）→ ③ 本来就会不同（成本加权使然，那不是bug）。这条用例要隔离的是
+  //    「账面金数不进分」，所以把 ③ 显式置 0，只留 ② 一个刻度。
   const plan = teamPlan({ ...conclusionFixture, frontierUnits: pairs }, accountFixture,
-    { availability });
+    { availability, drawWeights: { strength: 0, cost: 1, versatility: 0 } });
   assert.equal(plan.rows.length, 2, '两支都该进结果');
   assert.deepEqual(plan.rows.map((r) => r.gap), [2, 2],
     '两支的补金差额必须相同 —— 否则这条用例测的是差额');
@@ -592,7 +681,7 @@ check('⭐ 性价比只有**差额接近度**一个刻度：差额与整包分�
     '两队的差额接近度也应当相同');
   // 同分之后名次仍必须可复现（两支的 rosterKey 不同，靠它兜底）。
   const again = teamPlan({ ...conclusionFixture, frontierUnits: pairs }, accountFixture,
-    { availability });
+    { availability, drawWeights: { strength: 0, cost: 1, versatility: 0 } });
   assert.deepEqual(again.rows.map((r) => r.key), plan.rows.map((r) => r.key),
     '同分时的名次必须可复现');
 });

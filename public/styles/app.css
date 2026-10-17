@@ -1543,6 +1543,14 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   border: 1px solid rgba(110, 231, 168, 0.4);
   background: rgba(110, 231, 168, 0.1);
 }
+/* 「缺」：与「已有」同一只 pill，只换色。2026-10-17 之前方案卡用自己一套
+   `.advice-plan-team-own`（青 = 已有、红 = 缺），现在三处（总榜行 / 环境统计 /
+   方案卡）共用这一类，`is-gap` 提供方案卡独有的第二种状态。 */
+.advice-own-badge.is-gap {
+  color: #f0a3a3;
+  border-color: rgba(245, 158, 158, 0.45);
+  background: rgba(245, 158, 158, 0.1);
+}
 .advice-bar {
   height: 4px;
   border-radius: 999px;
@@ -1851,6 +1859,10 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   margin: 4px 0 2px;
 }
 .advice-section-head .advice-h3 { margin: 0; }
+/* h4 同理（2026-10-17）：总榜原本是光秃秃一个 .advice-h4，靠它自带的
+   `margin: 16px 0 8px` 撑间距，视觉节奏跟两节带外壳的标题对不上。
+   补上外壳后这里把 margin 归零，让 .advice-section-head 的 4px 2px 接管。 */
+.advice-section-head .advice-h4 { margin: 0; }
 .advice-section-fields {
   display: flex;
   flex-wrap: wrap;
@@ -2576,7 +2588,11 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   font-size: 11.5px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  /* ⚠️ 2026-10-17：去掉 `white-space: nowrap`。等式有 40+ 个字符（三项 × 系数 + 合计），
+     不可换行时它作为 grid 子项的 min-content 就是整串的宽度，会把卡片顶宽、进而让整页
+     出现横向滚动（用户另一条硬要求就是「别把窗口撑宽」）。等式里运算符两侧本来就有空格，
+     正常换行就能读；`overflow-wrap` 只是兜住「一整个长名字没有空格」那种极端情况。 */
+  overflow-wrap: anywhere;
 }
 /* 队伍的四个位置：一行放不下就折行（窄屏两列），绝不横向滚动。
    ⚠️ 这两条只对**队伍方案**那一节里的位置生效（`> .advice-plan-team-slot`）：
@@ -2617,6 +2633,13 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 }
 .advice-plan-team-cone-icon { width: 20px; height: 20px; border-radius: 4px; }
 .advice-plan-team-label { display: grid; gap: 2px; min-width: 0; }
+/* 第一行「角色名 + 已有/缺徽标」：单独一行 flex，徽标才不至于在 grid 里独占一行。
+   间距由 `.advice-own-badge` 自带的 `margin-left: 6px` 提供，这里不设 gap。 */
+.advice-plan-team-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
 .advice-plan-team-char { font-size: 11.5px; font-weight: 600; white-space: nowrap; }
 .advice-plan-team-eidolon { font-size: 11px; color: var(--text-dim); margin-left: 4px; }
 .advice-plan-team-cone {
@@ -2627,19 +2650,8 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   color: var(--text-dim);
   white-space: nowrap;
 }
-.advice-plan-team-own {
-  font-size: 10px;
-  border-radius: 999px;
-  padding: 0 6px;
-  white-space: nowrap;
-  color: #f0a3a3;
-  border: 1px solid rgba(245, 158, 158, 0.45);
-}
-.advice-plan-team-own.is-have {
-  color: var(--cyan);
-  border-color: rgba(111, 211, 232, 0.5);
-  background: rgba(111, 211, 232, 0.1);
-}
+/* 「已有 / 缺」徽标 2026-10-17 起改用 `.advice-own-badge`（见上面那一段），
+   这里原来的 `.advice-plan-team-own` / `.is-have` 两条规则随之删除。 */
 .advice-plan-team-facts {
   display: flex;
   flex-wrap: wrap;
@@ -2649,6 +2661,11 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   font-variant-numeric: tabular-nums;
 }
 .advice-plan-team-gold { color: var(--gold); }
+/* 「最佳证据」那半句：`muted small` 里的 `.small` 是 12.5px，而它所在的行
+   （`.advice-plan-team-facts`）是 11.5px —— 同一行里「行动值 285」比「账面 7 金」
+   大一号。2026-10-17 显式钉回 11.5px，与总榜行 `.advice-unit-best`（12px）
+   一样走**自己的字号**，不再靠继承撞运气。 */
+.advice-plan-team-best { font-size: 11.5px; }
 /* 抽卡方案的「人话」摘要：先告诉用户下一步，再让他展开分数来源。 */
 .advice-plan-team-recommendation {
   display: flex;

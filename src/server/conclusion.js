@@ -136,6 +136,10 @@ export const conclusionEnvs = async (index, options = {}) => {
       dist: data.dist || null,
       teams: data.teams,
       frontierRows: data.frontierRows,
+      // 逐版本的「0 行动值」金数区间（用户 2026-10-17 第 2、3 条：强度新口径的基准）。
+      // 建库侧按原始 `frontier` 行算好，`advice.js` 的 `frontierBoard` 与 `teamPlan`
+      // **共用同一份** —— 两个榜的强度口径不许分叉。
+      zeroAvGoldBySeason: data.zeroAvGoldBySeason || null,
       // 「行动值前沿」：本关卡最近一版行动值最好的几支队伍（用户 2026-10-16 第 2 条）——
       // 抽卡推荐的候选池要靠它把「各种 0 行动值队伍」补进去（见 archive.js 的
       // `buildAvTeams` 注释：实测候选池里一支都没有）。
@@ -728,26 +732,34 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     // `versatilityMembers`（老字段）**保留**，取 `hit[0]` 那一档的名单 —— 它是这条接口
     // 从 v4.6.97 起的公开形状，`tools/e2e-test.mjs` 与老前端都在读它；语义退化成
     // 「最佳那条配装所属档位的名单」，而新前端一律走 `versatilityByTier`。
-    // ⚠️ **2026-10-16 起一个角色只有一份名单**（用户第 3 条：只看 E0/E1/E2 的平均值、
-    //    E6 完全不参与，并把这个结果固定成该角色的**全局泛用性**）：名单就是该角色
-    //    E0/E1/E2 三档队友的**并集**，四个档位索引到同一份 —— 与算分用的那个原始量同源。
-    //    （2026-10-14~15 它曾是「按星魂档各一份」，那一套已被第 3 条推翻；按档索引的形状
-    //    保留只为载荷兼容，界面仍按 `byTier[档] ?? 整榜` 取。）
+    // ⚠️ **2026-10-17 第 1 条起按「星魂组」分两份**（用户原话：「E6 角色应当仅与 E6 做
+    //    比较，E0/1/2 与 E0/1/2 之间做比较」—— 避免不同量级之间的比较）：
+    //    - E6 档索引到 **E6 自己那一份**（E6 配装见过的队友）；
+    //    - E0/E1/E2 三档索引到**同一份**：三档配装队友的**并集**，与算分用的低档组原始量同源。
+    //    这与 `advice.js` 里 `unit.versatilityMembers` / `unit.versatilityRaw` 的口径严格一致
+    //    （那边也是「E6 取自己那份、低档组取三档并集」），否则详情窗口会印出一份与得分
+    //    对不上的名单。
+    //    （2026-10-14~15 按档各一份；2026-10-16 全局一份；两条都已被 2026-10-17 第 1 条推翻。）
     //
-    // `versatilityMembers`（老字段）**保留**，取 `hit[0]` 那条的名单（现在四条完全相同）——
-    // 它是这条接口从 v4.6.97 起的公开形状，`tools/e2e-test.mjs` 与老前端都在读它。
+    // `versatilityMembers`（老字段）**保留**，取 `hit[0]` 那条的名单 —— 它是这条接口
+    // 从 v4.6.97 起的公开形状，`tools/e2e-test.mjs` 与老前端都在读它；语义是
+    // 「最佳那条配装所属档位的名单」，新前端一律走 `versatilityByTier`。
     versatilityMembers: hit[0]?.versatilityMembers ?? null,
     versatilityByTier: (() => {
-      const unit = hit.find((u) => Array.isArray(u.versatilityMembers)) || null;
-      if (!unit) return null;
       const byTier = {};
       for (const tier of EIDOLON_TIERS) {
+        // 按档各取一份：**同一档**的整包之间 `versatilityRaw` / `versatilityMembers` 是相同的
+        // （同档同角色同光锥只有一份原始量），所以取该档第一条带名单的就够了。
+        const unit = hit.find(
+          (u) => Array.isArray(u.versatilityMembers) && eidolonTierOf(u.eidolon) === tier,
+        ) || null;
+        if (!unit) continue;
         byTier[String(tier)] = {
           raw: Number(unit.versatilityRaw) || 0,
           members: unit.versatilityMembers,
         };
       }
-      return byTier;
+      return Object.keys(byTier).length ? byTier : null;
     })(),
     // 三个分项的归一上下限：面板浮层也要写「得分 = 100 ×（原始量 − 最小）÷（最大 − 最小）」，
     // 而面板这条路上界面**可能根本没有加载过结论**（用户直接在「角色信息」页点开的）。
@@ -889,6 +901,15 @@ const projectConclusion = (result) => ({
     // 「最好一档 / 次好一档」的兜底写法（那些词读起来不比「满分」有用）。
     // 只有 5 个副本，三条线加起来几十字节。
     tierLines: env.tierLines || null,
+    /**
+     * 逐版本的「0 行动值」金数区间（用户 2026-10-17 第 2、3 条：强度新口径的基准）。
+     *
+     * `{ [版本]: { min, max } }`。⚠️ **不能省**：`teamPlan`（抽卡方案的队伍强度）
+     * 只读这一层投影后的 `frontierEnvs`，`frontierBoard` 读的是 `envs[]` 上同一份 ——
+     * 这里漏一层，那一侧就静默退回「没有顶格档」，两个榜的强度口径还会因此分叉。
+     * 只有 5 个副本、每副本最多 7 期，几十字节。
+     */
+    zeroAvGoldBySeason: env.zeroAvGoldBySeason || null,
     // `minCost`（全窗口最小值）保留仅供展示/兜底：**算分用的是逐条下发的
     // `unit.envs[].seasonMinCost`**（用户 2026-10-10 第 5 轮：金数项按版本归一，
     // 不拿全窗口最小值当所有版本的分母 —— 那会罚「环境本身就难压金」的版本）。

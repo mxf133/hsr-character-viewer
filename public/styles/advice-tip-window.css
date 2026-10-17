@@ -112,6 +112,16 @@
 @media (max-width: 760px) {
   .advice-tip-modal { padding: 10px; }
   .advice-tip-card { width: 100%; }
+  /* 五分表第一列：桌面态是 `padding: 0 76px`（左右各留一个按钮宽，让「分项名」与
+     「说明」两行的中心线落在列中心）。窄屏这么留会把第一格挤爆 —— 实测 760px 视口下
+     两行文字只剩 ~48px，绝对定位的按钮直接压在居中的文字上。
+     窄屏改回「文字在上、按钮跟在下面」：padding 收回一行字的高度，按钮也回流内。
+     （桌面态的居中判据由 `check-advice-layout.mjs` 在 1280/1600 视口下钉着，不受这里影响。） */
+  .advice-factor-cell { padding: 0 0 4px; }
+  .advice-factor-cell > .advice-detail-toggle.is-inline {
+    position: static;
+    margin: 4px 0 0;
+  }
 }
 
 /* ==== 得分来源的**就地折叠块**（用户 2026-10-13 第 8 条）=========================
@@ -193,9 +203,14 @@
   min-width: 0;
 }
 .advice-detail-toggle.is-inline {
-  position: absolute;
-  right: 0;
-  top: 1px;
+  /* ⚠️ 2026-10-17：默认**流内**（`position: static`）。
+     改前这里是**全局**的 `position: absolute; right: 0; top: 1px`，而 `tipInlineToggle()`
+     的 5 个调用点里只有 1 个（`.advice-factor-cell` 内）有定位祖先 —— 其余 4 个
+     （补金推荐分标题行 / 过渡档位标题 / 3 支次选配队）的包含块一路上漂到 `.modal`
+     （`app.css` 的 `position: fixed; inset: 0`），按钮于是被钉在**全屏遮罩的右上角**、
+     彼此叠放，还压住标题栏；`.advice-plan-tip-title` / `-alt-copy` 那两条
+     `margin-left: 6px` 对 `right: 0` 的绝对定位框只产生 6px 左移，救不回来。
+     绝对定位只对因子格那一处有意义（见下面那条带 `>` 的规则），别处一律回流内。 */
   flex: none;
   margin-top: 1px;
   padding: 1px 7px;
@@ -217,6 +232,15 @@
   color: #cfeeff;
   border-color: rgba(141, 233, 255, 0.5);
   background: rgba(141, 233, 255, 0.16);
+}
+/* 因子格那一处**才**绝对定位（容器 `.advice-factor-cell` 自己是 `position: relative`，
+   理由见它上面那段：左右各留与按钮等宽的一块，两行文字的中心线才仍是列的中心线）。
+   ⚠️ 必须写成 `>` 的父子选择器而不是再把绝对定位放回 `.is-inline` 基础规则 ——
+   后者正是 2026-10-17 之前那个「按钮钉到全屏遮罩右上角」的 bug 的来源。 */
+.advice-factor-cell > .advice-detail-toggle.is-inline {
+  position: absolute;
+  right: 0;
+  top: 1px;
 }
 /* 分项分色：与下面那张表的进度条 / 徽标同色，读者一眼对得上点的是哪一项。
    （四组选择器写成「hover + 展开」共用一条，比 repair 三遍更不容易漏。） */
@@ -342,7 +366,11 @@
 
 /* 过渡档位标题 / 次选配队那一行里的「查看来源」：与前面的文字留一点间距，别贴着。
    这两处的内容块（`.advice-detail`）由 `.advice-plan-tip-block` / `.advice-plan-tip-alt`
-   的常规块级排版自然下移（前者是普通块，后者是 `display: grid; gap: 5px`），不需要额外规则。 */
+   的常规块级排版自然下移（前者是普通块，后者是 `display: grid; gap: 5px`），不需要额外规则。
+   ⚠️ 2026-10-17：这里能只写一个 `margin-left` 就成立，前提是 `.is-inline` 基础规则已经
+   回到流内（见上面那段）。改前基础规则是全局绝对定位，这两个选择器特异度与它相同、
+   又不写 `position`，按钮实际钉在 `.modal` 的右上角 —— 这条注释描述的一直是**意图**，
+   不是当时的实际渲染。 */
 .advice-plan-tip-title .advice-detail-toggle.is-inline,
 .advice-plan-tip-alt-copy .advice-detail-toggle.is-inline {
   margin-left: 6px;
