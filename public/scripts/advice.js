@@ -1033,6 +1033,22 @@ export const SCORING = {
   frontierCostCap: 1,
   frontierZeroGoldBonus: 1.2,
   /**
+   * 「整包自身金数」系数的指数（用户 2026-10-17「选配装口径 → 走 A + D」）。
+   *
+   * ```
+   *   ownGoldFactor = (该角色榜上最便宜的整包金数 ÷ 本整包金数) ^ ownGoldFactorPower
+   * ```
+   *
+   * `0` = 关掉这一项（退回「只看队伍金数」的旧口径）；`1` = 完全按金数比例线性折算。
+   * **0.5** 是实测拍的：0.3 太松（E6 均值 11.5）、1.0 太狠（E6 中位只剩 1.6）。
+   * 完整对照见 `frontierBoard` 里 `ownGoldFactor` 那一段注释。
+   *
+   * ⚠️ 改它会同时改「角色性价比」的排序、min-max 区间与**抽卡方案里每一步补金的
+   *    性价比值**（`teamPlan` 的 `charScoreOf` 读的是同一个 `unit.total`）。改之前先跑
+   *    `tools/_probe-own-gold-factor.mjs` 看分布。
+   */
+  ownGoldFactorPower: 0.5,
+  /**
    * 抽卡方案（`budgetPlan`）最多列多少个单位。
    *
    * 方案是**按性价比排序的补强清单**：每个单位各占一条，成本累计到预算为止。
@@ -6184,11 +6200,13 @@ const buildConclusionInner = (envs, options = {}) => {
         eidolon: unit.eidolon,
         lc: unit.lc || null,
         superimp: unit.superimp,
-        // 整包自己的金数（展示用；**不进公式、不参与排序**）。
+        // 整包自己的金数。
         // `gold` 已经是**隐金后**的值（用户 2026-10-11），`rawGold` 是原始值 ——
         // 探针与回归测试靠这两个字段区分「本来就是 0 金」与「被隐金减到 0 金」。
         // ⚠️ `rawGold` / `hiddenCut` **不下发**给浏览器（`projectConclusion` 不投影它们）：
         // 榜面只需要印 `gold`，多带两个数字乘 62 条只是白占载荷。
+        // ⚠️ **2026-10-17 起它进公式了**（配装口径，见下面 `ownGoldFactor` 那一段）——
+        //    改前这里写着「不进公式、不参与排序」，那句话已经作废。
         gold: unit.gold,
         rawGold: unit.rawGold ?? unit.gold,
         hiddenCut: unit.hiddenCut ?? 0,
@@ -6230,6 +6248,67 @@ const buildConclusionInner = (envs, options = {}) => {
         // 用户 2026-10-10（第一轮）：全部副本里「已登场却没有任何成绩、算 0 分」的版本数。
         droppedSeasons: unit.envs.reduce((n, e) => n + (e.droppedSeasons || 0), 0),
       });
+    }
+    /**
+     * **配装口径的「整包自身金数」系数**（用户 2026-10-17：「选配装口径 → 走 A + D」
+     * 「角色总榜仅给出角色的建议，抽卡方案才给配队的建议」）。
+     *
+     * ```
+     *   ownGoldFactor = (该角色榜上最便宜的整包金数 ÷ 本整包金数) ^ SCORING.ownGoldFactorPower
+     *   total        *= ownGoldFactor
+     * ```
+     *
+     * ## 为什么必须加这一项
+     *
+     * 改前「角色性价比」的金数项只看**队伍**金数（`min(1, 该期最便宜 ÷ 本队)`），整包自己
+     * 花多少金**完全不进公式** —— 实测 `r(整包金数, 性价比得分) = 0.030`，一个叫「角色
+     * 性价比」的分项与「这个配装贵不贵」几乎无关。用户要的是**配装**口径：同一个角色，
+     * E6S5 就该比 E0 的性价比低。
+     *
+     * ## 为什么是「该角色最便宜的整包」当分母
+     *
+     * 那是「把这个角色练到能上场的**最低代价**」。拿它当 1，衡量的是「我为了更高的星魂 /
+     * 叠影，多付了几倍」—— 这才是配装溢价，而且**同一角色内部可比**（不同角色的绝对金数
+     * 差异很大，跨角色比金数没有意义）。
+     *
+     * ## 为什么用 `rawGold`（隐金前）
+     *
+     * 与强度用 `storedCost` 同一条理由：性价比量的是「这个配装本身的成本结构」，与「我手上
+     * 有没有」无关 —— 否则同一个整包换个账号就算出另一个性价比。隐金只改展示。
+     *
+     * ## 指数 0.5 是量出来的
+     *
+     * 实测（261 个整包，`tools/_probe-own-gold-factor.mjs`），各星魂档的得分均值：
+     *
+     * | q | E0 | E1 | E6 |
+     * | --- | --- | --- | --- |
+     * | 0.3 | 23.1 | 16.8 | 11.5 |
+     * | **0.5** | **23.1** | **14.6** | **8.6** |
+     * | 0.7 | 23.1 | 12.8 | 6.6 |
+     * | 1.0 | 23.1 | 10.6 | 4.7 |
+     *
+     * 0.5 给出干净的单调梯度（越贵越低），又不会把 E6 整档打到 0（q=1 时 E6 中位数只剩 1.6）。
+     * E0 那一档不动是构造使然：它的系数恒为 1（分母就是它自己）。
+     *
+     * ⚠️ 它**只乘在整包层面**（一个整包一个常数），所以：
+     *   * 不影响「同一个整包内部按版本挑证据行」（乘常数不改变排序）；
+     *   * 改变了**跨整包**的排序与 min-max 区间 —— 这正是要的效果；
+     *   * 界面必须把它印出来（性价比来源表的标题行），否则「Σ逐关卡贡献 × 系数 = 合计」
+     *     这条验算链就断了（`docs/功能要求.md` §7 第 4 条）。
+     */
+    const minGoldByChar = new Map();
+    for (const unit of all) {
+      const g = Math.max(1, Number(unit.rawGold) || 0);
+      const cur = minGoldByChar.get(unit.name);
+      if (cur === undefined || g < cur) minGoldByChar.set(unit.name, g);
+    }
+    for (const unit of all) {
+      const ref = Math.max(1, Number(minGoldByChar.get(unit.name) ?? unit.rawGold) || 1);
+      const own = Math.max(1, Number(unit.rawGold) || 0);
+      const factor = Number(Math.pow(ref / own, SCORING.ownGoldFactorPower).toFixed(6));
+      unit.ownGoldFactor = factor;
+      unit.ownGoldRef = ref;
+      unit.total = Number(((Number(unit.total) || 0) * factor).toFixed(4));
     }
     /**
      * 泛用性的**分组归一**（用户 2026-10-17 第 1 条）。
