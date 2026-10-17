@@ -26,6 +26,8 @@ import {
   recommendPlan, scoreOf,
   teamPullsOf, TIER_PLACEHOLDER, tierLabelsOf, tierMoveText, tierScoreOf, tierTextOf,
   unitPullsOf, VERSION_WINDOW, VERSION_WEIGHTS, VERSION_WEIGHT_ROWS, versionWeightOf, weightInputOf,
+  // 泛用性尺子（2026-10-17 修复：裸 min-max → p5~p95）
+  versatilityExtentOf,
   // 隐金设置（用户 2026-10-11）
   DEFAULT_HIDDEN_COSTS, HIDDEN_COST_IDS, HIDDEN_COST_SETTINGS, NO_HIDDEN_COSTS,
   hiddenReductionOf, normalizeHiddenCosts, packGoldOf,
@@ -4267,6 +4269,68 @@ check('⭐ 泛用性的分子与分母都不含「不用抽就有」的角色（
   assert.equal(out.frontierExtents?.versatility?.lo, 1,
     `泛用性的榜内下界应当只看限定角色（实际 ${out.frontierExtents?.versatility?.lo}）`);
   assert.equal(out.frontierExtents?.versatility?.hi, 3, '上界 = Lim 的 3（它横跨三支队）');
+});
+
+check('⭐ 泛用性的尺子对离群值免疫：样本够时取 p5~p95，样本少时退回 min/max（2026-10-17 修复）', () => {
+  // 背景：裸 min-max 被一个离群值撑满 —— 实测榜面 180 条里 126 条 ≤10 分、中位 3.8。
+  // 现在两端各裁 `SCORING.versatilityExtentTrim`（0.05），超出部分由调用方夹到 0/100。
+  assert.equal(SCORING.versatilityExtentTrim, 0.05, '裁剪比例应为 0.05');
+  const evenly = Array.from({ length: 41 }, (_, i) => i);   // 0..40
+  const ext = versatilityExtentOf(evenly);
+  // 41 个样本：p5 落在下标 2（值 2）、p95 落在下标 38（值 38）——插值恰好命中整数点。
+  assert.ok(Math.abs(ext.lo - 2) < 1e-9 && Math.abs(ext.hi - 38) < 1e-9,
+    `41 个样本的尺子应是 2 ~ 38，实际 ${JSON.stringify(ext)}`);
+  // ② 一个巨大的离群值不许把上界撑到天上（这正是本修复要治的）。
+  const outlier = [...new Array(40).fill(1), 10000];
+  const extOutlier = versatilityExtentOf(outlier);
+  assert.ok(extOutlier.hi < 1000,
+    `离群值 10000 不许当上界（实际 ${extOutlier.hi}）—— 那会让其余 40 个角色全部压到 0 分`);
+  // ③ 小样本（测试夹具 / 合成数据）退回 min/max：三五个点谈分位没有意义。
+  assert.deepEqual(versatilityExtentOf([1, 2, 3]), { lo: 1, hi: 3 },
+    '样本 < versatilityExtentTrimMinSamples 时应退回 min/max');
+  assert.deepEqual(versatilityExtentOf([]), { lo: 0, hi: 0 }, '空样本给退化区间');
+});
+
+check('⭐ 泛用性不再因为「只投了一个副本」被除小（2026-10-17 修复）', () => {
+  // 改前 `versatilityPerTier` 的分母是**全部副本**的权重和（`allEnvWeight`），
+  // 照抄自强度那一侧「缺副本按 0」的口径。可强度量的是成绩（没成绩确实是差），
+  // 泛用性量的是关系网（没投稿 ≠ 不百搭）—— 实测原始量中位随「有数据副本数」
+  // 单调爬升：1 个 0.169 / 2 个 0.385 / 3 个 0.463 / 4 个 0.703 / 5 个 1.044。
+  // 现在分母改成「这个整包有数据的那些副本」的权重和。
+  const availability = {
+    characters: {
+      Hero: { rarity: 5, limited: true }, Other: { rarity: 5, limited: true },
+      A: { rarity: 5, limited: true }, B: { rarity: 5, limited: true },
+      C: { rarity: 5, limited: true }, D: { rarity: 5, limited: true },
+    },
+    lightCones: {},
+  };
+  const row = (hero, mates) => ({
+    cost: 1, tier: 'perfect', actionValue: 0, season: '4.5',
+    members: [{ char: hero, eidolon: 0 }, ...mates.map((c) => ({ char: c, eidolon: 0 }))],
+  });
+  // 绝境（权重 5）里只有 Other；混沌回忆（权重 1）里 Hero 与 A/B/C/D 同队（4 个队友）。
+  const plight = envFixture('aa|plight', [], {
+    mode: 'aa', stage: 'plight', season: '4.5',
+    tierLines: { perfect: 300, target: 500 },
+    frontierRows: [row('Other', ['A', 'B'])],
+  });
+  const moc = envFixture('moc', [], {
+    mode: 'moc', stage: '', season: '4.5',
+    frontierRows: [row('Hero', ['A', 'B', 'C', 'D'])],
+  });
+  const out = buildConclusion([plight, moc], { availability });
+  const hero = (out.frontierPacksByChar?.Hero || []).find((u) => Number(u.eidolon) === 0);
+  assert.ok(hero, 'Hero 应进榜');
+  // 旧口径：(1×4) / (5 + 1) = 0.667 —— 只因为绝境没投稿就被砍到 1/6。
+  assert.equal(hero.versatilityRaw, 4,
+    `泛用性应只在有证据的副本上加权平均 → 4（旧口径会得到 ${(4 / 6).toFixed(3)}，实际 ${hero.versatilityRaw}）`);
+  // 另一个角度：有 2 个副本数据的 Other 仍然是两关的加权平均 (5×2 + 0) / 6 —— 它在 moc
+  // **有登场但没成绩**，那部分按 0 计（版本/关卡两态的既有口径不变）。
+  const other = (out.frontierPacksByChar?.Other || []).find((u) => Number(u.eidolon) === 0);
+  assert.ok(other, 'Other 应进榜');
+  assert.equal(other.versatilityRaw, 2,
+    `Other 只在绝境有证据 → 2（实际 ${other.versatilityRaw}）`);
 });
 
 // ------------------------------------------------------------------- report

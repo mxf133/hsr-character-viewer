@@ -3310,7 +3310,7 @@ const scoreBreakdownTable = (unit) => {
     //    的「不同星魂各自比较」已被第 3 条推翻）。
     // ⚠️ 原始量仍是**双重加权**的（关卡权重 × 版本权重，缺投稿版本计 0），不再是整数并集
     //    —— 那份并集名单在「泛用性来源」折叠块里（`versatilityMembers`）。
-    ['角色泛用性', 'E0/E1/E2 平均（限定的不同队友数，按关卡与版本权重加权）',
+    ['角色泛用性', 'E0/E1/E2 平均（限定的不同队友数，按关卡与版本权重加权，只算有投稿的副本）',
       unit.versatilityRaw, unit.versatilityScore, w.versatility, 'versatility', false],
   ]) {
     const e = extentOf(key, unit);
@@ -3337,10 +3337,17 @@ const scoreBreakdownTable = (unit) => {
         }
         return cell;
       })(),
-      // 原始量那一格带出榜内区间（见上面 `extents` 的注释）；强度那行写绝对刻度。
+      // 原始量那一格带出归一区间（见上面 `extents` 的注释）；强度那行写绝对刻度。
+      // ⚠️ 泛用性的端点 2026-10-17 起是**组内 p5 / p95**（`versatilityExtentOf`），
+      //    所以它不能写「榜内」—— 那三个字在这里是「全榜最小 / 最大」的意思，
+      //    而这两个数已经不是极值了（照旧写会让读者验算出 >100 的分）。
       tipFactor(rawText(raw, integer),
         isAbsolute ? '（绝对刻度 0~100）'
-          : (e ? `（榜内 ${rawText(e.lo, integer)} ~ ${rawText(e.hi, integer)}）` : '')),
+          : (e
+            ? (key === 'versatility'
+              ? `（组内 5%~95% 分位 ${rawText(e.lo, integer)} ~ ${rawText(e.hi, integer)}）`
+              : `（榜内 ${rawText(e.lo, integer)} ~ ${rawText(e.hi, integer)}）`)
+            : '')),
       one(score),
       pct(weight),
       one(num(weight) * num(score)),
@@ -3361,7 +3368,7 @@ const scoreBreakdownTable = (unit) => {
     // ⚠️ 强度**不再榜内归一**（用户 2026-10-14 的口径）：它本来就是 0~100 的绝对刻度。
     //    这里必须分开说，否则读者会拿 min-max 那条式子去验算强度，永远对不上。
     + '（角色强度 = 绝对刻度 0~100；角色性价比：得分 = 100 ×（原始量 − 榜内最小）/（榜内最大 − 榜内最小）；'
-    + '角色泛用性同式，但**最小 / 最大取本星魂档自己那一把尺子**）'));
+    + '角色泛用性同式，但尺子取**所在组**（E6 组 / 低档组）的 5%~95% 分位，超出按 0 / 100 夹逼）'));
   const table = tipTable(
     ['分项', '原始量', '得分', '权重', '贡献'],
     rows,
@@ -3643,7 +3650,10 @@ const versatilitySourceBlock = (unit) => {
       ? `得分 = 100 ×（${(Number(unit.versatilityRaw) || 0).toFixed(1)} − ${Number(e.lo).toFixed(1)}）`
         + `/（${Number(e.hi).toFixed(1)} − ${Number(e.lo).toFixed(1)}）`
         + ` = ${(Number(unit.versatilityScore) || 0).toFixed(1)}`
-        + '（榜内最小 ~ 最大就是这一项的全部刻度）'
+        // ⚠️ 不能说「榜内最小 ~ 最大」：2026-10-17 起端点是**组内 p5 / p95**
+        //    （`versatilityExtentOf`），超出区间的原始量被夹到 0 / 100。
+        //    照旧写「最小 ~ 最大」会让读者拿最高分角色验算出 >100，以为算错了。
+        + '（组内 5%~95% 分位，超出按 0 / 100 夹逼）'
       : '（本次载荷没带榜内区间，所以只能看上面的原始量。）'));
   box.appendChild(text('div', 'muted small advice-source-note',
     '开拓者的各命途算**同一个人**（否则一个开拓者会被数成 5 个不同队友）；'
