@@ -888,8 +888,9 @@ p.advice-note {
 
 .char-name { font-size: 15px; font-weight: 600; }
 /* 角色卡副标题：命途 · 属性（用户 2026-10-17 第 2 条）。
-   属性按游戏里的七种颜色上色，扫一眼就能分出「风 / 火 / 量子」；命途保持中性灰，
-   两种信息一眼可分，也不必再画一枚图标。 */
+   属性按游戏里的七种颜色上色，扫一眼就能分出「风 / 火 / 量子」；命途保持中性灰。
+   2026-10-18 起两半各挂**游戏内那枚图标**（用户「命途和属性需要显示图标」），
+   所以这一行改成 inline-flex 对齐 —— 图标 13px、与 11.5px 的文字基线对齐。 */
 .char-sub {
   display: flex;
   align-items: center;
@@ -898,21 +899,30 @@ p.advice-note {
   font-size: 11.5px;
   color: var(--text-muted);
 }
-.char-path { color: var(--text-dim); }
+.char-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+}
 .char-sub-dot { color: var(--text-muted); opacity: 0.65; }
 .char-el {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   color: var(--el-color, var(--text-dim));
 }
-.char-el::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 22%, transparent);
+/* 命途 / 属性图标（`game-icons.js` 给的那两张游戏素材）。
+   ⚠️ 素材本身是白的（命途是白色刻痕），所以在深空主题上直接可见；
+   属性图标自带七色，不要在这里再上色 / 反色，否则会盖掉游戏原本的配色。 */
+.char-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  object-fit: contain;
+  vertical-align: -2px;
+  /* 命途那枚是纯白刻痕，压一点亮度免得比名字还抢眼（实测 0.92 偏灰，取 0.95） */
+  opacity: 0.95;
 }
 /* 七种属性的颜色（键与 `ELEMENT_COLOR_KEYS` 一致；`Thunder` 也归一成 `lightning`）。 */
 .char-el[data-element="physical"] { --el-color: #c9d4e8; }
@@ -2982,6 +2992,9 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 }
 .char-hero-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .char-hero-tags span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 999px;
@@ -2991,6 +3004,8 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   white-space: nowrap;
   font-weight: 500;
 }
+/* 标签里的命途 / 属性图标（用户 2026-10-18）：比角色卡上那枚小一号，落在 11px 字里不撑高。 */
+.char-hero-tags .char-icon { width: 12px; height: 12px; vertical-align: 0; }
 .char-hero-cone {
   font-size: 12px;
   color: var(--text-muted);
@@ -3652,7 +3667,9 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
 }
 .vroster-meta { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .vroster-name { font-size: 13.5px; font-weight: 600; }
-.vroster-sub { font-size: 11.5px; color: var(--text-dim); }
+/* 小字行：命途图标 + 「命途 · 星级 · 限定」。图标 12px，与 11.5px 字对齐。 */
+.vroster-sub { font-size: 11.5px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.vroster-sub .char-icon { width: 12px; height: 12px; vertical-align: 0; }
 .vroster-tools { display: flex; align-items: center; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
 .vroster-select {
   padding: 4px 6px;

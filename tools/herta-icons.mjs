@@ -26,6 +26,8 @@ import { mkdir, readdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadI18n } from '../src/server/archive.js';
+// 命途 / 属性图标的文件名清单与界面共用一份（`game-icons.js` 没有 DOM 顶层依赖，可直接 import）。
+import { ELEMENT_ICON_FILES, PATH_ICON_FILES } from '../public/scripts/game-icons.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT_ROOT = resolve(HERE, '..', 'theherta', 'icons');
@@ -75,6 +77,11 @@ const groups = [];
 if (ONLY === 'all' || ONLY === 'icons') {
   groups.push({ label: '头像 icon/character', table: i18n.icons.characters });
   groups.push({ label: '光锥图标 icon/light_cones', table: i18n.icons.lightCones });
+  // 命途 / 属性图标（2026-10-18 起角色卡上要画）：这两组**不在 `i18n.icons` 表里**
+  // （那张表是按角色 / 光锥名登记的），清单从界面用的同一份映射导出 —— 9 + 7 张，
+  // 一共几十 KB。漏了它们时 `/icons` 会 302 到 CDN（能看，但断网就空）。
+  groups.push({ label: '命途 icon/path', files: PATH_ICON_FILES.map((n) => `icon/path/${n}.png`) });
+  groups.push({ label: '属性 icon/element', files: ELEMENT_ICON_FILES.map((n) => `icon/element/${n}.png`) });
 }
 if (ONLY === 'all' || ONLY === 'previews') {
   groups.push({ label: '立绘 preview/character', table: i18n.icons.previews?.characters });
@@ -86,6 +93,9 @@ for (const g of groups) {
   for (const [key, url] of Object.entries(g.table || {})) {
     if (!url || typeof url !== 'string' || !url.startsWith(base)) continue;
     items.push({ group: g.label, key, url, rel: url.slice(base.length + 1) });
+  }
+  for (const rel of g.files || []) {
+    items.push({ group: g.label, key: rel, url: `${base}/${rel}`, rel });
   }
 }
 if (!items.length) {

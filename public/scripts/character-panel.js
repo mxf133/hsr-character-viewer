@@ -10,6 +10,7 @@ import {
   effectiveSubstatHits, elementName, lightConeOf, pathName, relicsOf, skillsOf, slotName,
   statValue, statsOf,
 } from './format.js';
+import { elementIconUrl, gameIcon, pathIconUrl } from './game-icons.js';
 
 /** 一行「标签 / 值」。角色信息页与抽卡推荐页都用它，所以放在这里导出。 */
 export const kv = (label, value) => {
@@ -106,21 +107,28 @@ export const characterPanel = (character, options = {}) => {
     name.textContent = character?.name || '角色';
     heroText.appendChild(name);
     const tags = [];
-    if (character?.rarity) tags.push(`${character.rarity}★`);
-    if (character?.element) tags.push(elementName(character.element));
+    if (character?.rarity) tags.push({ text: `${character.rarity}★` });
+    // 属性 / 命途各挂一枚游戏内图标（用户 2026-10-18）。
+    if (character?.element) {
+      tags.push({ text: elementName(character.element), icon: elementIconUrl(character.element) });
+    }
     // 命途只在**拿到名字**时显示：快照里给的是数字 id（`base_type`），
     // `pathName(1)` 会原样返回「1」，挂在标签里就是一枚没意义的「1」（实测踩过）。
     const path = character?.path ? pathName(character.path) : '';
-    if (path && path !== '未知' && !/^\d+$/.test(String(path))) tags.push(path);
-    if (character?.level) tags.push(`Lv.${character.level}`);
+    if (path && path !== '未知' && !/^\d+$/.test(String(path))) {
+      tags.push({ text: path, icon: pathIconUrl(character.path) });
+    }
+    if (character?.level) tags.push({ text: `Lv.${character.level}` });
     const rank = Number(character?.rank ?? character?.actived_constellation_num ?? 0);
-    tags.push(rank > 0 ? `星魂 E${rank}` : '未解锁星魂');
+    tags.push({ text: rank > 0 ? `星魂 E${rank}` : '未解锁星魂' });
     const tagRow = document.createElement('div');
     tagRow.className = 'char-hero-tags';
     for (const tag of tags) {
       const span = document.createElement('span');
       span.className = 'tag-cyan';
-      span.textContent = tag;
+      const icon = gameIcon(tag.icon);
+      if (icon) span.appendChild(icon);
+      span.appendChild(document.createTextNode(tag.text));
       tagRow.appendChild(span);
     }
     heroText.appendChild(tagRow);

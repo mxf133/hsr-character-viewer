@@ -19,6 +19,9 @@
 // 所以下拉框会**排除已被别人选走的光锥** —— 这样界面选什么、服务端就挂什么，
 // 不会出现「给甲选了某把锥，服务端却按专属把它挂到乙身上」这种错位。
 
+// 命途图标（用户 2026-10-18：虚拟账号的角色列表也要显示命途/属性图标）。
+import { gameIcon, pathIconUrl } from './game-icons.js';
+
 const ROOT_ID = 'virtualRosterModal';
 
 /** 星魂的合法停靠点（用户 2026-10-13 第 4 条；与服务端 `EIDOLON_TIERS` 同一份口径）。 */
@@ -238,6 +241,21 @@ export const openVirtualRoster = async (options) => {
    */
   const preferredConeOf = (key) => signatureOf(key) || refs.popularLightCones?.[key] || null;
   const pathName = (path) => pathLabels[path] || path || '—';
+  /**
+   * 一行小字「命途 · 星级」——**命途前面挂游戏内那枚图标**（用户 2026-10-18：
+   * 「命途和属性需要显示图标……虚拟账户也要这样显示」）。
+   *
+   * ⚠️ 必须是「建 span + append 图标 + append 文字」而不是 `textContent`：
+   * 开拓者那一行是**原地刷新**的（`refreshTrailblazerRow()` 不改 DOM 结构，只换文字），
+   * 直接写 `textContent` 会把这枚图标一起抹掉。
+   */
+  const subLine = (className, pathKey, text) => {
+    const node = el('span', className);
+    const icon = gameIcon(pathIconUrl(pathKey));
+    if (icon) node.appendChild(icon);
+    node.appendChild(document.createTextNode(text));
+    return node;
+  };
 
   // 名单：`chars` = 角色 → 星魂档；`cones` = 光锥 → 叠影（**去重的持有集合**）；
   //       `charCones` = 角色 → 装备的光锥（**逐角色装备，权威**）；
@@ -422,7 +440,7 @@ export const openVirtualRoster = async (options) => {
     const meta = el('div', 'vroster-meta');
     meta.append(
       el('span', 'vroster-name', isTB ? trailblazerLabel(charKey) : zhOf(charKey)),
-      el('span', 'vroster-sub', `${pathName(charPaths[charKey])} · `
+      subLine('vroster-sub', charPaths[charKey], `${pathName(charPaths[charKey])} · `
         + `${Number(availability.characters?.[charKey]?.rarity) || 4}★`
         + `${availability.characters?.[charKey]?.limited === false ? '' : ' · 限定'}`),
     );
@@ -554,8 +572,11 @@ export const openVirtualRoster = async (options) => {
     if (img) img.src = trailblazerIconUrl(trailblazerId, trailblazerIconSample);
     const subs = trailblazerRow.querySelectorAll('.vroster-sub');
     if (subs[0]) {
-      subs[0].textContent = `${pathName(charPaths[avatar.form])} · `
-        + `${Number(availability.characters?.[avatar.form]?.rarity) || 5}★ · 开拓者`;
+      // 命途图标跟着换形态一起换：重建这一格（`textContent` 会连图标一起抹掉）。
+      const fresh = subLine('vroster-sub', avatar.form,
+        `${pathName(charPaths[avatar.form])} · `
+        + `${Number(availability.characters?.[avatar.form]?.rarity) || 5}★ · 开拓者`);
+      subs[0].replaceWith(fresh);
     }
     if (subs[1]) {
       subs[1].textContent = `开拓者 · ${avatar.gender === 'male' ? '男主（穹）' : '女主（星）'}`

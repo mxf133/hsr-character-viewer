@@ -195,6 +195,24 @@ node bin/serve.mjs --port 8360 --host 127.0.0.1   # 或双击 start.bat（会顺
 
 ### 3.1 已完成（且都有回归测试钉住）
 
+- **角色信息页的命途 / 属性图标 + 限定数量（v4.6.123）**：九个命途与七种属性各有一枚
+  游戏内图标（`public/scripts/game-icons.js`，素材走 `/icons` 镜像 + CDN 兜底），画在
+  **角色卡副标题**、**角色面板标签**、**虚拟账号角色编辑器**三处。虚拟账号原来**没有属性**
+  （数据集里从没有 `element`，只有真实账号的 `index.avatar_list` 带）—— 新增
+  `src/server/character-elements.js`（`avatar_id → 属性`，93 条）随 `/api/archive` 的
+  `refs.characterElements` 下发，前端 `withCharacterMeta()` 只补缺；覆盖度由 `herta-test`
+  的「93/93」钉住。总览卡片改成「**取到什么画什么**」：`world_level`（均衡等级）与
+  `equipment_num`（光锥数量）**米游社不给**（前者是原神的字段，后者是照原神 stats 键猜的），
+  取不到就**整张卡不画**，不再挂占位的「—」；`活跃天数` 走公开卡片 `card.data`（实测有）。
+  **限定角色 / 限定光锥**数量由 `src/server/limited-count.js` 算好随快照下发（口径只认
+  `unit-availability.json` 的 `limited` = 58 + 58，全部 5★ 限定）：真实账号只能数到
+  「可见角色 / 已装备光锥」（米游社没有光锥仓库接口）→ 标「（可见）」；虚拟账号用
+  `virtualRoster.cones` 完整名单、是准数。**总成本**（`总成本 N 金`）＝ 限定角色
+  (本体 1 + 星魂) + 限定光锥(本体 × 叠影) 的**原始**金数，**不减隐金**（隐金单位按全价算；
+  隐金减免是队伍级口径，账号级没法套），与 `packGoldOf` 同口径（E6S5 = 12 金）。
+  同样由 `limited-count.js` 的 `cost` 字段下发，虚拟账号的光锥叠影走 `virtualRoster.cones`
+  （快照路由传 `ownedConeRanks`）。见 `docs/功能要求.md` §10。
+
 - **两套副本权重，相互独立**（v4.6.25）：`advice.js` 的 `WEIGHT_SCOPES = ['plan',
   'frontier']`，`setEnvWeights(weights, scope)` / `envWeightOf(mode, stage, scope)`
   各存一份覆盖；`buildConclusion(envs, { weights, frontierWeights })` 两个口径各一套
@@ -360,6 +378,8 @@ node bin/serve.mjs --port 8360 --host 127.0.0.1   # 或双击 start.bat（会顺
 │     ├─ archive.js           # theherta 数据集读取与聚合（含 archiveFrontier）
 │     ├─ conclusion.js        # /api/archive/conclusion：取齐 5 个环境 → buildConclusion → 瘦身下发
 │     ├─ records.js           # 米游社四个高难副本的战斗记录归一化
+│     ├─ character-elements.js # avatar_id → 属性（93 条，虚拟账号的图标只能靠它）
+│     ├─ limited-count.js     # 限定角色 / 限定光锥数量（真实账号=可见范围，虚拟账号=名单原文）
 │     ├─ compare.js store.js static.js watchdog.js archive-update.js
 ├─ public/                    # 前端（无构建）
 │  ├─ index.html              # 两个分页的全部 DOM
@@ -371,6 +391,7 @@ node bin/serve.mjs --port 8360 --host 127.0.0.1   # 或双击 start.bat（会顺
 │     ├─ battle-record.js     # ① 战斗记录渲染 + 角色 chip → 浮层
 │     ├─ character-panel.js   # 角色面板（属性/光锥/技能/遗器/立绘），两页共用
 │     ├─ character-modal.js   # 那个浮层本身，两页共用
+│     ├─ game-icons.js        # 命途 / 属性图标的地址（9 + 7 张游戏素材，/icons + CDN 兜底）
 │     └─ format.js            # 快照字段解析与本地化（charactersOf/relicsOf/elementName …）
 ├─ tools/                     # 采集、构建、测试、探针、留档（全部 node 脚本）
 ├─ theherta/                  # 数据集（archive.json ~21MB 入库；raw/boss-data 不入库）
