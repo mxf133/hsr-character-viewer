@@ -336,12 +336,12 @@ check('行动值前沿：0 行动值且取到该期最省金 = 顶格档 100，*
 
 check('行动值前沿：混合成绩按**副本权重**摊薄（0 与非 0 各占一关）', () => {
   const row = avRowOf(AV_MIXED_MEMBERS);
-  // 期望值现算：
-  //   env1 av=0 但花 12 金（该期最省 10）→ 顶格档 100×10/12 = 83.333…
-  //   env2 av=320（那一期没有 0 行动值基准）→ 封顶 90 × 强度曲线(320)
+  // 期望值现算（用户 2026-10-17 晚：强度只看行动值，金数不再折分）：
+  //   env1 av=0 → 100（改前是 100×10/12 = 83.33，因为那一期最省 10 金、这队 12 金）
+  //   env2 av=320（那一期没有 0 行动值基准）→ 90 × 强度曲线(320)
   const perf = perfFactorOf(320, AV_TIER_LINES, true, 'target', SCORING.strengthLineWeights);
   const env2Strength = SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
-  const env1Strength = (100 * 10) / 12;
+  const env1Strength = 100;
   const total = (1 * env1Strength + 1 * env2Strength) / 2;   // 两关权重都是 1
   // 投入项已整条删除（用户 2026-10-17 第 2 条）：强度就是逐关加权平均本身。
   const expect = total;

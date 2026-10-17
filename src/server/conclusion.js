@@ -516,6 +516,9 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null, withVideo = false) =>
       // ⚠️ 与 `absentSeasons` 含义**相反**（「还没轮到它」vs「明确的差」），界面必须分开报。
       // （v4.6.78 删掉了 `unrankedSeasons`：池 = 全部成绩后「有人用但没进池」不存在。）
       droppedSeasons: env.droppedSeasons ?? 0,
+      // ⚠️ 逐副本的 `inheritedSeasons` **不下发**：界面那句说明只读整包级的那个数
+      //    （`unit.inheritedSeasons`），而 397 个 (整包×副本) 组合各带一个字段要多吃
+      //    ~10 KB，把 660 KB 硬上限顶破（实测 661 KB）。要按关卡解释继承时再加回来。
       // 这个整包最早可能存在的版本（角色与光锥里较晚登场的那个）。
       bornSeason: env.bornSeason ?? null,
       members: (env.members || []).map((m) => ({
@@ -585,6 +588,9 @@ const slimCharacterPack = (unit, i18n, maps) => ({
   limitedCones: unit.limitedCones ?? 0,
   absentSeasons: unit.absentSeasons ?? 0,
   droppedSeasons: unit.droppedSeasons ?? 0,
+  // 用户 2026-10-17 晚：已登场却缺证据、但继承了更便宜同角色整包的分 —— 版本数。
+  // ⚠️ 只在 >0 时下发（660 KB 硬上限）。
+  ...(unit.inheritedSeasons > 0 ? { inheritedSeasons: unit.inheritedSeasons } : {}),
   envs: (unit.envs || []).map((env) => ({
     id: env.id,
     envLabel: env.envLabel,
@@ -624,6 +630,9 @@ const slimCharacterPack = (unit, i18n, maps) => ({
     seasonCount: env.seasonCount ?? null,
     absentSeasons: env.absentSeasons ?? 0,
     droppedSeasons: env.droppedSeasons ?? 0,
+    // ⚠️ 逐副本的 `inheritedSeasons` **不下发**（理由见 `slimFrontierUnit` 那处：
+    //    397 个组合 × 25 字节会把 660 KB 硬上限顶破）。整包级那个数照常下发。
+
     bornSeason: env.bornSeason ?? null,
     // 最佳证据那支**完整队伍**（含每位队友的星魂档与光锥）—— 用户要的就是这个。
     members: (env.members || []).map((m) => ({
