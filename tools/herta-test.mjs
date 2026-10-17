@@ -11,7 +11,7 @@ import { resolve } from 'node:path';
 import { GAMES, enabledGames, isGameEnabled } from '../src/mihoyo/constants.js';
 import {
   MODE_LABELS, archiveExists, archiveFrontier, archiveFrontierAll, archiveIndex, archiveStats,
-  archiveTeams, modeKey, resolveMode, seasonEnemies, seasonSort,
+  archiveTeams, loadI18n, modeKey, resolveMode, seasonEnemies, seasonSort,
 } from '../src/server/archive.js';
 import {
   EIDOLON_TIERS, EVIDENCE_HINT, EVIDENCE_LABEL, MODE_ORDER, SCORING, TIER_SCORE,
@@ -4404,6 +4404,187 @@ check('⭐ 泛用性不再因为「只投了一个副本」被除小（2026-10-1
   assert.equal(other.versatilityRaw, 2,
     `Other 只在绝境有证据 → 2（实际 ${other.versatilityRaw}）`);
 });
+
+// ------------------------------------------- 命途 / 属性图标与限定数量（2026-10-18）
+//
+// 四个新功能各有一条钉子：
+//   ① `character-elements.js` 的属性表必须**覆盖全部角色**（少一个就有一个角色
+//      永远画不出属性图标，而且不会有报错 —— 只能靠这里钉）；
+//   ② `game-icons.js` 的图标地址：数据集里的 9 条命途 + 7 种属性都要能对上素材名；
+//   ③ 认不出的键返回空串（宁可少一枚图标，也不画错的）；
+//   ④ 限定数量的统计口径：真实账号按「可见角色 / 已装备锥」，虚拟账号按名单原文。
+await (async () => {
+  console.log('\n[6] 命途 / 属性图标与限定数量');
+  const { ELEMENT_BY_AVATAR_ID, elementOfAvatarId } = await import('../src/server/character-elements.js');
+  const { limitedCountOf } = await import('../src/server/limited-count.js');
+  const { ELEMENT_ICON_FILES, PATH_ICON_FILES, elementIconUrl, pathIconUrl } = await import('../public/scripts/game-icons.js');
+  const i18n = await loadI18n();
+  const index = await archiveIndex();
+  const availability = index?.refs?.availability || {};
+  const { FORM_AVATAR_ID } = await import('../src/server/character-debut.js');
+
+  // ---- ① 属性表覆盖全部角色 -------------------------------------------------
+  check('属性表覆盖 unit-availability 里的每个角色（93/93）', () => {
+    const byName = new Map();
+    for (const [id, v] of Object.entries(i18n.charactersById || {})) {
+      if (v?.en) byName.set(v.en, Number(id));
+      if (v?.cn) byName.set(v.cn, Number(id));
+    }
+    const missing = [];
+    for (const key of Object.keys(availability.characters || {})) {
+      const id = FORM_AVATAR_ID[key] || byName.get(key) || byName.get(i18n.characters?.[key]);
+      if (!id || !elementOfAvatarId(id)) missing.push(`${key}（id ${id ?? '?'}）`);
+    }
+    assert.deepEqual(missing, [], `这些角色没有属性：${missing.join('、')}`);
+  });
+
+  check('属性表与 FORM_AVATAR_ID 的多形态 id 一致', () => {
+    // 三月七：1001 存护（冰）/ 1224 巡猎（虚数）；开拓者五个形态各一条。
+    assert.equal(ELEMENT_BY_AVATAR_ID[1001], 'Ice');
+    assert.equal(ELEMENT_BY_AVATAR_ID[1224], 'Imaginary');
+    assert.equal(ELEMENT_BY_AVATAR_ID[8001], 'Physical');
+    assert.equal(ELEMENT_BY_AVATAR_ID[8003], 'Fire');
+    assert.equal(ELEMENT_BY_AVATAR_ID[8005], 'Imaginary');
+    assert.equal(ELEMENT_BY_AVATAR_ID[8007], 'Ice');
+    assert.equal(ELEMENT_BY_AVATAR_ID[8009], 'Thunder');
+    // 偶数 id 是同形态的女主（虚拟账号头像随机挑 8001~8010），要归一到一个属性；
+    // 但**只对开拓者**这么做 —— 三月七 1224-1 = 1223 是别人，不能套。
+    assert.equal(elementOfAvatarId(8002), 'Physical');
+    assert.equal(elementOfAvatarId(8004), 'Fire');
+    assert.equal(elementOfAvatarId(8010), 'Thunder');
+    assert.notEqual(elementOfAvatarId(1223), elementOfAvatarId(1224));
+  });
+
+  // ---- ② 图标地址 -----------------------------------------------------------
+  check('数据集里出现的每一条命途都有图标', () => {
+    const paths = new Set(Object.values(index.refs?.characterPaths || {}));
+    assert.ok(paths.size >= 8, `命途只有 ${paths.size} 种，测试前提不成立`);
+    const missing = [...paths].filter((p) => !pathIconUrl(p));
+    assert.deepEqual(missing, [], `这些命途没有图标：${missing.join('、')}`);
+  });
+
+  check('七种属性都有图标，且 `Thunder` / `Lightning` 指向同一张', () => {
+    for (const el of ['Physical', 'Fire', 'Ice', 'Thunder', 'Wind', 'Quantum', 'Imaginary']) {
+      assert.ok(elementIconUrl(el), `${el} 没有图标`);
+    }
+    assert.equal(elementIconUrl('Thunder'), elementIconUrl('Lightning'));
+    assert.match(elementIconUrl('Fire'), /^\/icons\/icon\/element\/Fire\.png\?fallback=https%3A%2F%2Fcdn\.jsdelivr\.net%2F/);
+    assert.match(pathIconUrl('Knight'), /^\/icons\/icon\/path\/Preservation\.png\?fallback=/);
+  });
+
+  check('认不出的命途 / 属性给空串（不猜）', () => {
+    assert.equal(pathIconUrl('不存在的命途'), '');
+    assert.equal(pathIconUrl(''), '');
+    assert.equal(pathIconUrl(null), '');
+    assert.equal(elementIconUrl('Aether'), '');
+    assert.equal(elementIconUrl(undefined), '');
+  });
+
+  check('镜像清单：9 张命途 + 7 张属性，无重复', () => {
+    assert.equal(PATH_ICON_FILES.length, 9, `命途素材应有 9 张，实际 ${PATH_ICON_FILES.length}`);
+    assert.equal(ELEMENT_ICON_FILES.length, 7, `属性素材应有 7 张，实际 ${ELEMENT_ICON_FILES.length}`);
+    assert.equal(new Set(PATH_ICON_FILES).size, 9);
+    assert.equal(new Set(ELEMENT_ICON_FILES).size, 7);
+  });
+
+  // ---- ③ 限定数量 -----------------------------------------------------------
+  // 用真实数据集里的键搭一份最小快照：一个限定 5★ + 一个常驻 5★ + 一个认不出的 id。
+  const idOfChar = (en) => Number(Object.entries(i18n.charactersById || {})
+    .find(([, v]) => v?.en === en)?.[0]);
+  const coneOf = (en) => {
+    const url = i18n.icons?.lightCones?.[en] || '';
+    const id = Number(/\/(\d+)\.png/.exec(String(url).split('?')[0])?.[1]) || null;
+    return { id, name: i18n.lightCones?.[en] || en };
+  };
+  const limitedCharKey = Object.keys(availability.characters || {})
+    .find((k) => availability.characters[k].limited === true && !/\(/.test(k));
+  const standardCharKey = Object.keys(availability.characters || {})
+    .find((k) => availability.characters[k].limited === false
+      && availability.characters[k].rarity === 5 && !/Trailblazer|March/.test(k));
+  const limitedConeKey = Object.keys(availability.lightCones || {})
+    .find((k) => availability.lightCones[k].limited === true);
+  const standardConeKey = Object.keys(availability.lightCones || {})
+    .find((k) => availability.lightCones[k].limited === false
+      && availability.lightCones[k].rarity === 5 && i18n.lightCones?.[k]);
+  assert.ok(limitedCharKey && standardCharKey && limitedConeKey && standardConeKey,
+    '数据集里找不到「限定 / 常驻」样本，测试前提不成立');
+
+  const snapshot = {
+    source: 'real',
+    characters: [
+      { id: idOfChar(limitedCharKey), name: i18n.characters[limitedCharKey], equip: coneOf(limitedConeKey) },
+      { id: idOfChar(standardCharKey), name: i18n.characters[standardCharKey], equip: coneOf(standardConeKey) },
+      { id: 999999, name: '不存在的角色', equip: { id: 99999999, name: '不存在的光锥' } },
+    ],
+  };
+
+  check('真实账号：限定角色 / 限定光锥只数可见范围，认不出的不计入', () => {
+    const out = limitedCountOf({ snapshot, availability, i18n });
+    assert.equal(out.characters, 1, `限定角色应为 1（${limitedCharKey}），实际 ${out.characters}`);
+    assert.equal(out.cones, 1, `限定光锥应为 1（${limitedConeKey}），实际 ${out.cones}`);
+    assert.equal(out.charactersScope, 'visible');
+    assert.equal(out.conesScope, 'equipped');
+    assert.equal(out.unknown.characters, 1, '认不出的角色要记进 unknown');
+    assert.equal(out.unknown.cones, 1, '认不出的光锥要记进 unknown');
+    // 总成本（原始，不减隐金）：E0 限定角色 1 金 + S1 限定光锥 1 金 = 2 金。
+    assert.equal(out.cost.characters, 1, `限定角色成本应为 1（E0），实际 ${out.cost.characters}`);
+    assert.equal(out.cost.cones, 1, `限定光锥成本应为 1（S1），实际 ${out.cost.cones}`);
+    assert.equal(out.cost.total, 2, `总成本应为 2 金，实际 ${out.cost.total}`);
+  });
+
+  check('总成本按原始金数：E6S5 = 12（角色 7 + 光锥 5），常驻不算', () => {
+    const snap = {
+      source: 'real',
+      characters: [
+        // 限定角色 E6（7 金）+ 限定光锥 S5（5 金）
+        { id: idOfChar(limitedCharKey), name: i18n.characters[limitedCharKey], rank: 6, equip: { ...coneOf(limitedConeKey), rank: 5 } },
+        // 常驻角色 E6 + 常驻光锥 S5：一律 0 金
+        { id: idOfChar(standardCharKey), name: i18n.characters[standardCharKey], rank: 6, equip: { ...coneOf(standardConeKey), rank: 5 } },
+      ],
+    };
+    const out = limitedCountOf({ snapshot: snap, availability, i18n });
+    assert.equal(out.cost.characters, 7, `E6 限定角色成本应为 7，实际 ${out.cost.characters}`);
+    assert.equal(out.cost.cones, 5, `S5 限定光锥成本应为 5，实际 ${out.cost.cones}`);
+    assert.equal(out.cost.total, 12, `E6S5 总成本应为 12，实际 ${out.cost.total}`);
+  });
+
+  check('虚拟账号总成本按名单原文的叠影算', () => {
+    const out = limitedCountOf({
+      snapshot: { ...snapshot, source: 'virtual' },
+      ownedCones: [limitedConeKey, Object.keys(availability.lightCones)
+        .find((k) => availability.lightCones[k].limited === true && k !== limitedConeKey)],
+      // 一把 S5、一把 S3
+      ownedConeRanks: {
+        [limitedConeKey]: 5,
+        [Object.keys(availability.lightCones)
+          .find((k) => availability.lightCones[k].limited === true && k !== limitedConeKey)]: 3,
+      },
+      availability,
+      i18n,
+    });
+    assert.equal(out.cones, 2, `两把限定锥，实际 ${out.cones}`);
+    assert.equal(out.cost.cones, 8, `S5 + S3 光锥成本应为 8，实际 ${out.cost.cones}`);
+  });
+
+  check('虚拟账号：按名单原文数（含未装备的锥），scope 为 owned', () => {
+    const out = limitedCountOf({
+      snapshot: { ...snapshot, source: 'virtual' },
+      // 名单里两把限定 + 一把常驻：装备的只有其中一把。
+      ownedCones: [limitedConeKey, 'A Secret Vow', standardConeKey, Object.keys(availability.lightCones)
+        .find((k) => availability.lightCones[k].limited === true && k !== limitedConeKey)],
+      availability,
+      i18n,
+    });
+    assert.equal(out.cones, 2, `按名单应有 2 把限定锥，实际 ${out.cones}`);
+    assert.equal(out.conesScope, 'owned');
+    assert.equal(out.charactersScope, 'owned');
+  });
+
+  check('拿不到数据集时返回 null（界面不画这两张卡，而不是写 0）', () => {
+    assert.equal(limitedCountOf({ snapshot, availability: {}, i18n }), null);
+    assert.equal(limitedCountOf({ snapshot: null, availability, i18n }), null);
+  });
+})();
 
 // ------------------------------------------------------------------- report
 console.log(`\n抽卡推荐测试: ${passed} passed, ${failed} failed`);if (failed) {

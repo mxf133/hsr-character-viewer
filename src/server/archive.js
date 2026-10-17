@@ -16,6 +16,7 @@ import {
 } from '../../public/scripts/advice.js';
 import { applyCharacterIdOverrides } from './character-icon-ids.js';
 import { buildDebutOrder, FORM_AVATAR_ID, DEBUT_ID_ALIASES } from './character-debut.js';
+import { ELEMENT_BY_AVATAR_ID } from './character-elements.js';
 
 const DEFAULT_DIR = resolve(process.cwd(), 'theherta');
 
@@ -471,6 +472,19 @@ export const archiveIndex = async () => {
        * 这里只是**把它发出去**，不在服务端再造一份。
        */
       formAvatarIds: FORM_AVATAR_ID,
+      /**
+       * `{ avatar_id: 属性 }`（93 条，见 `character-elements.js`）。
+       *
+       * 为什么要下发（用户 2026-10-18「命途和属性要显示图标，**虚拟账户也要**」）：
+       * 真实账号的 `element` 来自米游社 `index.avatar_list`，而**虚拟账号的快照是本地
+       * 造的、根本没有那个数组** —— 于是虚拟账号的角色卡一直只有命途没有属性，
+       * 属性图标也就无从画起。这张表按 id 兜底，两类账号走同一条渲染路径。
+       *
+       * ⚠️ 只补缺、不改原件：快照自带的 `element`（真实账号）永远优先，见
+       * `public/scripts/app.js` 的 `withCharacterMeta()`。
+       * ⚠️ 数据量约 1.4 KB，随 `/api/archive`（实测 168 KB）一起下发，不单独开接口。
+       */
+      characterElements: ELEMENT_BY_AVATAR_ID,
       // 星级与限定标记，给成本计算与「限定」标签用
       availability: data.refs?.availability || { characters: {}, lightCones: {} },
       /**

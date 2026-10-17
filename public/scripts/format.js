@@ -58,6 +58,9 @@ const PATH_LABELS = {
   Knight: '存护',
   Priest: '丰饶',
   Memory: '记忆',
+  // 欢愉（4.6 起的新命途，开拓者•欢愉 / 真珠）。这张表原来漏了它，于是角色面板与
+  // 抽卡页会把 `Elation` 原样印出来 —— 权威那份是服务端 `refs.pathLabels`，这里只是兜底。
+  Elation: '欢愉',
   // The API sometimes returns the icons' English keys with different casing.
   warrior: '毁灭',
   rogue: '巡猎',
@@ -67,6 +70,7 @@ const PATH_LABELS = {
   knight: '存护',
   priest: '丰饶',
   memory: '记忆',
+  elation: '欢愉',
 };
 
 const ELEMENT_LABELS = {

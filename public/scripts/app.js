@@ -14,6 +14,8 @@ import { kv } from './character-panel.js';
 import { openCharacterPanel } from './character-modal.js';
 import { openVirtualRoster } from './virtual-roster.js';
 import { accessHeaders, readAccessToken } from './access.js';
+// 命途 / 属性 的游戏内图标（九条命途 + 七种属性），见 game-icons.js。
+import { elementIconUrl, gameIcon, pathIconUrl } from './game-icons.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -963,9 +965,10 @@ const loadSnapshot = async (refresh = false) => {
   }
 };
 
-const statCard = (label, value, small = false) => {
+const statCard = (label, value, small = false, hint = '') => {
   const box = document.createElement('div');
   box.className = 'stat';
+  if (hint) box.title = hint;
   const l = document.createElement('div');
   l.className = 'stat-label';
   l.textContent = label;
@@ -1055,6 +1058,28 @@ const pathByIdOf = (formAvatarIds, paths) => {
 };
 
 /**
+ * `avatar_id → 属性`（`refs.characterElements`，服务端 `character-elements.js`）。
+ *
+ * 为什么要这张表：真实账号的属性来自米游社 `index.avatar_list`，**虚拟账号没有那个数组**
+ * —— 不补的话，虚拟账号的角色卡只能显示命途，属性那半句（和它的图标）永远空着。
+ * 只补缺、不改原件：快照自带的 `element` 优先（见 `withCharacterMeta()`）。
+ *
+ * ⚠️ 开拓者的表里只有**奇数 id**（男主），偶数 id 是同形态的女主 —— 虚拟账号的头像
+ * 从 8001~8010 里随机挑，`+1` 直接对到同一个属性；**只对 8001–8010 这么做**
+ * （与 `pathByIdOf()` 同一条规则：三月七 1001+1 = 1002 是丹恒）。
+ */
+const elementByAvatarIdOf = (table) => {
+  const map = new Map();
+  for (const [rawId, element] of Object.entries(table || {})) {
+    const id = Number(rawId);
+    if (!Number.isFinite(id) || !element) continue;
+    map.set(id, element);
+    if (id >= 8001 && id <= 8010) map.set(id + 1, element);
+  }
+  return map;
+};
+
+/**
  * 角色列表的排序键：`/api/archive` 的 `refs.debutOrder`（`{ 英文键: 序号 }`，
  * 序号**越大越新**）+ `refs.characters`（英文键 ↔ 中文名对照）。
  *
@@ -1084,6 +1109,9 @@ const ensureDebutOrder = async () => {
           pathByCn: pathByCnOf(chars, paths),
           // 多形态角色（三月七 / 开拓者）按 id 反查命途，见 `pathByIdOf()`。
           pathById: pathByIdOf(index?.refs?.formAvatarIds, paths),
+          // 属性按 avatar_id 查（用户 2026-10-18「属性要显示图标，虚拟账户也要」）：
+          // 真实账号的快照自带 `element`，虚拟账号的**没有** —— 那张表是唯一来源。
+          elementById: elementByAvatarIdOf(index?.refs?.characterElements),
         };
         return debutOrderCache;
       })
@@ -1097,7 +1125,7 @@ const ensureDebutOrder = async () => {
         console.warn('[角色列表] 拿不到登场版本表，退回 avatar_id 升序：', err);
         debutOrderCache = {
           order: {}, byId: {}, chars: [], paths: {}, pathLabels: {},
-          pathByCn: new Map(), pathById: new Map(),
+          pathByCn: new Map(), pathById: new Map(), elementById: new Map(),
         };
         return debutOrderCache;
       })
@@ -1192,7 +1220,9 @@ const elementByIdOf = (snapshot) => {
  *   * `path`：虚拟账号的快照自带（服务端从 `refs.characterPaths` 补的）；真实账号没有，
  *     先按 **avatar_id** 查多形态表（三月七 / 开拓者），再按**中文名**查数据集 ——
  *     两张表都来自排序用的那次 `/api/archive`，不额外打接口；
- *   * `element`：快照角色自己没有就按 `id` 从 `index.avatar_list` 拿（见 `elementByIdOf`）。
+ *   * `element`：快照角色自己没有就按 `id` 从 `index.avatar_list` 拿（见 `elementByIdOf`），
+ *     连 `index` 都没有（= 虚拟账号）就查 `refs.characterElements`（用户 2026-10-18：
+ *     「属性要显示图标，**虚拟账户**也要这样显示」）。
  *
  * ⚠️ 返回的可能是**同一个对象**（没有可补的字段时不复制）：`state.expanded`、点击回调
  * 都按引用/`id` 走，多造一层副本没有好处；一旦要补就返回浅拷贝，绝不去改 `state.snapshot`。
@@ -1203,7 +1233,9 @@ const withCharacterMeta = (characters, snapshot) => {
   return characters.map((character) => {
     const id = Number(character?.id ?? character?.avatar_id ?? character?.avatarId);
     const element = character?.element
-      || (Number.isFinite(id) ? elementById.get(id) : null) || '';
+      || (Number.isFinite(id)
+        ? (elementById.get(id) || cache.elementById?.get(id) || null)
+        : null) || '';
     const path = character?.path
       || (Number.isFinite(id) ? cache.pathById?.get(id) : null)
       || cache.pathByCn?.get(displayName(character?.name)) || '';
@@ -1262,39 +1294,115 @@ const renderSnapshot = (snapshot) => {
   const stats = index.stats || {};
 
   // ---- overview ----------------------------------------------------------
+  //
+  // 用户 2026-10-18：「**均衡等级、活跃天数、光锥数量获取不到就算了可以不显示**，
+  // 你先尽量查下米游社获取的数据是否包含这两项」。
+  //
+  // 查证结果（改这一块之前逐条核过）：
+  //   * `world_level`（均衡等级）**整个仓库只有这一行在读**，没有任何地方写过 ——
+  //     米游社星铁战绩接口的 `role` 只有 `avatar/nickname/level/region`（`world_level`
+  //     是原神那个 `role` 对象的字段）；`tools/gui-fixture.mjs` 里那行 `world_level: 6`
+  //     是**手写夹具**，不是实测响应。→ 取不到，不显示。
+  //   * `equipment_num`（光锥数量）同样是**照原神的 stats 键猜的**（代码里 `avatar_num` /
+  //     `avatar_number` 两种写法都试，就是这个原因）。星铁战绩没有光锥仓库接口，
+  //     唯一的光锥来源是「角色身上的 `equip`」。→ 取不到，不显示。
+  //   * `active_day_number`（活跃天数）**有**：公开的个人主页卡片
+  //     （`card.data: [{name:'活跃天数', value:'1206'}, …]`）会带，而且它不受
+  //     「战绩是否公开」影响（见 `format.js` 的 `cardStats()` 注释，实测样本）。
+  //
+  // 所以这一块改成「**取到什么画什么**」：`stats` 与 `card.data` 两路都试，
+  // 两路都没有就**整张卡不画**，而不是挂一个占位的「—」让人以为程序坏了。
   const totalCharacters = charactersOf(snapshot).length;
+  const cardRows = cardStats(snapshot) || [];
+  /** 「这个值能不能显示」——空串 / 占位符一律当没有。 */
+  const usable = (value) => value !== undefined && value !== null && value !== ''
+    && value !== '-' && value !== '—';
   const pickStat = (...keys) => {
     for (const key of keys) {
       const value = stats[key];
-      if (value !== undefined && value !== null && value !== '' && value !== '-') return value;
+      if (usable(value)) return value;
+    }
+    return null;
+  };
+  /** 公开卡片的行是按**中文名**给的（`{ name, value }`），按名字取一份兜底。 */
+  const cardValue = (...names) => {
+    for (const name of names) {
+      const hit = cardRows.find((row) => row.label === name);
+      if (hit && usable(hit.value)) return hit.value;
     }
     return null;
   };
 
   const overview = document.createElement('div');
   overview.className = 'overview';
-  overview.append(
-    statCard('开拓者', displayName(info.nickname || snapshot.nickname), true),
-    statCard('开拓等级',
-      info.level === undefined || info.level === null ? '—' : `Lv.${integer(info.level)}`),
-    statCard('均衡等级',
-      info.world_level === undefined || info.world_level === null ? '—' : String(info.world_level)),
-    statCard('已解锁角色', (() => {
-      const value = pickStat('avatar_num', 'avatar_number');
-      if (value !== null) return integer(value);
-      return totalCharacters ? String(totalCharacters) : '—';
-    })()),
+  overview.appendChild(
+    statCard('开拓者', displayName(info.nickname || snapshot.nickname) || '—', true),
   );
-  overview.append(statCard('光锥数量', integer(pickStat('equipment_num', 'light_cone_num'))));
-  overview.append(
-    statCard('达成成就', integer(pickStat('achievement_num', 'achievement_number'))),
-    statCard('忘却之庭',
-      stats.abyss_process ? `第 ${stats.abyss_process} 层` : (() => {
-        const abyss = pickStat('spiral_abyss');
-        return abyss === null ? '—' : String(abyss);
-      })()),
-    statCard('活跃天数', integer(pickStat('active_day_number'))),
-  );
+  if (usable(info.level)) overview.appendChild(statCard('开拓等级', `Lv.${integer(info.level)}`));
+  // 均衡等级：字段名保留（`world_level`），将来接口真给了就自动出现，取不到整张卡不画。
+  const worldLevel = usable(info.world_level) ? info.world_level : cardValue('均衡等级');
+  if (usable(worldLevel)) {
+    overview.appendChild(statCard('均衡等级', String(worldLevel),
+      false, '米游社星铁战绩接口目前不返回均衡等级；这里是接口若返回时的显示位。'));
+  }
+  // 已解锁角色：`stats` → 公开卡片 → 快照里实际有几个（最后一个一定拿得到）。
+  const ownedChars = pickStat('avatar_num', 'avatar_number')
+    ?? cardValue('已解锁角色') ?? (totalCharacters || null);
+  if (usable(ownedChars)) overview.appendChild(statCard('已解锁角色', integer(ownedChars)));
+  const coneCount = pickStat('equipment_num', 'light_cone_num') ?? cardValue('光锥数量');
+  if (usable(coneCount)) overview.appendChild(statCard('光锥数量', integer(coneCount)));
+  const achievements = pickStat('achievement_num', 'achievement_number') ?? cardValue('达成成就');
+  if (usable(achievements)) overview.appendChild(statCard('达成成就', integer(achievements)));
+  const abyss = usable(stats.abyss_process)
+    ? `第 ${stats.abyss_process} 层`
+    : (usable(pickStat('spiral_abyss')) ? String(pickStat('spiral_abyss')) : null);
+  if (usable(abyss)) overview.appendChild(statCard('忘却之庭', abyss));
+  const activeDays = pickStat('active_day_number', 'active_day_num') ?? cardValue('活跃天数');
+  if (usable(activeDays)) overview.appendChild(statCard('活跃天数', integer(activeDays)));
+
+  // 限定角色 / 限定光锥（用户 2026-10-18）。数字由服务端算好随快照下发
+  // （`state.snapshotResponse.limited`）：光锥的那份名单对两类账号来源不同，
+  // 浏览器手上没有虚拟账号的 `virtualRoster`，见 `src/server/limited-count.js`。
+  // ⚠️ 真实账号只能数到「快照里能看到的角色」和「身上装备的光锥」（米游社没有光锥仓库），
+  //    所以标「（可见）」并把口径写进 tooltip；虚拟账号是完整名单，不标。
+  const limited = state.snapshotResponse?.limited || null;
+  const limitedCount = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
+  const limitedChars = limitedCount(limited?.characters);
+  if (limitedChars !== null) {
+    const partial = limited?.charactersScope !== 'owned';
+    overview.appendChild(statCard(
+      partial ? '限定角色（可见）' : '限定角色',
+      integer(limitedChars), false,
+      partial
+        ? '米游社只返回快照里那些角色（展柜 / 公开角色），所以这是「能看到的」限定角色数，可能少于实际拥有数。'
+        : '按该虚拟账号的完整角色名单统计：全部 5★ 限定角色，不含常驻、4★ 与开拓者。',
+    ));
+  }
+  const limitedCones = limitedCount(limited?.cones);
+  if (limitedCones !== null) {
+    const partial = limited?.conesScope !== 'owned';
+    overview.appendChild(statCard(
+      partial ? '限定光锥（可见）' : '限定光锥',
+      integer(limitedCones), false,
+      partial
+        ? '米游社不返回光锥仓库，只能数到角色身上**已装备**的限定光锥；实际拥有数可能更多。'
+        : '按该虚拟账号的完整光锥名单统计：全部 5★ 限定光锥，不含常驻与 3/4★。',
+    ));
+  }
+  // 总成本（用户 2026-10-18）＝ 限定角色(本体+星魂) + 限定光锥(本体×叠影) 的**原始金数**，
+  // 不减隐金（隐金单位也按全价算）。服务端随 limited 一起下发（limited.cost.total）。
+  const totalCost = limitedCount(limited?.cost?.total);
+  if (totalCost !== null) {
+    overview.appendChild(statCard(
+      '总成本', `${integer(totalCost)} 金`, false,
+      '所有限定角色（本体 1 + 星魂）+ 限定光锥（本体 × 叠影）按**原始**金数合计，不减隐金'
+        + '（受赠 / 兑换角色与光锥也按全价算）。与抽卡页「E6S5 = 12 金」同一套口径。',
+    ));
+  }
   container.appendChild(overview);
 
   // ---- characters --------------------------------------------------------
@@ -1467,14 +1575,17 @@ const characterCard = (character) => {
   nameLine.textContent = name;
   const subLine = document.createElement('div');
   subLine.className = 'char-sub';
-  // 副标题写「命途 · 属性」（用户 2026-10-17 第 2 条：「角色列表需要显示属性和命途」）。
+  // 副标题写「命途 · 属性」（用户 2026-10-17 第 2 条：「角色列表需要显示属性和命途」），
+  // 每一半前面挂**游戏内那枚图标**（用户 2026-10-18：「命途和属性需要显示图标」）。
   // 两者都拿不到才退回等级 —— 否则会在名字下面留一条空行。
   const pathText = pathLabelOf(character?.path);
   const element = elementBadgeOf(character?.element);
   if (pathText) {
     const span = document.createElement('span');
     span.className = 'char-path';
-    span.textContent = pathText;
+    const icon = gameIcon(pathIconUrl(character?.path));
+    if (icon) span.appendChild(icon);
+    span.appendChild(document.createTextNode(pathText));
     subLine.appendChild(span);
   }
   if (element) {
@@ -1487,7 +1598,9 @@ const characterCard = (character) => {
     const span = document.createElement('span');
     span.className = 'char-el';
     if (element.color) span.dataset.element = element.color;
-    span.textContent = element.label;
+    const icon = gameIcon(elementIconUrl(character?.element));
+    if (icon) span.appendChild(icon);
+    span.appendChild(document.createTextNode(element.label));
     subLine.appendChild(span);
   }
   if (!subLine.childNodes.length) subLine.textContent = `Lv.${character.level ?? '?'}`;

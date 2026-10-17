@@ -29,6 +29,7 @@ import {
 } from './virtual-accounts.js';
 import { charCostOf, coneCostOf } from '../../public/scripts/advice.js';
 import { archiveConclusion, archiveCharacterPacks } from './conclusion.js';
+import { limitedCountOf } from './limited-count.js';
 import { compareRosters } from './compare.js';
 import { fetchBattleRecordsRaw, normalizeBattleRecords } from './records.js';
 import { datasetStats, pruneBackups, updateArchive, updateInProgress } from './archive-update.js';
@@ -1017,6 +1018,38 @@ export const createApp = (options = {}) => {
           }
           const force = url.searchParams.get('refresh') === '1' || req.method === 'POST';
           const cached = await store.getSnapshot(accountId, uid);
+          /**
+           * 快照里的「限定角色 / 限定光锥」数量（用户 2026-10-18）。
+           *
+           * 为什么在**服务端**算：光锥的那份名单对两类账号来源不同 —— 虚拟账号的
+           * **持有光锥**在账号上（`virtualRoster.cones`，快照只带「已装备」的那些），
+           * 真实账号则只有快照里 `equip` 这一条路。浏览器手上没有 `virtualRoster`
+           * （`toPublic()` 刻意不下发），所以只能在这里算好再发。
+           * 数据集缺失 / 读取失败 → `null`，界面**不显示**这两张卡（不写 0 骗人）。
+           */
+          const limitedOf = async (snapshot) => {
+            if (!snapshot) return null;
+            try {
+              if (!(await archiveExists())) return null;
+              const index = await archiveIndex();
+              const virtualCones = account.source === 'virtual'
+                ? Object.keys(account.virtualRoster?.cones || {})
+                : null;
+              return limitedCountOf({
+                snapshot,
+                ownedCones: virtualCones && virtualCones.length ? virtualCones : null,
+                // 虚拟账号光锥的叠影（算总成本用）；真实账号的叠影在快照 equip.rank 里。
+                ownedConeRanks: account.source === 'virtual'
+                  ? (account.virtualRoster?.cones || null)
+                  : null,
+                availability: index?.refs?.availability || {},
+                i18n: await loadI18n(),
+              });
+            } catch (err) {
+              console.warn(`[snapshot] 限定数量统计失败（${err.message}），界面不显示这两张卡`);
+              return null;
+            }
+          };
           // 虚拟账号（用户 2026-10-12）：数据是**本地构造**的，没有 cookie、也永远不该去请求
           // 米游社 —— 直接回快照，别让界面挂一片「请重新扫码 / 拉取失败」的假故障。
           if (account.source === 'virtual' || cached?.source === 'virtual') {
@@ -1025,6 +1058,7 @@ export const createApp = (options = {}) => {
               cache: cacheMeta(cached, CACHE_TTL_MS.snapshot, Date.now(),
                 { kind: 'snapshot', stale: false, virtual: true }),
               snapshot: cached || null,
+              limited: await limitedOf(cached),
             });
             return;
           }
@@ -1062,6 +1096,7 @@ export const createApp = (options = {}) => {
                 sectionFreshness: cached.sectionFreshness || {},
               }),
               snapshot: cached,
+              limited: await limitedOf(cached),
             });
             return;
           }
@@ -1089,7 +1124,7 @@ export const createApp = (options = {}) => {
             snapshot.stale = false;
             // Merge (never clobber) so a partial failure keeps the roster.
             snapshot = await store.setSnapshot(accountId, uid, snapshot);
-            json(res, 200, { ok: true, cached: false, cache: cacheMeta(snapshot, CACHE_TTL_MS.snapshot, Date.now(), { kind: 'snapshot', sectionFreshness: snapshot.sectionFreshness || {} }), snapshot });
+            json(res, 200, { ok: true, cached: false, cache: cacheMeta(snapshot, CACHE_TTL_MS.snapshot, Date.now(), { kind: 'snapshot', sectionFreshness: snapshot.sectionFreshness || {} }), snapshot, limited: await limitedOf(snapshot) });
             return;
           } catch (err) {
             // Snap Hutao shows previously synced characters when the record API
@@ -1112,6 +1147,7 @@ export const createApp = (options = {}) => {
                 retcode: err.retcode,
                 cache: cacheMeta(fallback, CACHE_TTL_MS.snapshot, Date.now(), { kind: 'snapshot', stale: true, staleReason: err.message, sectionFreshness: fallback.sectionFreshness || {} }),
                 snapshot: { ...fallback, stale: true, staleReason: err.message },
+                limited: await limitedOf(fallback),
               });
               return;
             }
