@@ -1345,6 +1345,19 @@ CDP 那两条新判据（残留 0 个 / 每格都有卡片与行线）跑 `node 
   * **「最佳证据」取版本最新的那一次**（与 `strengthAvHit` 同口径）——连带
     「跨版本发挥 = 各版本加权平均 ÷ 最新版那次成绩」**不再恒 ≤ 1**：
     `> 1` = 旧版本成绩仍在抬加权平均、`< 1` = 缺投稿摊薄。
+  ⚠️ **同一个界面里有两条按版本加权的链，必须读同一份表**（v4.6.117 修的缺陷 ——
+  「改版本权重对抽卡方案毫无影响」就是它们读了**两张不同的表**）：
+  * `archiveFrontier`（性价比总榜 / 角色得分 / 跨版本发挥 / 详情窗口）—— 吃
+    `options.versionWeights`；
+  * `resolveScope` → `aggregateTeams`（跨版本聚合的阵容表 + `buildAvTeams` 的行动值
+    前沿池，**抽卡方案的候选池就是它**）—— 这一层曾**写死** `VERSION_WEIGHTS`，
+    而且 `conclusionEnvs()` 当时也没把 `versionWeights` 传下去。
+  新增一处版本加权就先确认它走的是哪条链：两条链的入口分别是 `archiveFrontierAll()`
+  与 `conclusionEnvs()`，**都**要带 `versionWeights`。回归见
+  `tools/version-weight-plan-test.mjs`（13 项）。
+  ⚠️ **权重 0 = 那一版不进窗口**，前沿池的选行（`avRowFor`）也一样：只有**夹具**
+  （没有 `bySeasonAv`）才允许退回 `newestAv`；生产形状下「窗口内没有有权重的版本」
+  = 这个阵容不进池，不能把它在被清零那一版的成绩捡回来。
 - **⚠️ 读取一律不联网（用户 2026-10 硬规矩）**：`snapshot` / `records` 两个路由
   **不许**因为缓存过期就自动重抓。要联网只有三条路：① 用户点刷新按钮
   （POST / `?refresh=1`，要 CSRF）；② 本地一份数据都没有（首次使用 / 换角色）；
@@ -3856,6 +3869,57 @@ min-max 对离群值敏感。这是**已知特性**，要换成分位 / 秩次�
   语法自检（`node --check` 两个文件均通过）—— 本轮新加的排版判据**待补跑**。
 * 两个探针：`_probe-vers-shape.mjs`（两组持平 10.1 / 10.7）、`_probe-team-vers.mjs`
   （同一 roster 的星魂变体 ③ 不再系统性偏高）。
+
+### 4.2AR v4.6.117（2026-10-17）：修「改版本权重对抽卡方案毫无影响」
+
+**用户原话**：「更改版本权重对于抽卡方案无影响，修复此 bug」。
+
+**根因**：同一个界面里有**两条**按版本加权的链，读了**两张不同的表** ——
+
+| 链 | 服务的是什么 | 改前读的表 |
+| --- | --- | --- |
+| `archiveFrontier` / `archiveFrontierAll` | 性价比总榜、角色得分、跨版本发挥、详情窗口 | ✅ `options.versionWeights`（用户那份） |
+| `resolveScope` → `aggregateTeams` → `buildAvTeams` | 跨版本聚合的阵容表（**抽卡方案的证据池**）+ 0 行动值前沿池（**方案的第二个来源**） | ❌ **写死** `VERSION_WEIGHTS` |
+
+第二处还有一半：`conclusionEnvs()`（`/conclusion` 与 `/api/archive/packs` 的共同入口）
+**根本没收 `versionWeights`**，就算 `resolveScope` 想读也拿不到。
+
+**修法**（三处，都很小）：
+
+1. `resolveScope()`：`versionWeights: VERSION_WEIGHTS` → `normalizeVersionWeights(options.versionWeights)`，
+   `weightOf(s)` 也把这份表传进去（`versionWeightOf(index, vWeights)`）。
+2. `conclusionEnvs()`：接 `options.versionWeights` 并透传给 `archiveTeams()`；
+   `archiveConclusion()` / `archiveCharacterPacks()` 两个入口都带上。
+3. `avRowFor()`：**堵掉兜底泄口** —— 原来「窗口内一个有权重的版本都没有数据」时会退回
+   `newestAv`，而那一版恰恰可能是用户清零的那一版，于是「把某几版权重调成 0」同样看不出
+   效果（实测 `[1,0,0,0,0,0]` 与默认表的 `avTeams` **逐字相同**）。现在只有**夹具**
+   （没有 `bySeasonAv`）才准走 `newestAv`；生产形状下「窗口内没有有权重的版本」
+   = 这个阵容不进池。顺带把 `newestAv === null` 那条 `Number(null) === 0` 的假值判空
+   一起挡掉（数据集里目前没有这种行，但那是同一类坑）。
+
+**实测**（空账号 + 仓库内真数据集；`teamPlan` 直接跑在 `/conclusion` 的载荷上）：
+
+```
+默认 3:2.5:2:1.5:1:0.5   强度 16.7 / 27.8 / 21.7 / 20.6 …（名单 A）
+六版等权 [1,1,1,1,1,1]   强度 16.7 / 24.2 / 27.8 …        （名单 B ≠ A）
+只要当前版本 [1,0,0,0,0,0] 强度 16.7 / 27.8 / 68.5 …        （名单 C ≠ A、≠ B）
+```
+
+⚠️ **默认表下的输出逐字不变**（`avTeams` / `teams` / `teamPlan` 与改前一致，五个副本逐条
+对过）—— 老用户看到的方案分毫不差，只有「改过版本权重」的人才会看到变化。
+
+**新增回归**：`tools/version-weight-plan-test.mjs`（**13 项**，离线、读仓库内数据集），
+钉六件事：① 回显的是用户那份表 ② `avTeams` 随表变 ③ 权重 0 的版本不进前沿池
+④ 证据池 `teams[]` 的加权随表变 ⑤ `conclusionEnvs` 真的透传 ⑥ 端到端 `teamPlan`
+的名单与强度都动、且幂等。已登记进 `tools/run-tests.mjs`。
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `src/server/archive.js` | `resolveScope()` 读 `options.versionWeights`（回显 + `weightOf`）；`avRowFor()` 只在夹具形状才退回 `newestAv` |
+| `src/server/conclusion.js` | `conclusionEnvs()` 透传 `versionWeights`；两个入口（`archiveConclusion` / `archiveCharacterPacks`）都带上 |
+| `tools/version-weight-plan-test.mjs` | **新增**（13 项） |
+| `tools/run-tests.mjs` | 登记新套件 |
+| `src/version.js` / `package.json` | changelog 加 v4.6.117 / version 4.6.117 |
 
 ---
 

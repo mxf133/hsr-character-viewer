@@ -852,6 +852,26 @@ const resolveScope = (data, mode, season, options = {}) => {
   const recent = seasons.slice(Math.max(0, wantedIndex - windowSize + 1), wantedIndex + 1);
   // 降序：recentDesc[0] 是最新版本。版本权重按「距最新版本几个版本」查表。
   const recentDesc = [...recent].reverse();
+  /**
+   * 版本权重（用户 2026-10-16 第 3 条：这张表用户自己也能设）。
+   *
+   * ⚠️ **必须读 `options.versionWeights`**（v4.6.117 修的缺陷：这里原来写死
+   * `VERSION_WEIGHTS`）。同一个界面里有**两条**按版本加权的链：
+   *
+   *   * `archiveFrontier`（性价比总榜 / 角色得分 / 跨版本发挥）—— 一直吃用户表；
+   *   * 这一条 `resolveScope` 链（跨版本聚合的阵容表 + `buildAvTeams` 的行动值前沿）
+   *     —— 原来恒用默认 3:2.5:2:1.5:1:0.5。
+   *
+   * 于是用户改版本权重时，「总榜动了、抽卡方案纹丝不动」：方案里的队伍强度、
+   * 0 行动值前沿池的选行（`avRowFor` 的「权重最高的有数据版本」）全按默认表算。
+   * 两条链必须是**同一份表**，否则同一个界面里两个口径（与 v4.6.69 的
+   * 「总榜权重没带过去」是同一类 bug）。
+   *
+   * 传进来的原值在这里过一次 `normalizeVersionWeights()`（缺的/非法按默认补齐、
+   * 全 0 退回默认），与 `archiveFrontier` 逐字同一条规矩；**不归一化** ——
+   * 它只有相对大小有意义。
+   */
+  const vWeights = normalizeVersionWeights(options.versionWeights);
   return {
     ok: true,
     slug,
@@ -866,8 +886,9 @@ const resolveScope = (data, mode, season, options = {}) => {
     wantedIndex,
     windowSize,
     recentDesc,
-    versionWeights: VERSION_WEIGHTS,
-    weightOf: (s) => versionWeightOf(recentDesc.indexOf(s)),
+    // 生效的那一份（回显给调用方 / `archiveStats`、`archiveTeams` 的 `versionWeights`）。
+    versionWeights: vWeights,
+    weightOf: (s) => versionWeightOf(recentDesc.indexOf(s), vWeights),
     /** 可信度：投稿数只用来在强度接近时偏向被反复验证过的解法，不设门槛。 */
     trustOf: (n) => 1 - 0.35 / (1 + n),
   };
@@ -901,11 +922,19 @@ const AV_TEAMS_PER_ENV = 8;
 /**
  * 行内数据按「**权重最高的那个有数据的版本**」取成绩（用户 2026-10-16 第 2 条：
  * 0 行动值队伍登顶要「受到版本权重影响」）。
- * `bySeason` 缺（夹具）时退回「最近版本那次」（newestAv）。
+ *
+ * ⚠️ **权重 0 = 那一版不进窗口**（用户 2026-10-16 第 3 条的原意，全站同一条规矩）：
+ * 这个阵容只要在**有效版本**里没有数据，就**不进前沿池**（返回 `null`），
+ * 绝不退回 `newestAv` —— 那会把它在**被清零的那一版**的成绩捡回来，
+ * 于是「把某几个版本权重调成 0」在抽卡方案里完全没有效果
+ * （v4.6.117 之前正是这样：`[1,0,0,0,0,0]` 与默认表的 avTeams 一模一样）。
+ *
+ * 退回 `newestAv` 只服务**夹具**（`bySeasonAv` 根本不存在的老形状 / 合成载荷）。
  */
 const avRowFor = (build, seasonWeights) => {
-  let best = null;
-  if (seasonWeights && build.bySeasonAv) {
+  // 生产形状：有逐版本成绩 → 严格按权重挑；挑不到就是这个阵容在窗口内没有有效成绩。
+  if (build.bySeasonAv && seasonWeights) {
+    let best = null;
     for (const [season, hit] of build.bySeasonAv) {
       const w = Number(seasonWeights?.[season]);
       if (!(w > 0)) continue;
@@ -919,9 +948,12 @@ const avRowFor = (build, seasonWeights) => {
         };
       }
     }
+    return best;
   }
-  if (best) return best;
-  const av = Number(build.newestAv);
+  // 夹具形状（没有逐版本成绩）：退回「最近版本那一次」。
+  const newestAv = build.newestAv;
+  if (newestAv === null || newestAv === undefined || newestAv === '') return null;
+  const av = Number(newestAv);
   return Number.isFinite(av)
     ? {
       av,
