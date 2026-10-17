@@ -1,5 +1,11 @@
 # 本地凭证与缓存（等同于登录态，切勿提交）
-data/
+#
+# ⚠️ **必须写成 `/data/`（只匹配仓库根的那一个）**。以前这里是 `data/`，它会匹配
+# **任意层级**的同名目录，于是 `tools/data/hsr-bosses-zh.mjs`（首领译名源表）被
+# 一起忽略掉 —— 结果那个文件从来没进过版本库，`node tools/herta-i18n.mjs` 直接
+# ERR_MODULE_NOT_FOUND，而只读生成物的 `herta-i18n-check.mjs` 照旧全绿，没人发现。
+# 2026-10-18 收口时改成根锚定；`tools/i18n-audit.mjs` 的 [1] 会钉住这件事。
+/data/
 *.tmp
 # 用「改名旧文件 → 新建同名文件」绕过 UNC 写入限制时留下的残留（删不掉，但不可提交）
 *.old

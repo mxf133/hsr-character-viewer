@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "https://github.com/Mar-7th/StarRailRes (index_min/en + index_min/cn)",
-  "generatedAt": "2026-10-06T01:44:20.633Z",
+  "generatedAt": "2026-10-17T20:39:58.767Z",
   "aliases": {
     "SparxiConOfficial": "斯帕克西（官方演示）"
   },
@@ -281,7 +281,7 @@
     "Flame Reaver": "至黑之剑，盗火行者",
     "Kafka": "卡芙卡",
     "5 TVs": "惊梦剧团的圆幕先生",
-    "Pollux": "波吕克斯",
+    "Pollux": "冥魂渡者，死龙残躯，玻吕刻斯",
     "Hoolay": "步离战首•呼雷",
     "Svarog": "史瓦罗",
     "Aventurine": "砂金",
@@ -1825,7 +1825,7 @@
     "bosses:flamereaver": "至黑之剑，盗火行者",
     "bosses:kafka": "卡芙卡",
     "bosses:5tvs": "惊梦剧团的圆幕先生",
-    "bosses:pollux": "波吕克斯",
+    "bosses:pollux": "冥魂渡者，死龙残躯，玻吕刻斯",
     "bosses:hoolay": "步离战首•呼雷",
     "bosses:svarog": "史瓦罗",
     "bosses:aventurine": "砂金",

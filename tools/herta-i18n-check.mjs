@@ -47,9 +47,13 @@ const EN_CONES = '.snapref/starrailres-en-lightcones.json';
 if (!existsSync(join(ROOT, EN_CHARS)) || !existsSync(join(ROOT, EN_CONES))) {
   console.log('  跳过：缺少英文字典缓存，先运行 tools/i18n-fetch-en.mjs');
 } else {
-  const [enChars, enCones, accounts] = await Promise.all([
-    read(EN_CHARS), read(EN_CONES), read('data/accounts.json'),
-  ]);
+  // `data/` 是 gitignore 的 —— 新建的 worktree / 干净克隆里根本没有账号文件。
+  // 那不是缺陷，按「没有可对照的快照」处理（下面会打印跳过），**不要**直接抛 ENOENT。
+  const accounts = existsSync(join(ROOT, 'data/accounts.json'))
+    ? await read('data/accounts.json')
+    : { accounts: [] };
+
+  const [enChars, enCones] = await Promise.all([read(EN_CHARS), read(EN_CONES)]);
 
   // id -> the game's own Chinese name
   const truthChar = new Map();
