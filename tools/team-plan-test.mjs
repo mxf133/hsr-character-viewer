@@ -416,6 +416,60 @@ check('行动值前沿：**跳过更重的副本**要按 0 分计（v4.6.112，�
     '权重并列（都不过更重）时不该被罚，这是用户要的「0 行动值队伍登顶」');
 });
 
+section('A0b. 旧版本成绩要折价（用户 2026-10-18：「有些老队伍的队伍得分异常」）');
+
+/**
+ * 这一池（行动值前沿 ∪ 全队伍表）的强度一直是「只看本队自己的行动值」，**不进版本
+ * 加权** —— v4.6.125 只给逐档榜那条链接回了 `Σ(版本权重 × 该版本强度) ÷ Σ(版本权重)`。
+ * 后果（真数据实测，中配账号）：一支只有 **4.4** 期成绩的队拿 **92.7**，而同一支队在
+ * 逐档榜那条路上只有 **48.7**；只有 4.1 期 0 行动值的老队甚至能拿满 100 冲进前排。
+ *
+ * 折价因子 = 该版本权重 ÷ 该副本窗口里权重最大的那一版，所以：
+ *   * 当前版本 → 1.00（「0 行动值队伍登顶」不变，见上面 A0 那几条）；
+ *   * 4.1（窗口 4.5:6 … 4.0:1）→ 2/6 = 1/3。
+ * 夹具里 4 个赛季的权重表照抄真实载荷的 `seasonWeights` 形状。
+ */
+const AV_SEASON_WEIGHTS = { '4.5': 6, '4.4': 5, '4.3': 4, '4.2': 3, '4.1': 2, '4.0': 1 };
+const agedConclusion = (season) => ({
+  frontierEnvs: [
+    {
+      id: 'env1', label: '测试副本', weight: 1, tierLines: AV_TIER_LINES,
+      seasonWeights: AV_SEASON_WEIGHTS,
+      minCostBySeason: { [season]: 10 },
+      zeroAvGoldBySeason: { [season]: { min: 10, max: 10 } },
+      avTeams: [{ cost: 10, av: 0, tier: 'perfect', season, members: AV_ZERO_MEMBERS }],
+    },
+  ],
+  frontierUnits: [],
+});
+const agedRowOf = (season) => teamPlan(agedConclusion(season), accountFixture, { availability })
+  .rows.find((r) => r.members.length === AV_ZERO_MEMBERS.length
+    && AV_ZERO_MEMBERS.every((m) => r.members.some((x) => x.char === m.char)));
+
+check('行动值前沿：当前版本的 0 行动值仍是满分（折价不许把「登顶」这条口径弄没）', () => {
+  const row = agedRowOf('4.5');
+  assert.ok(row, '当前版本的 0 行动值队必须还在池里');
+  assert.equal(row.strengthPct, 100, `当前版本（权重最大）应折价 1.00 → 100，实际 ${row.strengthPct}`);
+});
+
+check('行动值前沿：旧版本的 0 行动值按**版本权重**折价（4.1 → 1/3）', () => {
+  const old = agedRowOf('4.1');
+  const mid = agedRowOf('4.3');
+  const expectOld = (1 * 100) / 1 * (2 / 6);   // 只有这一关有数据 → 分母 1
+  const expectMid = (1 * 100) / 1 * (4 / 6);
+  assert.ok(near(old.strengthPct, expectOld),
+    `4.1 期成绩应折成 ${expectOld.toFixed(4)}，实际 ${old.strengthPct}`);
+  assert.ok(near(mid.strengthPct, expectMid),
+    `4.3 期成绩应折成 ${expectMid.toFixed(4)}，实际 ${mid.strengthPct}`);
+  assert.ok(old.strengthPct < mid.strengthPct, '越老的版本必须越低（老队伍不许再拿满分）');
+});
+
+check('行动值前沿：没有 seasonWeights 的老载荷 / 夹具不折价（因子 1，不出 NaN）', () => {
+  // A0 那套夹具没有 `seasonWeights` —— 题面同上，行为必须与改前逐字一致（100）。
+  assert.equal(avRowOf(AV_ZERO_MEMBERS).strengthPct, 100,
+    '取不到版本权重表时不许凭空折价');
+});
+
 section('A1. 抽卡权重（强度 / 性价比，用户 2026-10-12 第 3、4、8 条）');
 
 /**
@@ -1071,8 +1125,25 @@ check('真载荷上：行动值前沿池的 0 行动值队（用户 2026-10-16 �
    *      ② 强度权重拉满时 0 行动值队仍然登顶（用户要的「登顶」）。
    */
   const heavy = avRows.filter((r) => Number(r.strengthPct) >= 95);
-  assert.ok(heavy.length > 0 && heavy.length < avRows.length,
-    `顶格档应当是前沿行的**真子集**（跳过最重副本的队被摊薄），实际 ${heavy.length}/${avRows.length}`);
+  /**
+   * ⚠️ **2026-10-18 晚补一条口径**（用户：「有些老队伍的队伍得分异常」）：这一池的
+   * 强度原来**不进版本加权** —— v4.6.125 只给逐档榜那条连接回了
+   * `Σ(版本权重 × 该版本强度) ÷ Σ(版本权重)`，于是「只有 4.4 期成绩的队」照样算 92.7
+   * （同一支队在逐档榜那条路上只有 48.7），「只有 4.1 期 0 行动值的老队」甚至能拿满分
+   * 挤进前排。现在每关的强度按「该版本权重 ÷ 本副本窗口里权重最大的那一版」折价，
+   * 所以**够到 95 的前沿行必须显著变少**（改前实测 39 条前沿行里有一批顶格）。
+   *
+   * 判据分两条，互相补位：
+   *   ① plan 这一页里够到 95 的前沿行必须**少于**全部前沿行 —— 折价之后通常直接为 0
+   *      （当前版本那几支多数排进别的页/别的池），所以不能钉「必须 > 0」；
+   *   ② 必须存在「最佳证据是 0 行动值、强度却 < 100」的行 —— 那正是被打折的痕迹。
+   */
+  assert.ok(heavy.length < avRows.length,
+    `顶格档应当是前沿行的**真子集**（跳过的更重副本被摊薄 + 旧版本折价），实际 ${heavy.length}/${avRows.length}`);
+  const discounted = avRows.filter((r) => Number(r.bestEnv.actionValue) === 0
+    && Number(r.strengthPct) < 99.9);
+  assert.ok(discounted.length > 0,
+    '前沿行里必须有「0 行动值但强度 < 100」的样本 —— 那是旧版本成绩被折价的证据（改前这种行恒为 100）');
   /**
    * 直接对着载荷验一遍「覆盖」：把每关 `avTeams` 的阵容键收起来，看这一行打过哪些关。
    * 判据与 `advice.js` 的 `skippedHeavyWeight` 同源 —— 缺了**比它打过的都更重**的关卡
@@ -1102,13 +1173,25 @@ check('真载荷上：行动值前沿池的 0 行动值队（用户 2026-10-16 �
   assert.ok(skippedHeavy.every((r) => Number(r.strengthPct) < 95),
     `跳过最重副本（${heaviest.id}）的前沿队不许拿顶格分，实际最高 `
     + `${Math.max(...skippedHeavy.map((r) => Number(r.strengthPct)))}`);
-  // 强度权重拉满（① 单独说话）时，前排里必须仍有「行动值前沿来的 0 行动值队」。
-  // ⚠️ 2026-10-18 起强度只看最快的，会有一批队伍并列 100，第一名由性价比兜底键决定 ——
-  //    所以判据从「第一名必须是前沿队」放宽成「前 5 里必须有前沿队且是 100 分」。
-  assert.ok(strengthOnly.rows.slice(0, 5).some((r) => r.avSource === true && r.strengthPct >= 95),
-    '强度权重拉满时，前 5 里应仍有行动值前沿来的 0 行动值队（且是顶格分）');
-  assert.ok(strengthOnly.rows[0].strengthPct >= 95,
-    `登顶那支的 ① 应 ≥95（顶格档），实际 ${strengthOnly.rows[0].strengthPct}`);
+  // 强度权重拉满（① 单独说话）时，前沿行必须**按证据版本单调**：当前版本的 0 行动值
+  // 仍然是最高的那批，旧版本的同类被折到它下面。
+  // ⚠️ **2026-10-18 晚改过判据**：改前这里钉的是「前 5 里必须有 ≥95 的前沿队」，那等于
+  //    把「旧版本 0 行动值也算满分」钉成不变式 —— 正是用户这一轮报的「老队伍得分异常」。
+  //    实测数据里 `avTeams` 每关 8 支**全是旧版本**（moc 4.1~4.3、绝境全是 4.5），所以
+  //    折价之后前沿池整体落在 ~75 分以下，这是口径的结果、不是回归。
+  const strengthOnlyAv = strengthOnly.rows.filter((r) => r.avSource === true);
+  assert.ok(strengthOnlyAv.length > 0, '强度权重拉满时应仍能看到前沿行');
+  const avMax = Math.max(...strengthOnlyAv.map((r) => Number(r.strengthPct)));
+  assert.ok(avMax <= 100, `前沿行的强度不许超过 100，实际 ${avMax}`);
+  const newestAv = strengthOnlyAv.filter((r) => Number(r.bestEnv.actionValue) === 0
+    && Number(r.strengthPct) >= 99.5);
+  if (newestAv.length) {
+    assert.ok(newestAv.every((r) => Number(r.strengthPct) >= avMax - 1e-6),
+      '拿到 100 的前沿行必须是**该池里最强的**那一批（当前版本的 0 行动值才不打折）');
+  }
+  assert.ok(avMax < 95,
+    `折价之后前沿池不该再有「顶格」行（实测最强 ${avMax.toFixed(2)}）—— `
+    + '当前版本 0 行动值的强队由逐档榜那条路（版本加权口径）承接');
   // ⚠️ 2026-10-18 起不再断言「登顶那支本人打过最重副本」：强度改成「只看最快的」之后，
   //    ① 是**代表整包**的峰值（可能由同一角色的另一套阵容打出），队伍名单与那份证据
   //    不再一一对应。真正要守的不变式是上面那条「跳过最重副本的前沿队 <95」，它仍然成立。
