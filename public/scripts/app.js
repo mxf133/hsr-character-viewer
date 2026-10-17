@@ -1016,6 +1016,45 @@ const revealCharacter = (id, name) => {
 // --------------------------------------------------- 角色列表排序（第 8 条）
 
 /**
+ * 中文名 → 命途键（`{ '巡猎' … }`），由 `refs.characters` 的 `{ name, nameCn }` 与
+ * `refs.characterPaths` 的 `{ 英文键: 'Rogue' }` 现算一次。
+ *
+ * ⚠️ 只是把**已有的两份**数据对成一张表，不新增任何口径：命途的唯一来源仍是数据集
+ * （`theherta/character_paths.json`），中文名仍是 `i18n-zh.json`。
+ */
+const pathByCnOf = (chars, paths) => {
+  const map = new Map();
+  for (const row of chars || []) {
+    const key = paths?.[row?.name];
+    if (key && row?.nameCn && !map.has(row.nameCn)) map.set(row.nameCn, key);
+  }
+  return map;
+};
+
+/**
+ * avatar_id → 命途键，**只覆盖多形态角色**（三月七 ×2、开拓者 ×5）。
+ *
+ * 为什么还需要它：快照里这些角色的中文名是光秃秃的「三月七」「开拓者」，而数据集把
+ * 每个形态拆成带命途的英文键（「三月七•存护」/「开拓者•毁灭」）—— 按名字反查不到。
+ * id 是唯一的，所以按 id 查 `refs.formAvatarIds`（= 服务端 `FORM_AVATAR_ID`）。
+ *
+ * ⚠️ 开拓者的表里只有**奇数 id**（男主），偶数 id 是同命途的女主，两张卡在游戏里是
+ * 「同一个角色换性别」，所以 `+1` 直接对到同一个键；**只对 8001–8010 这么做** ——
+ * 三月七的 1001+1 = 1002 是丹恒，加一就串人了。
+ */
+const pathByIdOf = (formAvatarIds, paths) => {
+  const map = new Map();
+  for (const [key, rawId] of Object.entries(formAvatarIds || {})) {
+    const path = paths?.[key];
+    const id = Number(rawId);
+    if (!path || !Number.isFinite(id)) continue;
+    map.set(id, path);
+    if (id >= 8001 && id <= 8010) map.set(id + 1, path);
+  }
+  return map;
+};
+
+/**
  * 角色列表的排序键：`/api/archive` 的 `refs.debutOrder`（`{ 英文键: 序号 }`，
  * 序号**越大越新**）+ `refs.characters`（英文键 ↔ 中文名对照）。
  *
@@ -1030,10 +1069,21 @@ const ensureDebutOrder = async () => {
   if (!debutOrderPromise) {
     debutOrderPromise = adviceOf().ensureIndex()
       .then((index) => {
+        const chars = index?.refs?.characters || [];
+        const paths = index?.refs?.characterPaths || {};
         debutOrderCache = {
           order: index?.refs?.debutOrder || {},
           byId: index?.refs?.debutOrderById || {},
-          chars: index?.refs?.characters || [],
+          chars,
+          // 角色卡上的命途（用户 2026-10-17 第 2 条）：真实账号的快照里**没有**
+          // `path`，只能按中文名从数据集反查；虚拟账号的快照自带 `path`，优先用那个。
+          paths,
+          // 命途中文名的权威那份（服务端 `refs.pathLabels`，含「欢愉」；
+          // `format.js` 那张 `PATH_LABELS` 只是兜底）。
+          pathLabels: index?.refs?.pathLabels || {},
+          pathByCn: pathByCnOf(chars, paths),
+          // 多形态角色（三月七 / 开拓者）按 id 反查命途，见 `pathByIdOf()`。
+          pathById: pathByIdOf(index?.refs?.formAvatarIds, paths),
         };
         return debutOrderCache;
       })
@@ -1045,7 +1095,10 @@ const ensureDebutOrder = async () => {
       //    所以用 `console.warn` 而不是弹 toast。
       .catch((err) => {
         console.warn('[角色列表] 拿不到登场版本表，退回 avatar_id 升序：', err);
-        debutOrderCache = { order: {}, byId: {}, chars: [] };
+        debutOrderCache = {
+          order: {}, byId: {}, chars: [], paths: {}, pathLabels: {},
+          pathByCn: new Map(), pathById: new Map(),
+        };
         return debutOrderCache;
       })
       .finally(() => { debutOrderPromise = null; });
@@ -1101,6 +1154,73 @@ const sortCharactersByDebut = (characters, cache = {}) => {
       || ((idOf(a.character) ?? Number.MAX_SAFE_INTEGER) - (idOf(b.character) ?? Number.MAX_SAFE_INTEGER))
       || (a.index - b.index))
     .map((entry) => entry.character);
+};
+
+// ------------------------------------------- 角色卡的「命途 / 属性」（2026-10-17 第 2 条）
+
+/**
+ * 属性英文键 → 卡片配色用的键（`Thunder` 与 `Lightning` 都是雷，统一成 `lightning`）。
+ * 颜色本身写在 CSS 的 `.char-el[data-element=…]` 里，JS 不持有一份色板。
+ */
+const ELEMENT_COLOR_KEYS = {
+  physical: 'physical', fire: 'fire', ice: 'ice',
+  thunder: 'lightning', lightning: 'lightning',
+  wind: 'wind', quantum: 'quantum', imaginary: 'imaginary',
+};
+
+/**
+ * 快照里 `index.avatar_list` 的 `id → 属性`。
+ *
+ * 为什么需要这条兜底：角色列表优先用 `avatar/info`（`charactersOf()` 的第一顺位），
+ * 而**那一侧不带 `element`**；同一次快照里的 `index.avatar_list` 每项都带
+ * （`tools/hsr-parse-test.mjs` 就钉在实测样本的这个字段上）。取不到就留空 ——
+ * 不猜、也不写死一张「角色 → 属性」表。
+ */
+const elementByIdOf = (snapshot) => {
+  const map = new Map();
+  for (const row of snapshot?.index?.avatar_list || []) {
+    const id = Number(row?.id ?? row?.avatar_id);
+    if (Number.isFinite(id) && row?.element && !map.has(id)) map.set(id, row.element);
+  }
+  return map;
+};
+
+/**
+ * 给快照里的角色补齐 `path` / `element`（**只补不改**：快照自带的永远优先）。
+ *
+ * 三处来源（用户 2026-10-17 第 2 条「角色列表需要显示属性和命途」）：
+ *   * `path`：虚拟账号的快照自带（服务端从 `refs.characterPaths` 补的）；真实账号没有，
+ *     先按 **avatar_id** 查多形态表（三月七 / 开拓者），再按**中文名**查数据集 ——
+ *     两张表都来自排序用的那次 `/api/archive`，不额外打接口；
+ *   * `element`：快照角色自己没有就按 `id` 从 `index.avatar_list` 拿（见 `elementByIdOf`）。
+ *
+ * ⚠️ 返回的可能是**同一个对象**（没有可补的字段时不复制）：`state.expanded`、点击回调
+ * 都按引用/`id` 走，多造一层副本没有好处；一旦要补就返回浅拷贝，绝不去改 `state.snapshot`。
+ */
+const withCharacterMeta = (characters, snapshot) => {
+  const elementById = elementByIdOf(snapshot);
+  const cache = debutOrderCache || {};
+  return characters.map((character) => {
+    const id = Number(character?.id ?? character?.avatar_id ?? character?.avatarId);
+    const element = character?.element
+      || (Number.isFinite(id) ? elementById.get(id) : null) || '';
+    const path = character?.path
+      || (Number.isFinite(id) ? cache.pathById?.get(id) : null)
+      || cache.pathByCn?.get(displayName(character?.name)) || '';
+    if (element === (character?.element || '') && path === (character?.path || '')) return character;
+    return { ...character, element: element || character?.element, path: path || character?.path };
+  });
+};
+
+/** 命途键 → 中文名（权威那份是服务端 `refs.pathLabels`，`format.js` 那张表兜底）。 */
+const pathLabelOf = (key) => (key ? (debutOrderCache?.pathLabels?.[key] || pathName(key)) : '');
+
+/** 属性键 → `{ label: '风属性', color: 'wind' }`；认不出来就返回 `null`（卡片不画那一格）。 */
+const elementBadgeOf = (key) => {
+  if (!key) return null;
+  const label = elementName(key);
+  if (!label || label === '未知') return null;
+  return { label: `${label}属性`, color: ELEMENT_COLOR_KEYS[String(key).toLowerCase()] || '' };
 };
 
 const renderSnapshot = (snapshot) => {
@@ -1178,7 +1298,10 @@ const renderSnapshot = (snapshot) => {
   container.appendChild(overview);
 
   // ---- characters --------------------------------------------------------
-  const characters = charactersOf(snapshot);
+  // ⚠️ `withCharacterMeta` 给每张卡补齐「命途 / 属性」（用户 2026-10-17 第 2 条）。
+  //    它只补缺、不改原件；数据集表还没到位时命途为空，等 `ensureDebutOrder()`
+  //    回来后的那次重画会补上（同一次请求也负责排序）。
+  const characters = withCharacterMeta(charactersOf(snapshot), snapshot);
   /**
    * 这个账号是不是虚拟账号（用户 2026-10-13 第 3 条）：只有它才允许**自定义角色名单**。
    * 真实账号的角色来自米游社，界面上加一个只会在下一次刷新时消失（纯自欺欺人）。
@@ -1344,10 +1467,30 @@ const characterCard = (character) => {
   nameLine.textContent = name;
   const subLine = document.createElement('div');
   subLine.className = 'char-sub';
-  subLine.textContent = [
-    character.path ? pathName(character.path) : null,
-    character.element ? elementName(character.element) : null,
-  ].filter(Boolean).join(' · ') || `Lv.${character.level ?? '?'}`;
+  // 副标题写「命途 · 属性」（用户 2026-10-17 第 2 条：「角色列表需要显示属性和命途」）。
+  // 两者都拿不到才退回等级 —— 否则会在名字下面留一条空行。
+  const pathText = pathLabelOf(character?.path);
+  const element = elementBadgeOf(character?.element);
+  if (pathText) {
+    const span = document.createElement('span');
+    span.className = 'char-path';
+    span.textContent = pathText;
+    subLine.appendChild(span);
+  }
+  if (element) {
+    if (pathText) {
+      const dot = document.createElement('span');
+      dot.className = 'char-sub-dot';
+      dot.textContent = '·';
+      subLine.appendChild(dot);
+    }
+    const span = document.createElement('span');
+    span.className = 'char-el';
+    if (element.color) span.dataset.element = element.color;
+    span.textContent = element.label;
+    subLine.appendChild(span);
+  }
+  if (!subLine.childNodes.length) subLine.textContent = `Lv.${character.level ?? '?'}`;
   meta.append(nameLine, subLine);
   top.append(avatar, meta);
   card.appendChild(top);

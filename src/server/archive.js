@@ -458,6 +458,19 @@ export const archiveIndex = async () => {
        * （`Elation`，开拓者那个形态），而且两处各写一份迟早会漂。这里是权威那份。
        */
       pathLabels: i18n?.paths || {},
+      /**
+       * `{ 数据集英文键: avatar_id }`（只有**多形态角色**：三月七 ×2、开拓者 ×5）。
+       *
+       * 为什么要下发（用户 2026-10-17 第 2 条「角色列表需要显示属性和命途」）：
+       * 真实账号的快照里角色只有**中文名 + 数字 id**，而多形态角色在数据集里被拆成
+       * 带命途的英文键（`March 7th (Preservation)` 的中文名是「三月七•存护」）——
+       * 快照里那个「三月七」按名字反查不到任何命途，卡片上就只剩属性。id 是唯一的，
+       * 按 id 能精确对上（1001 存护 / 1224 巡猎、8001–8010 开拓者各命途）。
+       *
+       * ⚠️ 表本身还是 `character-debut.js` 那张 `FORM_AVATAR_ID`（排序与本表同源），
+       * 这里只是**把它发出去**，不在服务端再造一份。
+       */
+      formAvatarIds: FORM_AVATAR_ID,
       // 星级与限定标记，给成本计算与「限定」标签用
       availability: data.refs?.availability || { characters: {}, lightCones: {} },
       /**

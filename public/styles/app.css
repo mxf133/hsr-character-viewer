@@ -887,7 +887,41 @@ p.advice-note {
 .char-avatar img { width: 100%; height: 100%; object-fit: cover; }
 
 .char-name { font-size: 15px; font-weight: 600; }
-.char-sub { font-size: 11.5px; color: var(--text-muted); }
+/* 角色卡副标题：命途 · 属性（用户 2026-10-17 第 2 条）。
+   属性按游戏里的七种颜色上色，扫一眼就能分出「风 / 火 / 量子」；命途保持中性灰，
+   两种信息一眼可分，也不必再画一枚图标。 */
+.char-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.char-path { color: var(--text-dim); }
+.char-sub-dot { color: var(--text-muted); opacity: 0.65; }
+.char-el {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--el-color, var(--text-dim));
+}
+.char-el::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 22%, transparent);
+}
+/* 七种属性的颜色（键与 `ELEMENT_COLOR_KEYS` 一致；`Thunder` 也归一成 `lightning`）。 */
+.char-el[data-element="physical"] { --el-color: #c9d4e8; }
+.char-el[data-element="fire"] { --el-color: #ff8a65; }
+.char-el[data-element="ice"] { --el-color: #79d5ff; }
+.char-el[data-element="lightning"] { --el-color: #b28cff; }
+.char-el[data-element="wind"] { --el-color: #5fe0b6; }
+.char-el[data-element="quantum"] { --el-color: #9d8cf5; }
+.char-el[data-element="imaginary"] { --el-color: #ffd166; }
 
 .char-meta {
   display: flex;
@@ -2999,34 +3033,42 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.025);
 }
-/* 三大类：**每组各占一行**（用户 2026-10-16 第 3 条：「关卡权重/抽卡权重/版本权重，
-   这 3 列分别换行，让用户输入」）。
-   ⚠️ 改前是 `repeat(auto-fit, minmax(320px, 1fr))` —— 宽屏会把前两组并排成两列，
-   用户看到的「关卡权重 / 抽卡权重」是左右并排而不是上下三行。现在固定单列，
-   三组**永远竖排**（不跟随宽度变化，窄屏也不会退化成别的形状）。 */
+/* 三大类：**三列并排**（用户 2026-10-17：「权重的 3 个部分需要更合理地排版，节省空间，
+   3 个部分分别一列」）。
+   ⚠️ 改前是「每组各占一行」（那是用户 2026-10-16 第 3 条要的竖排三行）：三组各自都带
+   一行输入框 + 一行摘要，整块约 300px 高。现在三组并成一行、组内再按两小列摊开输入框，
+   最高的一组（版本权重 6 个框）也只占三行 —— 整块压到约 190px，省下的正是用户要的空间。
+   ⚠️ 列间用**竖虚线**（改前是横虚线），第一列不留线；≤1100px 退回竖排（见下面的 media）。 */
 .advice-weights-groups {
   grid-area: grid;
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  align-items: stretch;
   min-width: 0;
 }
 /* 每一类自己是「小标题 / 输入框网格 / 摘要」三行；组内的 `.advice-weights-grid` 必须
    **取消**外层的 `grid-area: grid`（那个名字是给 `.advice-weights.is-compact` 用的，
-   这里没有同名区域，留着会退化成自动放置、位置随内容漂）。 */
+   这里没有同名区域，留着会退化成自动放置、位置随内容漂）。
+   用 flex 竖排而不是三行网格：摘要靠 `margin-top: auto` 压到列底，三列底边才对得齐。 */
 .advice-weights-group {
-  display: grid;
-  grid-template-rows: auto auto auto;
+  display: flex;
+  flex-direction: column;
   gap: 7px;
   min-width: 0;
-  padding-top: 10px;
-  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  padding-left: 18px;
+  border-left: 1px dashed rgba(255, 255, 255, 0.1);
 }
+.advice-weights-group:first-child { padding-left: 0; border-left: 0; }
 /* ⚠️ 选择器要带 `.advice-weights.is-compact`（三个类），否则特异性低于
    `.advice-weights.is-compact .advice-weights-meta { grid-area: meta }`，
    覆盖不掉 —— 表现是摘要行被挤到网格第一格去。 */
 .advice-weights.is-compact .advice-weights-group > .advice-weights-grid { grid-area: auto; }
-.advice-weights.is-compact .advice-weights-group > .advice-weights-meta { grid-area: auto; }
+.advice-weights.is-compact .advice-weights-group > .advice-weights-meta {
+  grid-area: auto;
+  /* 压到列底：三列里最高的那列（版本权重 6 个框）决定列高，另两列的摘要不该浮在中间。 */
+  margin-top: auto;
+}
 .advice-weights-subtitle {
   font-size: 12px;
   font-weight: 600;
@@ -3052,17 +3094,21 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 .advice-weights .advice-weights-group:nth-child(3) .advice-weights-subtitle::before {
   background: var(--gold);
 }
-/* 抽卡权重只有两个旋钮，按两列摊开（不要跟着关卡权重那五列走）。 */
-.advice-weights-grid.is-draw { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-/* 版本权重六个旋钮（当前版本 / 前1个版本 … 前5个版本）：六个窄输入框**一行放下**
-   （用户 2026-10-16 第 3 条）。⚠️ 槽位文案在 2026-10-16 第 2 条改过 —— 从「最新版 /
-   −1 版 …」换成现在这套，**标签变长了**（`前3个版本` 5 个字），所以六列的下限要按它算；
-   窄屏（≤900px）由 media 里的 `auto-fit` 列数兜底。输入框宽度写在下面
-   （**必须在 `.is-compact .field-inline input` 之后**，见那一处的注释）。 */
-.advice-weights-grid.is-version { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-/* 紧凑版：标题 / 五个输入框 / 恢复默认挤在同一行，「已改」摘要单独一行。
-   摘要用 100% flex-basis 固定换行 —— 让行数只由「改没改」决定，不会因为
-   文案长短一会儿一行一会儿两行（页面高度会跟着抖）。 */
+/* 组内输入框：**两小列**（用户 2026-10-17 第 1 条：三个部分各占一列，列内再分两格）——
+   5 / 3 / 6 个旋钮分别排成 3 / 2 / 3 行，比竖排时的一列五行 / 三行 / 六行省一半高度。
+   ⚠️ 必须写三条选择器：`.advice-weights-grid`（基础 5 列）、`.is-draw`（2 列）、
+   `.is-version`（6 列）各有自己的特异性，只覆盖第一条的话后两条会把它盖回去 ——
+   表现是版本权重仍然硬挤六列、每格被压到几十像素。 */
+.advice-weights-group .advice-weights-grid,
+.advice-weights-group .advice-weights-grid.is-draw,
+.advice-weights-group .advice-weights-grid.is-version {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+/* 紧凑版：第一行「权重 + 说明 + 恢复默认」，下面一行是**三列并排**的分组，
+   每组自带自己的「已改」摘要（摘要靠 `margin-top: auto` 压在列底）。
+   外层那条 `meta meta meta` 区域现在没人住了（摘要都进组里了），留着只是行高塌成 0，
+   不占空间；真要删得连 `.advice-weights.is-compact .advice-weights-meta` 的
+   `grid-area: meta` 一起删，否则摘要在老结构里会掉位置。 */
 .advice-weights.is-compact {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -3183,6 +3229,18 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   border-color: var(--violet);
   box-shadow: 0 0 0 3px rgba(157, 140, 245, 0.13);
 }
+/* ≤1100px：三列并排时每列只剩约 140px（标签 `异相仲裁 · 绝境` 会被 ellipsis 吃掉半截），
+   所以退回**竖排三组**（那是 2026-10-16 的老形状）。退回后每组独占整行，
+   组内仍是两小列，高度只比并排多两行标题 —— 比硬挤三列可读。 */
+@media (max-width: 1100px) {
+  .advice-weights-groups { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .advice-weights-group {
+    padding: 10px 0 0;
+    border-left: 0;
+    border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  }
+  .advice-weights-group:first-child { padding-top: 0; border-top: 0; }
+}
 @media (max-width: 900px) {
   .advice-weights.is-compact {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -3212,6 +3270,11 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   }
   .advice-weights.is-compact > button { justify-self: start; }
   .advice-weights-grid { grid-template-columns: minmax(0, 1fr); }
+  /* ⚠️ 组内那条两小列的选择器是 (0,2,0)（带 `.advice-weights-group`），比上面这条
+     高一档 —— 手机宽度下必须在这里再点一次名，否则两格仍并排、每格不到 110px。 */
+  .advice-weights-group .advice-weights-grid,
+  .advice-weights-group .advice-weights-grid.is-draw,
+  .advice-weights-group .advice-weights-grid.is-version { grid-template-columns: minmax(0, 1fr); }
   .advice-weight-field > span { overflow: visible; text-overflow: clip; white-space: normal; line-height: 1.25; }
 }
 /* 正在按新权重重算：小字提示，不挡住页面 */

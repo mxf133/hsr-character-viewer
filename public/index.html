@@ -267,7 +267,13 @@
                删掉了（新的抽卡方案是队伍口径）。
                ⚠️ 抽卡权重那三个输入框的口径**刻意不含「角色」二字**：它们是两个榜共用的
                一组系数（角色总榜读成「角色强度」，抽卡方案读成「队伍强度」，见
-               advice.js 的 DRAW_WEIGHT_ROWS）。 -->
+               advice.js 的 DRAW_WEIGHT_ROWS）。
+
+               排版（用户 2026-10-17 第 1 条：「权重的 3 个部分需要更合理地排版，节省空间，
+               3 个部分分别一列」）：三组**并排成三列**，列内输入框再分两小格
+               （5 / 3 / 6 个旋钮 → 3 / 2 / 3 行），整块比竖排三组低一半左右。
+               ⚠️ 2026-10-16 第 3 条当时要的是「三组分别换行」，本轮按用户的新要求反过来了；
+               窄屏（≤1100px）仍退回竖排，见 app.css 里的 media。 -->
           <div class="advice-weights is-compact" id="adviceFrontierWeights">
             <span class="advice-weights-title">权重</span>
             <span class="advice-weights-hint muted small"><strong>三大类</strong>：<strong>关卡权重</strong>决定
