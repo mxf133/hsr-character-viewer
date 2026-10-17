@@ -29,7 +29,7 @@
 //
 // ⚠️ **版本权重（当前版本 / 前1个版本 …）是第三类权重**（用户 2026-10-16 第 3 条；
 // 槽位名 2026-10-16 第 2 条改过：原「最新版 / −1 版 …」不再使用；2026-10-17 起档位可增删）：
-// 每个副本窗口里「从当前版本往回 N 个版本」各占多少（默认 6 版 `3:2.5:2:1.5:1:0.5`，
+// 每个副本窗口里「从当前版本往回 N 个版本」各占多少（默认 6 版 `6:5:4:3:2:1`，
 // 用「加一版 / 删一版」把窗口改成 1~12 档）。
 //   * 它决定服务端现算的 `seasonWeights`，客户端再拿那一份做跨版本加权 ——
 //     所以同样**必须进服务端请求**（与抽卡权重同一条路，漏传就是「界面静默显示旧结果」）；
@@ -1333,8 +1333,9 @@ const renderDrawWeightsMeta = () => {
     .map((row) => `${row.label} ${(draw[row.key] * 100).toFixed(0)}%`)
     .join(' · ');
   meta.textContent = `角色总榜：${parts}`
-    // ⚠️ 不改口径、只改文案（v4.6.114）：默认从 `1:1:1`（三等分）改成 `1:1:0.5`，
-    //    所以这里不能再写「默认三等分」—— 印那个词等于在界面说假话。
+    // ⚠️ 不改口径、只改文案（v4.6.114 起）：默认值改过两次（`1:1:1` → `1:1:0.5` →
+    //    2026-10-18 的 `4:5:1`），所以这里**不写死任何比例**，只印归一化后的百分比 +
+    //    「（默认）」—— 写「默认三等分」那种词等于在界面上说假话。
     + (changed ? '' : '（默认）')
     // ⚠️ 三个系数**两个榜都吃**（用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」）：
     //    角色总榜的角色得分、抽卡方案的补金推荐分，用的是同一个 `normalizeDrawWeights`。
@@ -2687,7 +2688,7 @@ const fetchPacks = async (charKey) => {
     // 隐金设置：**只要有一项勾着就必须带**（接口默认是「一项都不减」），
     // 不带的话面板会按原价算，与榜上的分对不上。
     if (anyHiddenCostOn()) params.set('hiddenCosts', JSON.stringify(state.hiddenCosts));
-    // 抽卡权重：接口默认 = 默认表（`1 : 1 : 0.5`），界面这把也**总是带**（它一定有值），
+    // 抽卡权重：接口默认 = 默认表（`4 : 5 : 1`），界面这把也**总是带**（它一定有值），
     // 免得用户调过之后面板仍按默认权重算（这类「权重没带过去」的 bug 修过两次）。
     params.set('drawWeights', JSON.stringify(normalizeDrawWeights(state.drawWeights || {})));
     // 版本权重（用户 2026-10-16 第 3 条）：接口默认 = 默认表，界面这把**总是带**
@@ -3516,7 +3517,7 @@ const scoreBreakdownTable = (unit) => {
  *
  * ```
  *   某副本强度 = av == 0 → 100                                             ← 顶格档
- *                av > 0  → 90 × 判据线曲线(av)                              ← 第二档
+ *                av > 0  → 95 × 判据线曲线(av)                              ← 第二档
  *   强度原始量 = Σ(关卡权重 × 某副本强度) / Σ(**全部**副本的关卡权重)   ← 缺副本按 0
  *   强度得分   = 原始量夹到 90 以下（除非本档自己在每一关都打出顶格档）
  * ```
@@ -3558,7 +3559,10 @@ const strengthSourceBlock = (unit) => {
     //    里那段注释 —— 改前界面那一列因此恒印 `×0`，是个一直没人发现的历史 bug）。
     const weight = Number(env.weight ?? meta?.weight) || 0;
     const strength = Number(env.envStrength);
-    const av = Number(env.avBest);
+    // ⚠️ 2026-10-18：强度来源表读**强度那一档自己的行动值**（`strengthAv`），
+    //    不是卡片那一行的 `avBest`。两者可能不是同一支队伍 —— 卡片按含金数项挑
+    //    （最划算），强度按打得最快挑；老载荷没有 `strengthAv` 时退回 `avBest`。
+    const av = Number(env.strengthAv ?? env.avBest);
     // ⚠️ `env.strengthGold` **不再读**：强度已与金数无关（用户 2026-10-17 晚），
     //    这一列不再印「（N 金）」，留着变量只会让人以为它还在参与算分。
     // 「是否达到满分线」优先读载荷给的（按需载荷带）；总榜载荷没带时按 `av ≤ 满分线`
@@ -3568,9 +3572,14 @@ const strengthSourceBlock = (unit) => {
       ?? (lines ? avLinesOf(lines, meta?.lowerIsBetter !== false).perfect : Number.NaN));
     const isPerfect = env.isPerfect === true
       || (Number.isFinite(av) && Number.isFinite(perfectLine) && av <= perfectLine + 1e-9);
-    const avText = Number.isFinite(av)
-      ? `行动值 ${Number.isInteger(av) ? av : av.toFixed(1)}`
-      : '—';
+    // ⚠️ 2026-10-18：整关继承来的分（这一档在这一副本**一条自己的投稿都没有**）——
+    //    行动值那格写「继承」，不印出借那个整包的行动值（否则会读成「这是它自己打出来的」）。
+    const inheritedEnv = env.inheritedEnv === true;
+    const avText = inheritedEnv
+      ? '继承'
+      : (Number.isFinite(av)
+        ? `行动值 ${Number.isInteger(av) ? av : av.toFixed(1)}`
+        : '—');
     // 「0 行动值通关」那一段。
     // ⚠️ 2026-10-17 晚起**不再印金数**：强度已经与成本无关（用户「强度得分应仅考虑
     //    强度」），还写「（26 金）」会让读者以为这一格是按金数折过的 —— 改前确实折，
@@ -3581,9 +3590,10 @@ const strengthSourceBlock = (unit) => {
     //    的那一次成绩，所以**必须把版本写出来** —— 否则读者会以为它还是「窗口内最快的那次」，
     //    拿两三版前的旧 0 行动值来对账。版本缺失（老载荷）时不写，不编。
     const avNote = [
-      Number.isFinite(av) && av === 0
+      inheritedEnv ? '同角色更低成本配装的分' : '',
+      inheritedEnv ? '' : (Number.isFinite(av) && av === 0
         ? '0 行动值通关'
-        : (isPerfect ? '已达判据线' : ''),
+        : (isPerfect ? '已达判据线' : '')),
       env.strengthSeason ? `${env.strengthSeason} 版本` : '',
     ].filter(Boolean).join(' · ');
     return [
@@ -3628,30 +3638,17 @@ const strengthSourceBlock = (unit) => {
       : '上表**每一格都是这一档自己那支队的成绩**（行动值 → 该副本强度，'
         + '再按关卡权重加权平均；')
     + '行动值下面那行小字就是它的版本）。'
-    // ⚠️ 2026-10-17 第 2 条起这里通常**是恒等**：改前强度分还要走「投入越高不更弱」的
-    //    单调兜底与一个投入维的第二项（用户实测就是拿着两档的合计在比、看到「装了光锥
-    //    反而更低」来报 bug 的那个人），那两步随「强度与成本无相关性」整条删除了；
-    //    只剩非顶格档被 90 砍下来时，榜上那个数才会低于本档自身合计。
-    + '榜上那个强度分就是上表的合计，只再多夹一道天花板（见下）。'));
+    // ⚠️ 2026-10-18 起这里**恒等**：单调包络（2026-10-17 删）与整维 90 天花板
+    //    （2026-10-18 删，用户报「前排普遍不够强」）都不在了，榜上那个强度分就是上表
+    //    的合计；逐关卡的第二档上限 95 仍在上表每一格里体现。
+    + '榜上那个强度分就是上表的合计（逐关卡的第二档上限 95 已在表内体现）。'));
   /**
-   * ⚠️ 反过来那一侧也要写出来：**本档自身合计被第二档天花板压下来**（v4.6.113）。
-   *
-   * `strengthTotal` 是**逐关卡**两档的加权平均 —— 某一关打出 0 行动值（那关 100）、
-   * 其余关不是，平均就可以落在 (90, 100)。而「没打出 0 行动值的队伍，再好也够不到
-   * 顶格那一档」是用户 2026-10-16 第 1 条点名的规则，所以非顶格档在整包层也封顶 90。
-   * 实测会有这种整包（缇宝 E6 91.61 / 爻光 E6 90.48 / 黄泉 E2 90.27）—— 不写这条小字，
-   * 读者拿上面表里的「本档自身合计」去对下面那个强度分就会以为算错了。
+   * ⚠️ 2026-10-18：**整维天花板已删除**，这里不再写「本档被 90 压下来」那条小字。
+   *    逐关卡的第二档上限仍然有效（表里每一格都体现），但整包分不再夹第二刀 ——
+   *    用户报的「前排角色普遍不够强」就是那一刀造成的（一整排并列 90.0）。
+   *    因此 `strengthFloor` 与 `strengthTotal` 恒等，这条分支永远不会成立；
+   *    留着 `floor` 的读取只会误导后来的读者，一并删掉。
    */
-  const floor = Number(unit.strengthFloor);
-  const own = Number(unit.strengthTotal);
-  const secondBandCap = Number(SCORING.strengthSecondBandCap) || 90;
-  if (Number.isFinite(floor) && Number.isFinite(own)
-    && own > secondBandCap + 0.05 && floor < own - 0.05) {
-    box.appendChild(text('div', 'muted small advice-source-note',
-      `第二档天花板：本档自身合计 ${own.toFixed(1)} 已超过 ${secondBandCap} —— `
-      + `非顶格档（没有**每一关**都打出 0 行动值）的上限就是 ${secondBandCap}，`
-      + `所以这一档按 ${floor.toFixed(1)} 算。`));
-  }
   /**
    * 顶格档说明（用户 2026-10-17 第 2 条；2026-10-17 晚金数退出强度后简化）。
    *
@@ -3920,9 +3917,9 @@ const frontierTip = (unit) => {
   const evidenceUnits = (unit.envs || [])
     .reduce((n, e) => n + (Number(e.seasonCount) || 0), 0);
   /**
-   * 版本权重那一行的**比例文本**（`3:2.5:2:1.5:1:0.5`）：从下发的 `seasonWeights` 现算。
+   * 版本权重那一行的**比例文本**（`6:5:4:3:2:1`）：从下发的 `seasonWeights` 现算。
    *
-   * ⚠️ **不许写死**：用户 2026-10-14 把表改成 `3:2.5:2:1.5:1:0.5`（窗口 6），而它上一轮
+   * ⚠️ **不许写死**：用户 2026-10-18 把表改成 `6:5:4:3:2:1`（窗口 6，= 旧表 ×2），而它上一轮
    * 还是 `2:2:2`（窗口 3）—— 这张表一改，脚注就会与榜上的分对不上。
    * 兜底值（`seasonWeights` 缺失时）也跟着当前表走，别再留 `2:2:2` 那种过期常量。
    * 对象键序 = 新 → 旧（见 `buildConclusionInner` 的 `windowSeasons`），所以直接取 values。
@@ -3930,7 +3927,7 @@ const frontierTip = (unit) => {
   const versionRatioText = (() => {
     const values = Object.values(bestMeta?.seasonWeights || {}).map((v) => Number(v));
     const usable = values.filter((v) => Number.isFinite(v) && v > 0);
-    return usable.length ? usable.join(':') : '3:2.5:2:1.5:1:0.5';
+    return usable.length ? usable.join(':') : '6:5:4:3:2:1';
   })();
   // 脚注一律**单行**（用户要求「更简略」）：一条只说一件事，能省的定语全省。
   // ⚠️ 每条 ≤60 字有 CDP 断言钉着（`check-advice-layout.mjs` 的 notesShortOk）。

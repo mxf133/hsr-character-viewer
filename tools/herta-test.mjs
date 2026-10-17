@@ -959,8 +959,10 @@ check('强度详情窗口：投入项与单调包络的文案都不许回来（�
    *
    * 2026-10-17 第 2 条把强度里的**投入这一维整条删掉**了（用户原话：「角色/队伍强度与
    * 成本改为无相关性，不需要遵守高造价必然等于高强度」），同时删掉的还有
-   * 「投入越高不会更弱」的单调包络。所以详情窗口那块现在只剩两步：本档自身合计 →
-   * 第二档天花板 / 顶格档说明。这条护栏钉住**旧的文案与旧的两步不许复活**：
+   * 「投入越高不会更弱」的单调包络；2026-10-18 又删掉了**整维 90 天花板**（用户报
+   * 「前排角色普遍不够强」—— 那一刀把 90.3~95.2 压成并列 90.0）。所以详情窗口那块
+   * 现在只剩「本档自身合计 = 榜上强度分」+ 顶格档说明。这条护栏钉住**旧的文案与旧的
+   * 那几步不许复活**：
    *   * 「投入加成」「这 5 分」= 已删除的投入项；
    *   * 「单调兜底」= 已删除的包络；
    *   * `unit.lc ? Math.max(1, Number(unit.superimp)` = v4.6.113 修掉的旧尺子。
@@ -975,7 +977,10 @@ check('强度详情窗口：投入项与单调包络的文案都不许回来（�
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1 ');
   const live = stripComments(src.slice(from, to));
-  assert.ok(live.includes('第二档天花板'), '90 分那道天花板必须在详情里写出来');
+  assert.ok(live.includes('逐关卡的第二档上限'),
+    '逐关卡的第二档上限（90）必须在详情里写清楚 —— 它才是「0 行动值才满分」的实现');
+  assert.ok(!live.includes('第二档天花板'),
+    '整维 90 天花板已删除（2026-10-18），它的文案不许回来');
   assert.ok(live.includes('顶格档'), '顶格档的判据必须写清楚');
   assert.ok(!/投入加成/.test(live), '投入项已删除，它的文案不许回来');
   assert.ok(!/这 5 分/.test(live), '投入维那一项已删除，文案不许回来');
@@ -2571,7 +2576,7 @@ check('性价比总榜：只有 E2 的证据时，E2 整包照样按自己的队
     '没有 E0 配置时不该凭空生成 E0 整包');
 });
 
-check('性价比总榜：版本权重 = 3:2.5:2:1.5:1:0.5（窗口 6 版、线性递减）（用户 2026-10-14）', () => {
+check('性价比总榜：版本权重 = 6:5:4:3:2:1（窗口 6 版、线性递减）（用户 2026-10-18）', () => {
   // ⚠️ 口径变更史（别改回去）：
   //   * v16（用户 2026-10 第 7 条）：近 1-3 版各 2 分、近 4-7 版各 1 分，窗口 7。
   //   * v4.6.87（用户 2026-10-12 第 5 条原话：「把角色总榜的版本窗口收到 3 版」）：
@@ -2583,16 +2588,19 @@ check('性价比总榜：版本权重 = 3:2.5:2:1.5:1:0.5（窗口 6 版、线�
   //     但权重**线性递减**（3 → 0.5，每档 -0.5）—— 旧版本重新算数，可 4.0~4.2 三版加起来
   //     只有 3 分，**不到最新版一个人的分**。下面这条用例同时钉住「表本身」与
   //     「同样的分数集合，把高分放在最新版的那支更高」。
+  //   * **2026-10-18**（用户原话：「版本权重改为默认 6:5:4:3:2:1」）：**只换刻度、不换比例**
+  //     —— 新表逐项 = 旧表 × 2，而版本权重永远以「分子分母同除同一个和」的加权平均出现，
+  //     所以这一改不改变任何分数（下面两张手算的期望值因此一字未动）。
   //
-  // 所以这条用例现在测的是三件事：① 表本身是 3:2.5:2:1.5:1:0.5、窗口是 6；
+  // 所以这条用例现在测的是三件事：① 表本身是 6:5:4:3:2:1、窗口是 6；
   // ② **窗口外**（第 7 版起）的版本对分数没有任何贡献（权重 0 = 不进分子也不进分母）；
   // ③ 权重真的按「距最新版几个版本」递减。
-  assert.deepEqual(VERSION_WEIGHTS, [3, 2.5, 2, 1.5, 1, 0.5],
-    '版本权重表应是 3:2.5:2:1.5:1:0.5（用户 2026-10-14）');
+  assert.deepEqual(VERSION_WEIGHTS, [6, 5, 4, 3, 2, 1],
+    '版本权重表应是 6:5:4:3:2:1（用户 2026-10-18）');
   assert.equal(VERSION_WINDOW, 6, '版本窗口应是 6');
-  assert.equal(versionWeightOf(0), 3, '最新版 3 分');
-  assert.equal(versionWeightOf(2), 2, '第 3 个版本 2 分');
-  assert.equal(versionWeightOf(5), 0.5, '第 6 个版本（窗口最后一档）0.5 分');
+  assert.equal(versionWeightOf(0), 6, '最新版 6 分');
+  assert.equal(versionWeightOf(2), 4, '第 3 个版本 4 分');
+  assert.equal(versionWeightOf(5), 1, '第 6 个版本（窗口最后一档）1 分');
   assert.equal(versionWeightOf(6), 0, '第 7 个版本起权重 0（不进窗口，不是「权重很小」）');
   /**
    * ④ **槽位名**（用户 2026-10-16 第 2 条：「`-1版` 改为 `前1个版本`，`最新版本` 改为
@@ -2621,7 +2629,7 @@ check('性价比总榜：版本权重 = 3:2.5:2:1.5:1:0.5（窗口 6 版、线�
   // ⚠️ 这张夹具表**必须与 `VERSION_WEIGHTS` 逐档一致**（窗口 6 = 这 6 个版本全覆盖）：
   // 它是「服务端下发的那一份」的替身，抄错就等于在测另一张表。
   const seasonWeights = {
-    '4.5': 3, '4.4': 2.5, '4.3': 2, '4.2': 1.5, '4.1': 1, '4.0': 0.5,
+    '4.5': 6, '4.4': 5, '4.3': 4, '4.2': 3, '4.1': 2, '4.0': 1,
   };
   const rowsOf = (char, bestSeason) => seasons.map((season) => ({
     cost: season === bestSeason ? 2 : (season === '4.0' || season === '4.5' ? 4 : 3),
@@ -2647,7 +2655,7 @@ check('性价比总榜：版本权重 = 3:2.5:2:1.5:1:0.5（窗口 6 版、线�
   const recent = out.frontierUnits.find((unit) => unit.name === 'Recent');
   const stale = out.frontierUnits.find((unit) => unit.name === 'Stale');
   assert.ok(recent && stale, '两个整包都应进榜');
-  // 6 个版本**全在窗口内**（权重 3/2.5/2/1.5/1/0.5），所以没有「不进窗口」的版本。
+  // 6 个版本**全在窗口内**（权重 6/5/4/3/2/1），所以没有「不进窗口」的版本。
   assert.equal(recent.envs[0].absentSeasons, 0,
     '权重 0 的版本是「不进窗口」，不是「早于登场」—— 不该被记成不参与平均');
   assert.equal(recent.envs[0].droppedSeasons, 0, '权重 0 的版本也不该被记成「无人使用算 0 分」');
@@ -2660,7 +2668,7 @@ check('性价比总榜：版本权重 = 3:2.5:2:1.5:1:0.5（窗口 6 版、线�
     + w['4.2'] * (200 / 3) + w['4.1'] * (200 / 3) + w['4.0'] * 50) / wSum;
   assert.ok(Math.abs(perEnv(recent) - expectRecent) < 0.01,
     `Recent 的线性加权平均应为 ${expectRecent.toFixed(2)}，实际 ${perEnv(recent).toFixed(4)}`);
-  // Stale：把「2 金」那一版挪到最旧的 4.0（权重只有 0.5）、最新版反而是 4 金 → 50。
+  // Stale：把「2 金」那一版挪到最旧的 4.0（权重只有 1）、最新版反而是 4 金 → 50。
   const expectStale = (w['4.5'] * 50 + w['4.4'] * (200 / 3) + w['4.3'] * (200 / 3)
     + w['4.2'] * (200 / 3) + w['4.1'] * (200 / 3) + w['4.0'] * 100) / wSum;
   assert.ok(Math.abs(perEnv(stale) - expectStale) < 0.01,
@@ -2673,9 +2681,9 @@ check('性价比总榜：版本权重 = 3:2.5:2:1.5:1:0.5（窗口 6 版、线�
   // 排到 4.2 前面。
   assert.deepEqual(out.frontierEnvs[0].seasons, [...seasons].reverse(),
     '副本元数据要带版本列表（新的在前）');
-  assert.equal(out.frontierEnvs[0].seasonWeights['4.5'], 3, '窗口内第 1 版 3 分');
-  assert.equal(out.frontierEnvs[0].seasonWeights['4.3'], 2, '窗口内第 3 版 2 分');
-  assert.equal(out.frontierEnvs[0].seasonWeights['4.0'], 0.5, '窗口最后一版 0.5 分');
+  assert.equal(out.frontierEnvs[0].seasonWeights['4.5'], 6, '窗口内第 1 版 6 分');
+  assert.equal(out.frontierEnvs[0].seasonWeights['4.3'], 4, '窗口内第 3 版 4 分');
+  assert.equal(out.frontierEnvs[0].seasonWeights['4.0'], 1, '窗口最后一版 1 分');
   assert.equal(out.frontierEnvs[0].versionWindow, 6, '下发的窗口长度是 6');
 });
 
@@ -3404,8 +3412,15 @@ check('性价比总榜：每个角色只出场一次，取它分数最高的那�
   assert.equal(only.eidolon, 6, '留下的是分数更高的那个整包（E6 绝境满分）');
   assert.ok(only.total > 0, '留下的整包仍然有分');
   assert.equal(only.gold, 7, 'E6 整包 = 本体 1 + E6 六金（**从 E0 数起**，不是 E2 之后的增量）');
-  assert.deepEqual(only.envs.map((env) => env.id), ['aa|plight'],
-    '留下的那条只带它自己的副本证据');
+  // ⚠️ 2026-10-18 起环境级继承会往 E6 补一条「普通关」继承行（它自己没有普通关的投稿，
+  //    从更便宜的 E2 借分），所以 `envs` 不再只含绝境那一关。断言改成「自己证据在绝境、
+  //    普通关是继承来的」。
+  const own = only.envs.filter((e) => !e.inheritedEnv);
+  const borrowed = only.envs.filter((e) => e.inheritedEnv);
+  assert.deepEqual(own.map((env) => env.id), ['aa|plight'],
+    '自己的证据只在绝境那一关');
+  assert.ok(borrowed.length > 0 && borrowed.every((e) => e.id !== 'aa|plight'),
+    '普通关是继承来的（不是自己打出来的），且继承的分数来自更便宜的同角色整包');
 });
 
 // ------------------------------------------------- 隐金设置（用户 2026-10-11）
@@ -3896,6 +3911,9 @@ checkAsync('贡献值来源：真实数据集上因子能还原每一行的分�
   let maxErr = 0;
   for (const unit of data.frontierUnits) {
     for (const env of unit.envs) {
+      // ⚠️ 2026-10-18：环境级继承行 `score`/`value` 恒 0（继承只进强度列），
+      //    不走「因子还原」这条性价比链。
+      if (env.inheritedEnv === true) continue;
       const f = frontierFactorsOf(env, metaOf(env.id));
       if (!(f.base > 0)) continue;
       rows += 1;
@@ -3953,6 +3971,8 @@ checkAsync('⭐ 面板（/api/archive/packs）那一路的 env 也要能还原�
     assert.equal(packs.ok, true, `${name}：面板接口应当可用`);
     for (const pack of packs.packs || []) {
       for (const env of pack.envs || []) {
+        // ⚠️ 2026-10-18：环境级继承行没有性价比因子，跳过。
+        if (env.inheritedEnv === true) continue;
         rows += 1;
         // ① 字段必须在（缺了就是上面那个 bug 的形态）
         assert.ok(Number.isFinite(Number(env.seasonMinCost)),
@@ -3982,16 +4002,22 @@ checkAsync('⭐ 面板（/api/archive/packs）那一路的 env 也要能还原�
 // 按关卡权重加权、不含「不用抽就有」的角色。四条各一个最小复现。
 // --------------------------------------------------------------------------
 
-check('⭐ 强度只看「这一关最佳证据那一支队」的行动值，不再借别支队伍的最快成绩（用户 2026-10-16 第 2 条）', () => {
-  // 用户原话：「**一个队伍的强度得分和此队伍的实际行动值有关**」。
-  // 复现：同一个整包（Hero E0）有两条成绩 ——
+check('⭐ 强度读「这一关打得最快的那一行」，卡片仍读「最划算的那一行」（2026-10-18 改）', () => {
+  // 同一个整包（Hero E0）有两条成绩：
   //   * 便宜那支（1 金）：行动值 **450**（在绝境满分线 300 与达标线 500 之间）；
   //   * 贵那支（6 金）：行动值 **0**（举全队之力打出来的最快成绩）。
-  // 改前强度取「该整包在这个副本里**任意一支队伍**的最少行动值」→ 0 → 满分；改后取
-  // 「最佳证据那一支队」（便宜那支，它的分更高）→ 450。
-  // 实测依据：全服 2301 条绝境投稿里只有 **32 条**是 0 行动值，且全部来自 32~48 金的
-  // 「四 6+5」满配队 —— 缇宝 E6S5 的卡片写着「绝境 26 金 · 457 行动值」而强度是 100，
-  // 用户报的就是这条（「仅仅只是存在一个 6+5 的角色而已」）。
+  //
+  // ⚠️ 口径变更史（两次，别再走回头路）：
+  //   * 2026-10-16（第 2 条）：强度改成读「最佳证据那一支队」= 含金数项分最高的那一行
+  //     → 450 → 48.375。理由是卡片与强度必须同源（用户报「卡片写 457 行动值、强度按 0
+  //     给满分」）。
+  //   * **2026-10-18**（用户报「只考虑强度时前排角色普遍不够强，这些角色都有更好的发挥」）：
+  //     那一改让**成本重新污染了强度** —— 实测银狼LV.999 E6S5 的绝境用的是 233 行动值 /
+  //     17 金那行（76.0 分），而同一版本有 57 行动值 / 42 金（86.6 分）的成绩；砂金•戏浪
+  //     在末日幻影同样有 0 分（满分）的 24 金成绩被 8 金的 51 行动值挤掉。
+  //     既然用户已定「强度与成本无相关性」，强度就不能按含金数项挑行。
+  //     现在：**强度读 `strengthBySeason`（最快）**、**卡片与金数仍读 `bySeason`（最划算）**，
+  //     界面分两处印（`env.strengthAv` vs `env.actionValue`），互不冒充。
   const availability = {
     characters: { Hero: { rarity: 5, limited: true }, Rich: { rarity: 5, limited: true } },
     lightCones: {},
@@ -4000,7 +4026,7 @@ check('⭐ 强度只看「这一关最佳证据那一支队」的行动值，不
     mode: 'aa', stage: 'plight', season: '4.6',
     tierLines: { perfect: 300, target: 500 },
     // 两条都是 target 档 → 金数项的分母取「该版本全档最小」= 1，于是便宜那支的金数项 = 1、
-    // 贵那支 = 1/6，证据必然落在便宜那支上。
+    // 贵那支 = 1/6，**性价比**的证据必然落在便宜那支上。
     frontierRows: [
       { cost: 1, tier: 'target', actionValue: 450, members: [{ char: 'Hero', eidolon: 0 }] },
       { cost: 6, tier: 'target', actionValue: 0,
@@ -4011,16 +4037,16 @@ check('⭐ 强度只看「这一关最佳证据那一支队」的行动值，不
   const hero = out.frontierUnits.find((u) => u.name === 'Hero');
   assert.ok(hero, 'Hero 应当进榜');
   const e = hero.envs[0];
-  assert.equal(e.actionValue, 450, '最佳证据那一支队的行动值（卡片上印的就是它）');
-  assert.equal(e.avBest, 450, '强度口径必须与卡片上那个行动值**同源**（改前它会取到 0）');
-  // 450 落在**第二档**（没打出 0 行动值）：本副本强度 = `strengthSecondBandCap × 曲线`。
-  // 顶格档（0 行动值）才给满 100，见下面那条「两档」用例。
-  const expected = SCORING.strengthSecondBandCap * Math.min(1, perfFactorOf(450, env.tierLines,
-    true, 'target', SCORING.strengthLineWeights));
-  assert.ok(Math.abs(e.envStrength - expected) < 1e-6,
-    `第二档的本副本强度应是 ${SCORING.strengthSecondBandCap} × 曲线(450) = ${expected}，实际 ${e.envStrength}`);
-  assert.ok(e.envStrength < SCORING.strengthSecondBandCap + 1e-9,
-    `450 > 满分线 300，属第二档，不该够到顶格（实际 ${e.envStrength}）`);
+  // ① 卡片 / 金数那一行：仍然是最划算的 450 / 1 金。
+  assert.equal(e.actionValue, 450, '卡片上印的行动值（按含金数项挑）');
+  assert.equal(e.avBest, 450, '`avBest` 是卡片那一行的行动值');
+  // ② 强度那一行：打得最快的 0 行动值 → 顶格档 100。
+  assert.equal(e.strengthAv, 0, '强度读该版本最快那一行（`strengthAv`）');
+  assert.equal(e.envStrength, 100,
+    `0 行动值 → 顶格档 100，实际 ${e.envStrength}`);
+  // ③ 两处**必须**是两个不同的数 —— 否则说明某一个横向串了。
+  assert.notEqual(e.strengthAv, e.actionValue,
+    '强度行动值与卡片行动值不是同一行，混成一个数说明挑行逻辑又合并了');
 });
 
 check('⭐ 强度两档：打出 0 行动值 = 顶格档 100；没打出 = ≤ 90（用户 2026-10-16 第 1 条）', () => {
@@ -4053,18 +4079,15 @@ check('⭐ 强度两档：打出 0 行动值 = 顶格档 100；没打出 = ≤ 9
   assert.ok(strengthOf(0) > strengthOf(1), '顶格档必须严格高于任何第二档');
 });
 
-check('⭐ 第二档天花板对整维统一封顶（用户 2026-10-16 第 1 条）', () => {
+check('⭐ 整维天花板已取消：非顶格档可以 > 90，100 仍只给顶格档（2026-10-18）', () => {
   /**
-   * 用户 2026-10-16 晚「都修」的第 ② 条，**查证后定性改了**：这不是包络越权，而是
-   * **两档天花板本身**。`strengthTotal` 是**逐关卡**两档的加权平均 —— 某一关打出
-   * 0 行动值（那关 100）、其余关不是，平均下来可以落在 (90, 100)：实测缇宝 E6 91.61 /
-   * 爻光 E6 90.48 / 黄泉 E2 90.27。而「没打出 0 行动值的队伍，再好也够不到顶格那一档」
-   * 是用户 2026-10-16 第 1 条点名的规则 ⇒ 非顶格档在**整包层也封顶 90**。
+   * 2026-10-16 第 1 条曾要求「非顶格档在**整包层**也封顶 90」，实测后果是榜首一整排
+   * 并列 90.0（缇宝 91.27、知更鸟 91.83、姬子•启行 95.23 全被压成同一个数），
+   * 名次退化成按性价比兜底键排 —— 用户 2026-10-18 报的「前排角色普遍不够强」就是它。
    *
-   * ⚠️ 2026-10-17 第 2 条起，这条用例里**原来那条「投入维仍然单调」断言删了**：
-   *    用户原话「角色/队伍强度与成本**改为无相关性**，不需要遵守高造价必然等于高强度」，
-   *    而星魂档就是成本 —— 「E2 必须 ≥ E0」正是被否掉的那条单向性。现在改钉**反面**：
-   *    每一档的强度分只能是它自己的成绩（见 ④）。
+   * 现在：**逐关卡的两档规则保留**（任何一关不是 0 行动值，该关最多 90），
+   * 整包层不再夹第二刀 —— 所以「有一关 100、另一关 65」的整包可以落在 90~99，
+   * 而 100 仍然只属于「每个有数据的关卡都 0 行动值」的那一档。
    */
   const availability = {
     characters: { Hero: { rarity: 5, limited: true } },
@@ -4098,22 +4121,21 @@ check('⭐ 第二档天花板对整维统一封顶（用户 2026-10-16 第 1 条
   const z = packs.find((u) => u.eidolon === 2 && u.lc === 'GoldCone');
   const y = packs.find((u) => !u.lc);
   assert.ok(x && z && y, `三档整包都该在 frontierPacksByChar 里（实际 ${packs.length} 条）`);
-  // 前置条件：这三支的**自身**合计都落在那道天花板之上，否则这条用例测不到东西。
-  assert.ok(x.strengthTotal > SCORING.strengthSecondBandCap,
-    `前置条件：自身合计应 > ${SCORING.strengthSecondBandCap}，实际 ${x.strengthTotal}`);
-  // ① 封顶对整维生效（含自身）：非顶格档的 `strengthFloor` 一律 ≤ 90。
+  // 前置条件：这两档的自身合计**确实越过旧的 90 墙**（否则这条用例测不到「不再封顶」）。
+  assert.ok(x.strengthTotal > 90,
+    `前置条件：自身合计应 > 90，实际 ${x.strengthTotal}`);
+  // ① 不再夹第二刀：`strengthFloor` 恒等于 `strengthTotal`，允许 > 90。
   for (const u of [x, z]) {
-    assert.ok(u.strengthFloor <= SCORING.strengthSecondBandCap + 1e-6,
-      `非顶格档必须封顶 ${SCORING.strengthSecondBandCap}，实际 ${u.name} E${u.eidolon} `
-      + `${u.strengthFloor}（自身 ${u.strengthTotal}）`);
-    assert.equal(u.strengthFloor, SCORING.strengthSecondBandCap,
-      `自身越过天花板时应正好取天花板，实际 ${u.strengthFloor}`);
+    assert.equal(u.strengthFloor, u.strengthTotal,
+      `整维天花板已取消，floor 应等于自身合计（实际 ${u.strengthFloor} vs ${u.strengthTotal}）`);
+    assert.ok(u.strengthScore > 90,
+      `非顶格档可以超过旧的 90 墙（实际 ${u.strengthScore}）`);
+    assert.ok(u.strengthScore < 100 - 1e-9,
+      '只要还有一关不是 0 行动值，就够不到 100');
   }
-  // ② 顶格档（自己每关都 0 行动值）不受天花板影响。
-  assert.equal(y.strengthFloor, 100, '顶格档自己打出 0 行动值 → 兜底就是 100');
+  // ② 顶格档（自己每关都 0 行动值）仍是 100。
+  assert.equal(y.strengthFloor, 100, '顶格档自己打出 0 行动值 → 就是 100');
   // ③ 单调包络已删除（用户 2026-10-17 第 2 条）：E2 那一档**不许**借 E0 的成绩。
-  //    两条 env 的输入对 E0 与 E2 完全同构（同为 0 行动值 / 同为 1 行动值），
-  //    所以包络若还在，两档会拿到同一个数；现在各自算各自的。
   assert.ok(Math.abs(Number(z.strengthTotal) - Number(x.strengthTotal)) < 1e-6,
     `夹具让 E0/E2 两档同构，自身合计理应相同（实际 ${x.strengthTotal} vs ${z.strengthTotal}）`);
   assert.equal(z.strengthScore, x.strengthScore,

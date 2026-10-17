@@ -165,19 +165,20 @@ check('⭐ 候选池取自**逐档榜**（每角色 × 每星魂档），不是�
     `池规模口径自洽：去重前 ${plan.poolAll} 应 ≥ 剔除补金 0 后的 ${plan.pool}`);
 });
 
-check('三个分量按**抽卡权重**合成，默认 1:1:0.5 = 0.4 / 0.4 / 0.2', () => {
+check('三个分量按**抽卡权重**合成，默认 4:5:1 = 0.4 / 0.5 / 0.1', () => {
   const plan = fixturePlan();
   const draw = plan.drawWeights;
   // ⚠️ 用户 2026-10-13 第 3 条（「泛用性权重也适用于补金推荐」）之前这里是 `0.5 / 0.5`
   //    （方案只吃强度与性价比、两项自己再归一）；2026-10-13 之后三项一起归一到三等分
   //    `1/3 × 3`；**2026-10-16 第 1 条把泛用性的默认权重降到 0.5**，于是默认变成
-  //    `1 : 1 : 0.5` → 归一 `0.4 / 0.4 / 0.2`。
-  // 先把「默认值本身」钉住（用户 2026-10-16 第 1 条）：改它就是改口径，必须是有意的。
-  assert.deepEqual(drawWeightDefaults(), { strength: 1, cost: 1, versatility: 0.5 },
-    '抽卡权重的默认原始值应是 1 : 1 : 0.5');
+  //    `1 : 1 : 0.5` → 归一 `0.4 / 0.4 / 0.2`；**2026-10-18 改成 `4 : 5 : 1`**，归一
+  //    `0.4 / 0.5 / 0.1`（性价比抬到一半、泛用性压到一成）。
+  // 先把「默认值本身」钉住（用户 2026-10-18）：改它就是改口径，必须是有意的。
+  assert.deepEqual(drawWeightDefaults(), { strength: 4, cost: 5, versatility: 1 },
+    '抽卡权重的默认原始值应是 4 : 5 : 1');
   assert.deepEqual(draw, {
-    strength: 0.4, cost: 0.4, versatility: 0.2,
-  }, '默认抽卡权重应是 1:1:0.5 归一化后的 0.4 / 0.4 / 0.2');
+    strength: 0.4, cost: 0.5, versatility: 0.1,
+  }, '默认抽卡权重应是 4:5:1 归一化后的 0.4 / 0.5 / 0.1');
   for (const r of plan.rows) {
     // ⚠️ 第二项是 `gapPct`（用户 2026-10-12 第 6 条：性价比这一侧只有差额接近度）；
     //    第三项是 `versatilityPct`（用户 2026-10-13 第 3 条）。
@@ -619,26 +620,26 @@ check('⭐ 强度权重高 → 强度分高的在前；性价比权重高 → �
 check('抽卡权重的边界：全部清空 / 非法值 → 退回**默认比例**，不出现整列 0 分', () => {
   // ⚠️ 2026-10-13 第 1 条加了第三个旋钮（泛用性）之后，「清空」必须**三个键一起**才算
   // 「我没有偏好」；只清两个、第三个留着默认时，第三项就是 100% —— 那是真实的偏好。
-  // ⚠️ 2026-10-16 第 1 条把泛用性的**默认权重**降到 0.5，所以「退回默认」= `1:1:0.5`
-  //    归一后的 `0.4 / 0.4 / 0.2`（改前是 `1/3 × 3`）。
-  const dflt = { strength: 0.4, cost: 0.4, versatility: 0.2 };
+  // ⚠️ 2026-10-18 的默认值是 `4:5:1`，所以「退回默认」= 归一后的 `0.4 / 0.5 / 0.1`
+  //    （上一版是 `1:1:0.5` → `0.4 / 0.4 / 0.2`，再往前是 `1/3 × 3`）。
+  const dflt = { strength: 0.4, cost: 0.5, versatility: 0.1 };
   assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0, versatility: 0 }), dflt);
   assert.deepEqual(normalizeDrawWeights({ strength: '', cost: '', versatility: '' }), dflt,
     '空串 = 用户清空了输入框 → 按 0 算，三个都是 0 时退回默认比例');
   assert.deepEqual(normalizeDrawWeights({ strength: -1, cost: 'abc', versatility: NaN }), dflt,
     '非法值忽略、退回默认');
   assert.deepEqual(normalizeDrawWeights({ strength: 2, cost: null }),
-    // 期望值按**同一个算式**写（`值 / 3.5`），避免手抄小数时差 1 ulp 造成假红。
-    { strength: 2 / 3.5, cost: 1 / 3.5, versatility: 0.5 / 3.5 },
-    '只给一个键时另两个按默认值补齐（性价比 1、泛用性 0.5）');
+    // 期望值按**同一个算式**写（`值 / 默认总和 8`），避免手抄小数时差 1 ulp 造成假红。
+    { strength: 2 / 8, cost: 5 / 8, versatility: 1 / 8 },
+    '只给一个键时另两个按默认值补齐（性价比 5、泛用性 1）');
   assert.deepEqual(normalizeDrawWeights({ strength: 1, cost: 0 }),
-    { strength: 2 / 3, cost: 0, versatility: 1 / 3 },
-    '单边为 0 是**合法**的：用户可以把某一侧彻底关掉（泛用性那 0.5 仍在）');
+    { strength: 1 / 2, cost: 0, versatility: 1 / 2 },
+    '单边为 0 是**合法**的：用户可以把某一侧彻底关掉（泛用性那个默认 1 仍在）');
   assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0 }),
     { strength: 0, cost: 0, versatility: 1 },
     '只清空强度/性价比 = 全押泛用性（第三个框还开着，那不是「没有偏好」）');
   assert.deepEqual(normalizeDrawWeights(undefined), dflt,
-    '不给参数时用默认值（默认 1:1:0.5 → 0.4 / 0.4 / 0.2）');
+    '不给参数时用默认值（默认 4:5:1 → 0.4 / 0.5 / 0.1）');
 });
 
 check('⭐ 性价比只有**差额接近度**一个刻度：差额与整包分都相同时同分（用户 2026-10-12 第 6 条）', () => {
@@ -1089,14 +1090,16 @@ check('真载荷上：行动值前沿池的 0 行动值队（用户 2026-10-16 �
   assert.ok(skippedHeavy.every((r) => Number(r.strengthPct) < 95),
     `跳过最重副本（${heaviest.id}）的前沿队不许拿顶格分，实际最高 `
     + `${Math.max(...skippedHeavy.map((r) => Number(r.strengthPct)))}`);
-  // 强度权重拉满（① 单独说话）时，0 行动值队仍然登顶。
-  assert.equal(strengthOnly.rows[0].avSource, true,
-    '强度权重拉满时，总分第一名仍应是行动值前沿来的 0 行动值队');
+  // 强度权重拉满（① 单独说话）时，前排里必须仍有「行动值前沿来的 0 行动值队」。
+  // ⚠️ 2026-10-18 起强度只看最快的，会有一批队伍并列 100，第一名由性价比兜底键决定 ——
+  //    所以判据从「第一名必须是前沿队」放宽成「前 5 里必须有前沿队且是 100 分」。
+  assert.ok(strengthOnly.rows.slice(0, 5).some((r) => r.avSource === true && r.strengthPct >= 95),
+    '强度权重拉满时，前 5 里应仍有行动值前沿来的 0 行动值队（且是顶格分）');
   assert.ok(strengthOnly.rows[0].strengthPct >= 95,
     `登顶那支的 ① 应 ≥95（顶格档），实际 ${strengthOnly.rows[0].strengthPct}`);
-  assert.ok(played.has(rosterKeyOf(strengthOnly.rows[0].members))
-    && played.get(rosterKeyOf(strengthOnly.rows[0].members)).has(heaviest.id),
-    '登顶那支必须**打过最重的那个副本**（跳过的队不许登顶）');
+  // ⚠️ 2026-10-18 起不再断言「登顶那支本人打过最重副本」：强度改成「只看最快的」之后，
+  //    ① 是**代表整包**的峰值（可能由同一角色的另一套阵容打出），队伍名单与那份证据
+  //    不再一一对应。真正要守的不变式是上面那条「跳过最重副本的前沿队 <95」，它仍然成立。
 });
 
 check('界面现算的差额 = 服务端口径（同一份 availability、同一批持有状态）', () => {
@@ -1117,7 +1120,12 @@ check('界面现算的差额 = 服务端口径（同一份 availability、同一
     let expect = 0;
     for (const m of r.members) {
       if (isLimited(av.characters[m.char])) expect += 1 + Math.max(0, Number(m.eidolon) || 0);
-      if (m.lc && isLimited(av.lightCones[m.lc])) expect += 1;
+      // ⚠️ 光锥要按**叠影**算（`marginalCostOf` 空账号下 = `superimp` 金），不是只算本体 1 金：
+      //    E6S5 的限定锥是 1 + 4 = 5 金。改前这里写死 `+1`，遇到 S2 的队会少算 1 金
+      //    （实测 Asta E6 Dance S5 / Silver Wolf E1 Welcome S2 那支队：界面 6、这里算 5）。
+      if (m.lc && isLimited(av.lightCones[m.lc])) {
+        expect += Math.max(1, Math.round(Number(m.superimp) || 1));
+      }
     }
     assert.equal(r.gap, expect, `#${i + 1} ${r.key}（${r.members.map((m) => m.char).join('/')}）`
       + `：界面算 ${r.gap}，按成本表应为 ${expect}`);

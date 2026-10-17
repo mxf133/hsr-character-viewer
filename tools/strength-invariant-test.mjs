@@ -180,23 +180,22 @@ const unitOfE = (out, name, eidolon) => allUnits(out)
         `${name}（av=${av}）应为 90 × ${strengthPerf(av).toFixed(4)} = ${want.toFixed(4)}，实际 ${got}`);
     }
   });
-  check('强度分与「本档自身合计」只差一道天花板（包络已删，不再向上兜底）', () => {
+  check('强度分 = 本档自身合计（包络与整维天花板都已删，2026-10-18）', () => {
     for (const name of ['Cheap', 'Pricey', 'NoZero', 'Inside']) {
       const u = unitOf(out, name);
-      assert.ok(Number(u.strengthFloor) <= Number(u.strengthTotal) + 1e-6,
-        `${name}: strengthFloor ${u.strengthFloor} 不该高于自身合计 ${u.strengthTotal}（包络已删除）`);
-      const want = Number(u.strengthTotal) >= 99.99
-        ? Number(u.strengthTotal) : Math.min(Number(u.strengthTotal), SCORING.strengthSecondBandCap);
-      assert.ok(Math.abs(Number(u.strengthScore) - want) < 1e-6,
-        `${name}: 强度分应为 min(自身, 90)，实际 ${u.strengthScore} vs ${want}`);
+      assert.ok(Math.abs(Number(u.strengthFloor) - Number(u.strengthTotal)) < 1e-6,
+        `${name}: strengthFloor ${u.strengthFloor} 应等于自身合计 ${u.strengthTotal}`);
+      assert.ok(Math.abs(Number(u.strengthScore) - Number(u.strengthTotal)) < 1e-6,
+        `${name}: 强度分应等于自身合计，实际 ${u.strengthScore} vs ${u.strengthTotal}`);
     }
   });
-  check('非顶格档的强度分一律 ≤ 90（用户 2026-10-16 第 1 条的天花板）', () => {
+  check('逐关卡的第二档上限仍是 90（整维不再夹第二刀）', () => {
     for (const name of ['NoZero', 'Inside']) {
       const u = unitOf(out, name);
       assert.equal(u.strengthTopBand, false, `${name} 不该是顶格档`);
-      assert.ok(Number(u.strengthScore) <= SCORING.strengthSecondBandCap + 1e-6,
-        `${name}: ${u.strengthScore} 超过了第二档天花板`);
+      // 整包可以 > 90（某一关 100 + 另一关第二档），但必须 < 100。
+      assert.ok(Number(u.strengthScore) < 100 - 1e-9,
+        `${name}: 有非 0 行动值的关卡时不该到 100（实际 ${u.strengthScore}）`);
     }
   });
   check('投入项已整条删除（`SCORING.investWeight` 恒 0）', () => {
@@ -205,51 +204,46 @@ const unitOfE = (out, name, eidolon) => allUnits(out)
   });
 }
 
-// ---- ②-B 两个版本：版本权重必须按用户设置生效 --------------------------------
+// ---- ②-B 两个版本：强度只看最快的，版本权重不再影响强度 ----------------------
 {
   const rows = [
-    // Half：4.5 期 0 行动值（100）；4.4 期行动值 500（正好压在达标线上 → 90 × 0.45）
+    // Half：4.5 期 0 行动值（100）；4.4 期行动值 500（第二档）
     { cost: 10, actionValue: 0, tier: 'perfect', newestSeason: '4.5', members: member('Half') },
     { cost: 20, actionValue: 500, tier: 'perfect', newestSeason: '4.4', members: member('Half') },
   ];
   const seasons = ['4.4', '4.5'];
   const zero = { '4.5': { min: 10, max: 10 }, '4.4': { min: 20, max: 20 } };
-  const v45 = 100;
-  const v44 = SCORING.strengthSecondBandCap * strengthPerf(500);
 
-  check('⭐ 版本权重按用户设置生效（同一份数据，换权重就换分）', () => {
+  check('⭐ 强度只看最快的：有一期 0 行动值 → 100，不被另一期稀释', () => {
     const a = runPlight(rows, seasons, { '4.5': 3, '4.4': 1 }, zero);
-    const wantA = (v45 * 3 + v44 * 1) / 4;
-    const halfA = envOf(a, 'Half');
-    assert.ok(halfA, 'Half 应进榜');
-    assert.ok(Math.abs(Number(halfA.envStrength) - wantA) < 1e-3,
-      `权重 3:1 时应为 ${wantA.toFixed(4)}，实际 ${halfA.envStrength}`);
-    const b = runPlight(rows, seasons, { '4.5': 1, '4.4': 3 }, zero);
-    const wantB = (v45 * 1 + v44 * 3) / 4;
-    const halfB = envOf(b, 'Half');
-    assert.ok(Math.abs(Number(halfB.envStrength) - wantB) < 1e-3,
-      `权重 1:3 时应为 ${wantB.toFixed(4)}，实际 ${halfB.envStrength}`);
-    assert.ok(Number(halfA.envStrength) > Number(halfB.envStrength),
-      '新版本权重更高时，4.5 期拿满分的那一档必须更高');
+    const half = envOf(a, 'Half');
+    assert.ok(half, 'Half 应进榜');
+    assert.ok(Math.abs(Number(half.envStrength) - 100) < 1e-6,
+      `最快那次是 0 行动值 → 本关 100（不再按版本权重平均），实际 ${half.envStrength}`);
+    assert.equal(unitOf(a, 'Half').strengthTopBand, true,
+      '有一期打出 0 行动值就是顶格档（2026-10-18 用户「强度只看最快的」）');
   });
-  check('⭐ 顶格档要求「每一个有数据的版本都打出 0 行动值」', () => {
+
+  check('⭐ 版本权重不再影响强度（只影响性价比 / 泛用性）', () => {
     const a = runPlight(rows, seasons, { '4.5': 3, '4.4': 1 }, zero);
-    const half = unitOf(a, 'Half');
-    assert.equal(half.strengthTopBand, false,
-      '4.4 期行动值 500（不是 0）→ 不许算顶格档');
-    assert.ok(Number(half.strengthScore) < 100, '非顶格档必须低于 100');
+    const b = runPlight(rows, seasons, { '4.5': 1, '4.4': 3 }, zero);
+    assert.equal(Number(envOf(a, 'Half').envStrength), Number(envOf(b, 'Half').envStrength),
+      '换版本权重，强度必须一分不变（2026-10-18 第 1 条）');
+    // 但性价比那一侧仍按版本加权 —— 换权重必须换分，否则说明「权重没接上」。
+    assert.notEqual(Number(unitOf(a, 'Half').total), Number(unitOf(b, 'Half').total),
+      '版本权重应当仍然影响性价比（那一侧没有改口径）');
   });
 }
 
 // ---- ②-C 继承：高成本整包从更便宜的同角色整包借分 ----------------------------
 {
   const rows = [
-    // Low E0：两版都有成绩
-    { cost: 4, actionValue: 300, tier: 'perfect', newestSeason: '4.4', members: member('Low', 0) },
-    { cost: 4, actionValue: 0, tier: 'perfect', newestSeason: '4.5', members: member('Low', 0) },
+    // Low E0：4.4 打出 0 行动值（满分），4.5 只有 300
+    { cost: 4, actionValue: 0, tier: 'perfect', newestSeason: '4.4', members: member('Low', 0) },
+    { cost: 4, actionValue: 300, tier: 'perfect', newestSeason: '4.5', members: member('Low', 0) },
     // Low E6：**只有 4.5 有成绩**（谁会上传 8 金的队去打已经能 0 行动值的关？）
     { cost: 8, actionValue: 400, tier: 'perfect', newestSeason: '4.5', members: member('Low', 6) },
-    // Solo E6：同角色**连低配装都没有** → 继承不到，4.4 仍算 0
+    // Solo E6：同角色**连低配装都没有** → 继承不到
     { cost: 8, actionValue: 400, tier: 'perfect', newestSeason: '4.5', members: member('Solo', 6) },
   ];
   const seasons = ['4.4', '4.5'];
@@ -259,36 +253,31 @@ const unitOfE = (out, name, eidolon) => allUnits(out)
   const out = runPlight(rows, seasons, { '4.5': 1, '4.4': 1 }, {}, { firstSeen });
 
   const own45E6 = SCORING.strengthSecondBandCap * strengthPerf(400);
-  const lowE0At44 = SCORING.strengthSecondBandCap * strengthPerf(300);
-  const lowE0At45 = 100;
 
-  check('⭐ 已登场却缺证据 + 同角色有更便宜且有成绩的整包 → 继承它的分', () => {
+  check('⭐ 缺证据的版本从更便宜且有成绩的整包继承（参与「最快」比较）', () => {
     const e6 = unitOfE(out, 'Low', 6);
     assert.ok(e6, 'Low E6 应进榜');
-    const want = (own45E6 + lowE0At44) / 2;
-    assert.ok(Math.abs(Number(e6.envs[0].envStrength) - want) < 1e-3,
-      `4.4 期应从 E0 继承 ${lowE0At44.toFixed(2)}，整关应为 ${want.toFixed(4)}，`
-      + `实际 ${e6.envs[0].envStrength}`);
+    // 自己 4.5 是 400（≈42.75），4.4 继承 E0 的 0 行动值 → 100 → 取最快 = 100。
+    assert.ok(Math.abs(Number(e6.envs[0].envStrength) - 100) < 1e-6,
+      `E6 的 4.4 应从 E0 继承 100，取最快后本关 100，实际 ${e6.envs[0].envStrength}`);
     assert.ok(Number(e6.inheritedSeasons) >= 1, '要标出「这一关的分是继承来的」');
   });
   check('继承是**单向**的：低成本整包不会从更贵的整包借分', () => {
     const e0 = unitOfE(out, 'Low', 0);
-    const want = (lowE0At45 + lowE0At44) / 2;
-    assert.ok(Math.abs(Number(e0.envs[0].envStrength) - want) < 1e-3,
-      `E0 两版都有自己的成绩，应为 ${want.toFixed(4)}，实际 ${e0.envs[0].envStrength}`);
+    assert.equal(Number(e0.envs[0].envStrength), 100, 'E0 自己的 4.4 就是 0 行动值 → 100');
     assert.equal(Number(e0.inheritedSeasons || 0), 0, 'E0 不该有任何继承');
   });
-  check('同角色没有更便宜的整包 → 仍算 0 分（权重进分母）', () => {
+  check('同角色没有更便宜的整包 → 用自己的最快成绩（不再被「缺版本」除小）', () => {
     const e6 = unitOfE(out, 'Solo', 6);
-    const want = own45E6 / 2;
-    assert.ok(Math.abs(Number(e6.envs[0].envStrength) - want) < 1e-3,
-      `Solo 的 4.4 该算 0（整关 ${want.toFixed(4)}），实际 ${e6.envs[0].envStrength}`);
+    const got = Number(e6.envs[0].envStrength);
+    assert.ok(Math.abs(got - own45E6) < 1e-3,
+      `Solo 只有 4.5 一条 400 → 本关 = ${own45E6.toFixed(4)}，实际 ${got}`);
     assert.equal(Number(e6.inheritedSeasons || 0), 0, '继承不到就不该记继承数');
   });
   check('继承来的分不会让「更贵的整包」超过「更便宜的」在同一关的成绩上限', () => {
     const e0 = unitOfE(out, 'Low', 0);
     const e6 = unitOfE(out, 'Low', 6);
-    // E6 自己的 4.5 比 E0 差，所以整关低于 E0 是正常的；这里钉的是**不许被抬到 100**
+    // 2026-10-18 起强度取「最快」：两边都会拿到 E0 的那个 0 行动值 → 都是 100。
     assert.ok(Number(e6.envs[0].envStrength) <= Number(e0.envs[0].envStrength) + 1e-6,
       '继承只借「更低成本版本的成绩」，不该把高成本档抬到超过低成本档');
   });
@@ -343,9 +332,10 @@ check('⭐ 强度与成本无相关性：同角色里「更贵更高」与「更
     '一条「更贵反而更低」都没有 —— 单调包络可能复活了（用户 2026-10-17 第 2 条）');
 });
 
-check('非顶格档的强度分一律 ≤ 90；顶格档 = 100', () => {
+check('整维天花板已取消：非顶格档落在 90~100 之间，顶格档 = 100（2026-10-18）', () => {
   let top = 0;
   let second = 0;
+  let above90 = 0;
   for (const { packs } of samples) {
     for (const p of packs) {
       const score = Number(p.strengthScore);
@@ -354,12 +344,12 @@ check('非顶格档的强度分一律 ≤ 90；顶格档 = 100', () => {
         assert.ok(Math.abs(score - 100) < 1e-6, `顶格档应为 100，实际 ${score}`);
       } else {
         second += 1;
-        assert.ok(score <= SCORING.strengthSecondBandCap + 1e-6,
-          `非顶格档 ${score} 超过了 ${SCORING.strengthSecondBandCap}`);
+        assert.ok(score < 100 - 1e-9, `非顶格档必须低于 100，实际 ${score}`);
+        if (score > SCORING.strengthSecondBandCap) above90 += 1;
       }
     }
   }
-  console.log(`     顶格档 ${top} 条、第二档 ${second} 条`);
+  console.log(`     顶格档 ${top} 条、第二档 ${second} 条（其中 ${above90} 条 > ${SCORING.strengthSecondBandCap}）`);
 });
 
 check('顶格档的自洽性：每一关都 100 ⇔ 整包强度 100', () => {

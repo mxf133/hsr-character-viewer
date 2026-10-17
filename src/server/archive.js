@@ -616,7 +616,7 @@ export const archiveFrontier = async (mode, options = {}) => {
    * 版本权重 = 按下标查表（下标 0 = 该副本最新的版本）。
    *
    * 用户 2026-10-16：这张表**用户自己也能设**（界面上「版本权重」那一行），默认仍是
-   * `VERSION_WEIGHTS`（3 : 2.5 : 2 : 1.5 : 1 : 0.5）。传进来的原值在这里过一次
+   * `VERSION_WEIGHTS`（6 : 5 : 4 : 3 : 2 : 1）。传进来的原值在这里过一次
    * `normalizeVersionWeights()`（缺的/非法的按默认补齐、全 0 退回默认），**不归一化**
    * —— 它只有相对大小有意义，整体乘个常数不影响任何结果。
    *
@@ -643,7 +643,7 @@ export const archiveFrontier = async (mode, options = {}) => {
     }
   }
   // 版本权重（用户第 7 条）：客户端算总榜的「按版本加权」时**必须**用这一份，
-  // 不要自己再写一遍 `3:2.5:2:1.5:1:0.5` —— 版本一更新（黑塔网加了新版本），
+  // 不要自己再写一遍 `6:5:4:3:2:1` —— 版本一更新（黑塔网加了新版本），
   // 这张表整体前移，客户端抄一份就会对不上。
   const seasonWeights = Object.fromEntries(recentDesc.map((s, i) => [s, versionWeightOf(i, vWeights)]));
   const empty = {
@@ -869,7 +869,7 @@ const resolveScope = (data, mode, season, options = {}) => {
    *
    *   * `archiveFrontier`（性价比总榜 / 角色得分 / 跨版本发挥）—— 一直吃用户表；
    *   * 这一条 `resolveScope` 链（跨版本聚合的阵容表 + `buildAvTeams` 的行动值前沿）
-   *     —— 原来恒用默认 3:2.5:2:1.5:1:0.5。
+   *     —— 原来恒用默认表（当时是 3:2.5:2:1.5:1:0.5，现在 6:5:4:3:2:1）。
    *
    * 于是用户改版本权重时，「总榜动了、抽卡方案纹丝不动」：方案里的队伍强度、
    * 0 行动值前沿池的选行（`avRowFor` 的「权重最高的有数据版本」）全按默认表算。
@@ -1649,7 +1649,7 @@ export const archiveStats = async (mode, season, options = {}) => {
     seasons,
     recentSeasons: recent,
     windowSize,
-    // 版本权重表（用户 2026-10 第 7 条 + 2026-10-14 重新定表）：`3:2.5:2:1.5:1:0.5`，
+    // 版本权重表（用户 2026-10 第 7 条 + 2026-10-18 重新定表）：`6:5:4:3:2:1`，
     // 按下标查表（下标 0 = 该副本最新版本）。表本身在 `public/scripts/advice.js`。
     versionWeights: VERSION_WEIGHTS_OF_SCOPE,
     minSeasonRuns: data.minSeasonRuns ?? 20,

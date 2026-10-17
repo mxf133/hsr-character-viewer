@@ -502,6 +502,10 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null, withVideo = false) =>
       // 该副本里**最好的那一版**的表现分（0~100）。⚠️ 新口径下强度**不再跨版本平均**，
       // 所以它不再是「跨版本发挥」的分母；留着只为兼容旧载荷的消费方。
       envStrengthBest: env.envStrengthBest ?? null,
+      // ⚠️ 2026-10-18：环境级继承行（这一关自己没投稿、借了更便宜同角色的分）。
+      //    它的 `value`/`score` 恒 0（继承只进强度列），界面与测试都靠这个标记跳过
+      //    「因子还原」那条性价比链。只在 true 时下发，不占体积。
+      ...(env.inheritedEnv === true ? { inheritedEnv: true } : {}),
       // ⚠️ **新强度口径的那几个原始字段（avBest / strengthGold / isPerfect / perfectLine /
       // weight）刻意不在这一份载荷里** —— 它们只在按需的 `/api/archive/packs` 上（见
       // `slimCharacterPack`）。理由：逐条带会让 `/conclusion` 从 597 KB 顶到 **614 KB**，
@@ -637,6 +641,8 @@ const slimCharacterPack = (unit, i18n, maps) => ({
     // ⚠️ 键名不是 `strength`（那是被撤销的 v4.6.87 字段名）。
     envStrength: env.envStrength ?? null,
     envStrengthValue: env.envStrengthValue ?? null,
+    // 这一关的分是**整关继承**来的（2026-10-18）：界面把行动值那格写成「继承」。
+    ...(env.inheritedEnv === true ? { inheritedEnv: true } : {}),
     // 与 `slimFrontierUnit` 的 env 投影**等价**（面板这条路上界面的「来源」表也是现算的，
     // 少一个字段不会报错、只会静默少一列或算出 > 1 的因子 —— 见下面 `seasonMinCost` 那段）。
     envStrengthBest: env.envStrengthBest ?? null,
@@ -644,6 +650,9 @@ const slimCharacterPack = (unit, i18n, maps) => ({
     // 逐字段等价**（那两条接口会互相整份替换 `unit.envs` 再重画强度来源表）。
     weight: env.weight ?? null,
     avBest: env.avBest ?? null,
+    // 强度那一档**自己的**行动值（2026-10-18）：与 `avBest`（卡片 / 金数那一行）
+    // 可能不是同一支队伍 —— 强度按打得最快挑、卡片按最划算挑。强度来源表读它。
+    strengthAv: env.strengthAv ?? null,
     strengthGold: env.strengthGold ?? null,
     isPerfect: env.isPerfect === true,
     perfectLine: env.perfectLine ?? null,
@@ -1062,7 +1071,7 @@ export const archiveConclusion = async (account = {}, options = {}) => {
   const i18n = await loadI18n();
   // 环境（版本选取 + 阵容表）由 `conclusionEnvs` 统一提供，探针与生产共用同一份。
   // ⚠️ `versionWeights` 必须一起传（v4.6.117 修的缺陷）：聚合层的跨版本加权与
-  // `avTeams` 的选行都按这张表算，漏了它 = 抽卡方案永远按默认 3:2.5:2:1.5:1:0.5。
+  // `avTeams` 的选行都按这张表算，漏了它 = 抽卡方案永远按默认表（6:5:4:3:2:1）。
   const { envs, skipped, window } = await conclusionEnvs(index, {
     window: options.window,
     versionWeights: options.versionWeights,
@@ -1132,8 +1141,8 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     // 抽卡权重（用户 2026-10-13 第 1、2 条）：**角色总榜**的三个分项按它加权，
     // 而总榜的收敛（每角色留一条）就发生在 `buildConclusion` 里 —— 所以这个旋钮
     // 必须**进服务端**，不能像 v4.6.94 那样只留在浏览器（那时它只服务抽卡方案）。
-    // 不传 = `SCORING.drawWeight`（默认 `1 : 1 : 0.5` → `0.4 / 0.4 / 0.2`；
-    // 2026-10-16 第 1 条把泛用性的默认权重降到 0.5，改前是三等分），
+    // 不传 = `SCORING.drawWeight`（默认 `4 : 5 : 1` → `0.4 / 0.5 / 0.1`；
+    // 2026-10-18 的新默认，上一版是 `1 : 1 : 0.5` → `0.4 / 0.4 / 0.2`），
     // 工具与探针的历史口径因此不变。
     drawWeights: options.drawWeights,
   });

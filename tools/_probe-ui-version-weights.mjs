@@ -272,7 +272,7 @@ await new Promise((r) => setTimeout(r, 100));
 check('恢复默认把版本权重还原成默认表',
   state.versionWeights.join(',') === '3,2.5,2,1.5,1,0.5', state.versionWeights.join(','));
 check('恢复默认也清回 localStorage',
-  STORE.get('hsr.advice.versionWeights') === JSON.stringify([3, 2.5, 2, 1.5, 1, 0.5]),
+  STORE.get('hsr.advice.versionWeights') === JSON.stringify([6, 5, 4, 3, 2, 1]),
   STORE.get('hsr.advice.versionWeights'));
 check('恢复默认后输入框也回到默认值',
   findInputs(REGISTRY.get('adviceVersionWeightRow')).map((i) => i.value).join(',')

@@ -274,9 +274,9 @@ await check('载荷里两条版本加权链都只认一个版本（不退回默�
 // 只改界面不改这两处的话，按钮点下去界面上多了一个框、榜单纹丝不动 —— 那就是假按钮。
 section('D. 档位可增删（「加一版 / 删一版」）');
 
-await check('档位默认值：第 7 档起沿用最后一档 0.5（不归零）', () => {
+await check('档位默认值：第 7 档起沿用最后一档 1（不归零）', () => {
   const got = JSON.stringify(versionWeightDefaults(8));
-  const want = JSON.stringify([3, 2.5, 2, 1.5, 1, 0.5, 0.5, 0.5]);
+  const want = JSON.stringify([6, 5, 4, 3, 2, 1, 1, 1]);
   if (got !== want) throw new Error(`默认 8 档是 ${got}，期望 ${want}`);
 });
 
@@ -306,7 +306,7 @@ await check('`normalizeVersionWeights` 保住档位数（加档 / 删档都不�
   if (obj.length !== VERSION_WEIGHTS.length) {
     throw new Error(`对象形状的 3 档推成了 ${obj.length} 档（应补到默认窗口 ${VERSION_WEIGHTS.length}）`);
   }
-  if (obj[0] !== 3 || obj[1] !== 2 || obj[2] !== 1 || obj[3] !== 1.5) {
+  if (obj[0] !== 3 || obj[1] !== 2 || obj[2] !== 1 || obj[3] !== 3) {
     throw new Error(`对象形状补默认补错了：${JSON.stringify(obj)}`);
   }
 });

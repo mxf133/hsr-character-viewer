@@ -275,7 +275,7 @@ const main = async () => {
       //    四个分支合进 main 时正是 6 档先顶穿的（661.5 KB），所以两端都要钉住。
       const conclusion12 = await post('/api/archive/conclusion', {
         account: { owned: [], eidolons: {}, cones: {} },
-        versionWeights: [3, 2.5, 2, 1.5, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+        versionWeights: [6, 5, 4, 3, 2, 1, 1, 1, 1, 1, 1, 1],
       });
       check('conclusion stays under the cap with the version-weight slots maxed out (12)',
         conclusion12.status === 200
@@ -342,20 +342,21 @@ const main = async () => {
       // 分项按它加权的结果，而总榜「每角色只留一条」的收敛在服务端 `buildConclusion` 里。
       // 与隐金设置同一套路：既断言回显（穿四层没穿丢），也断言**榜面真的变了** ——
       // 只比回显的话，「口径没接上」也能通过。
-      // ⚠️ 默认值 2026-10-16 第 1 条改过：`1:1:1`（三等分）→ **`1:1:0.5`**（泛用性降到
-      //    0.5），归一之后是 `0.4 / 0.4 / 0.2`。工具与老客户端不传 `drawWeights` 时拿到的
-      //    就是这一份（服务端 `normalizeDrawWeights(undefined)` → `SCORING.drawWeight`）。
+      // ⚠️ 默认值改过两次：`1:1:1`（三等分）→ `1:1:0.5`（`0.4 / 0.4 / 0.2`）→
+      //    **2026-10-18 的 `4:5:1`**（归一 `0.4 / 0.5 / 0.1`）。工具与老客户端不传
+      //    `drawWeights` 时拿到的就是这一份（服务端 `normalizeDrawWeights(undefined)`
+      //    → `SCORING.drawWeight`）。
       console.log('\n[archive/conclusion · 抽卡权重]');
-      const DRAW_DEFAULT = { strength: 1, cost: 1, versatility: 0.5 };
-      check('conclusion 回显归一化后的抽卡权重（默认 0.4 / 0.4 / 0.2）',
+      const DRAW_DEFAULT = { strength: 4, cost: 5, versatility: 1 };
+      check('conclusion 回显归一化后的抽卡权重（默认 0.4 / 0.5 / 0.1）',
         Math.abs(Object.values(conclusion.body?.drawWeights || {})
           .reduce((n, v) => n + Number(v), 0) - 1) < 1e-9
         && Object.keys(conclusion.body?.drawWeights || {}).length === 3,
         `drawWeights=${JSON.stringify(conclusion.body?.drawWeights)}`);
-      check('不传 drawWeights = 默认 1:1:0.5（工具与老客户端的口径不变）',
+      check('不传 drawWeights = 默认 4:5:1（工具与老客户端的口径不变）',
         Math.abs(conclusion.body.drawWeights.strength - 0.4) < 1e-9
-        && Math.abs(conclusion.body.drawWeights.cost - 0.4) < 1e-9
-        && Math.abs(conclusion.body.drawWeights.versatility - 0.2) < 1e-9,
+        && Math.abs(conclusion.body.drawWeights.cost - 0.5) < 1e-9
+        && Math.abs(conclusion.body.drawWeights.versatility - 0.1) < 1e-9,
         `drawWeights=${JSON.stringify(conclusion.body?.drawWeights)}`);
       const versOnly = await post('/api/archive/conclusion', {
         account: { owned: [], eidolons: {}, cones: {} }, drawWeights: DRAW_DEFAULT,
@@ -524,9 +525,14 @@ const main = async () => {
         detailUnits.every((u) => u.envs.every((e) => typeof e.envLabel === 'string'
           && e.envLabel.length > 0 && /[\u3400-\u9fff]/.test(e.envLabel))),
         '有 env 缺 envLabel，或 envLabel 写成了 `aa/plight` 这种英文 id');
-      check('每个逐副本条目都带最佳证据队伍（不只头条那一支）',
-        detailUnits.every((u) => u.envs.every((e) => (e.members || []).length > 0)),
-        '有 env 的 members 是空的 —— 界面上那一块会没有队伍卡片');
+      // ⚠️ 2026-10-18 放宽：v4.6.120 起 `/conclusion` 只给**头条**那一关发 members
+      //    （其余 4 关由 `/api/archive/packs` 按需补），所以「每个 env 都要有 members」
+      //    这条旧判据已不成立；再加上环境级继承行（members 恒空）。现在只钉：
+      //    「每个整包至少有一关带自己的队伍名单」（头条），继承行不算。
+      check('每个整包至少有一支自己的最佳证据队伍（头条，继承行除外）',
+        detailUnits.every((u) => (u.envs || []).some((e) => e.inheritedEnv !== true
+          && (e.members || []).length > 0)),
+        '有整包连一条自己的队伍名单都没有 —— 界面上那一块会没有队伍卡片');
       // 逐副本明细与顶层副本元数据必须覆盖同一批关卡（发布时最容易漏的就是这一对：
       // 元数据 5 条、明细只给 3 条，界面两边都少列）。
       const detailLabels = new Set(detailUnits.flatMap((u) => u.envs.map((e) => e.envLabel)));
@@ -634,11 +640,11 @@ const main = async () => {
       const boardTop = (hiddenOn.body.frontierUnits || [])[0];
       // 抽卡权重也走查询串（用户 2026-10-13 第 2 条）：面板给的是**角色得分**，
       // 它是三个分项按权重加权的**榜内归一分** —— 权重不同，同一个整包的面板分
-      // 就会与徽标分不一致。这里显式发**当前默认** `1:1:0.5`（= 0.4 / 0.4 / 0.2），
+      // 就会与徽标分不一致。这里显式发**当前默认** `4:5:1`（= 0.4 / 0.5 / 0.1），
       // 与上面那份没带 `drawWeights` 的 `hiddenOn`（服务端同样落回默认表）同口径。
-      // ⚠️ 默认值 2026-10-16 第 1 条由 `1:1:1` 改成 `1:1:0.5` —— 这里漏改过一次，
+      // ⚠️ 默认值改过两次（`1:1:1` → `1:1:0.5` → 2026-10-18 的 `4:5:1`）—— 这里漏改过一次，
       //    `panel=85.9119 board=83.0943` 当场红（两边权重不同 ⇒ 同一个整包两个分）。
-      const drawParam = encodeURIComponent(JSON.stringify({ strength: 1, cost: 1, versatility: 0.5 }));
+      const drawParam = encodeURIComponent(JSON.stringify({ strength: 4, cost: 5, versatility: 1 }));
       const packsHidden = await get(`/api/archive/packs?char=${encodeURIComponent(boardTop?.name || '')}`
         + `&hiddenCosts=${hiddenParam}&drawWeights=${drawParam}`);
       check('GET /api/archive/packs 回显隐金设置（查询串版）',
@@ -701,7 +707,8 @@ const main = async () => {
       // 逐档榜只带头条那一支的视频，其余关卡的靠这份补（`enrichTipDetail` 合并）。
       check('packs 每个 env 都带来源视频（逐档榜缺的那几关靠它补）',
         panelEnvs.length > 0
-        && panelEnvs.every((e) => e.video === undefined || /^https?:\/\//.test(e.video)),
+        && panelEnvs.every((e) => e.inheritedEnv === true
+          || e.video === undefined || /^https?:\/\//.test(e.video)),
         `带视频的 env=${panelEnvs.filter((e) => e.video).length}/${panelEnvs.length}`);
       // ⚠️ 比的是**角色得分**（用户 2026-10-13 第 2 条起榜面按它排序与收敛）：
       // 榜上那一条就是「这个角色角色得分最高的那个整包」，所以面板里那个最大值必须
