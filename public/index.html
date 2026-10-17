@@ -413,17 +413,19 @@
             <span class="advice-note-line"><span class="advice-note-tag">每张卡</span>
               都带角色 / 光锥图片、补金顺序与过渡档位，点分数还能展开刻度来源和相近的次选配队。</span>
           </p>
-          <!-- 抽卡方案的工具条（用户 2026-10-18）：搜索 + 翻页。
+          <!-- 抽卡方案的工具条（用户 2026-10-18）：翻页 + 搜索，整块靠左。
                原来这里只有「最多 15 条」的硬截断，现在整池都列出来、每页 20 支顺序翻
                （见 advice-view.js 的 TEAM_PLAN_PAGE_SIZE / renderTeamPlanPager）。
-               ⚠️ 翻页条上下各一条：一页 20 张卡要滚很远，看完最后一张还得滚回顶部翻页
-               是很差的手感；两条是**同一份实现**，只是挂在不同位置。 -->
+               ⚠️ **子节点顺序 = 翻页条（选择按钮）在左、搜索框在右**（用户：「两者是选择
+               按钮在左，搜索框在右」），配合 `.advice-plan-toolbar` 的 `flex-start` 靠左起排。
+               ⚠️ 列表下方还挂一条同名翻页条：一页 20 张卡要滚很远，看完最后一张还得滚回
+               顶部翻页是很差的手感；两条是**同一份实现**，只是挂在不同位置。 -->
           <div class="advice-plan-toolbar">
+            <div id="adviceTeamPlanPager" class="advice-pager" hidden></div>
             <input id="adviceTeamPlanSearch" class="advice-search-input" type="search"
                    autocomplete="off" spellcheck="false"
                    placeholder="搜索角色 / 光锥（在这批方案里筛）"
                    aria-label="按角色或光锥名称搜索抽卡方案">
-            <div id="adviceTeamPlanPager" class="advice-pager" hidden></div>
           </div>
           <div id="adviceTeamPlanBody" class="advice-team-plan"></div>
           <div id="adviceTeamPlanPagerBottom" class="advice-pager" hidden></div>
