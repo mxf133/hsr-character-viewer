@@ -370,7 +370,16 @@
                `advice-view.js` 的 `renderUnitFilters()`。详见 HANDOFF §4.2E。 -->
           <div class="advice-unit-toolbar">
             <div id="adviceUnitFilter" class="advice-filters"></div>
-            <span class="muted small" id="adviceUnitMeta"></span>
+            <div class="advice-unit-toolbar-side">
+              <!-- 搜索（用户 2026-10-18：「为角色总榜和抽卡方案添加 2 个搜索框，能够根据
+                   角色或光锥名称进行搜索」）：只过滤**当前星魂档**那一份榜，不重排、
+                   不重算分数。中英名与光锥名都认（见 advice-view.js 的 unitSearchText）。
+                   `type="search"` 是为了那一颗自带的清除按钮。 -->
+              <input id="adviceUnitSearch" class="advice-search-input" type="search"
+                     autocomplete="off" spellcheck="false" placeholder="搜索角色 / 光锥"
+                     aria-label="按角色或光锥名称搜索角色总榜">
+              <span class="muted small" id="adviceUnitMeta"></span>
+            </div>
           </div>
           <div id="adviceConclusionUnits" class="advice-units"></div>
 
@@ -400,11 +409,24 @@
             <span class="advice-note-line"><span class="advice-note-tag">队伍性价比</span>
               只看<strong>你自己还要补几金</strong>：补得越少分越高，<strong>正好补到「候选池封顶值」= 0 分，
               超过就转负分</strong>（最低 −100）—— 所以「要补十几金」的队伍会被真的压下去，
-              而不是和更贵的队一起并排停在 0 分（指数 1.8 让尾部掉得更快，补 1~2 金的几乎不受影响）。</span>
+              而不是和更贵的队一起并排停在 0 分（指数 1.5 让尾部掉得更快，补 1~2 金的几乎不受影响）。</span>
             <span class="advice-note-line"><span class="advice-note-tag">每张卡</span>
               都带角色 / 光锥图片、补金顺序与过渡档位，点分数还能展开刻度来源和相近的次选配队。</span>
           </p>
+          <!-- 抽卡方案的工具条（用户 2026-10-18）：搜索 + 翻页。
+               原来这里只有「最多 15 条」的硬截断，现在整池都列出来、每页 20 支顺序翻
+               （见 advice-view.js 的 TEAM_PLAN_PAGE_SIZE / renderTeamPlanPager）。
+               ⚠️ 翻页条上下各一条：一页 20 张卡要滚很远，看完最后一张还得滚回顶部翻页
+               是很差的手感；两条是**同一份实现**，只是挂在不同位置。 -->
+          <div class="advice-plan-toolbar">
+            <input id="adviceTeamPlanSearch" class="advice-search-input" type="search"
+                   autocomplete="off" spellcheck="false"
+                   placeholder="搜索角色 / 光锥（在这批方案里筛）"
+                   aria-label="按角色或光锥名称搜索抽卡方案">
+            <div id="adviceTeamPlanPager" class="advice-pager" hidden></div>
+          </div>
           <div id="adviceTeamPlanBody" class="advice-team-plan"></div>
+          <div id="adviceTeamPlanPagerBottom" class="advice-pager" hidden></div>
         </div>
 
         <!-- 环境统计（上场率）：这一节按「当前副本 / 版本」算，所以选择器放在它自己的标题行里。

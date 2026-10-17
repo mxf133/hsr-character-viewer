@@ -65,6 +65,12 @@ import {
   // 这里只负责按它画界面，绝不抄第二份名单。
   HIDDEN_COST_IDS, HIDDEN_COST_SETTINGS, DEFAULT_HIDDEN_COSTS,
 } from './advice.js';
+// 搜索 / 分页的纯逻辑（用户 2026-10-18）：抽成独立模块的唯一理由是**能被 Node 直接测**
+// —— 它们不碰 DOM、不碰评分，而「284 条是不是 15 页、最后一页几条、页码怎么夹」这类
+// 算术不该为了测它去起一次真浏览器（本机沙箱也起不来服务，见 docs/CDP布局套件.md §2.1）。
+import {
+  clampPage, matchesQuery, pageSliceOf, pageWindowOf, queryOf, searchTextOf,
+} from './advice-paging.js';
 import { renderRecordSection, wireRecordPanel } from './battle-record.js';
 import { accessHeaders, readAccessToken } from './access.js';
 // 性价比详情的大窗口外壳（用户 2026-10-10 第二轮：「需要单独开一个较大的窗口避免部分
@@ -101,6 +107,8 @@ const el = {
   unitNote: $('adviceUnitNote'),
   unitFilter: $('adviceUnitFilter'),
   unitMeta: $('adviceUnitMeta'),
+  /** 角色总榜的搜索框（用户 2026-10-18：按角色 / 光锥名称搜）。 */
+  unitSearch: $('adviceUnitSearch'),
   /** 权重区块：关卡权重那一行（只影响角色总榜与抽卡方案的强度侧）。 */
   frontierWeightRow: $('adviceFrontierWeightRow'),
   frontierWeightsMeta: $('adviceFrontierWeightsMeta'),
@@ -121,6 +129,10 @@ const el = {
   /** 抽卡方案（队伍口径）：说明块 + 列表。 */
   teamPlanNote: $('adviceTeamPlanNote'),
   teamPlanBody: $('adviceTeamPlanBody'),
+  /** 抽卡方案的搜索框与两个翻页条（用户 2026-10-18：配队改为尽量多 + 每页 20）。 */
+  teamPlanSearch: $('adviceTeamPlanSearch'),
+  teamPlanPager: $('adviceTeamPlanPager'),
+  teamPlanPagerBottom: $('adviceTeamPlanPagerBottom'),
   chars: $('adviceChars'),
   charMeta: $('adviceCharMeta'),
   charNote: $('adviceCharNote'),
@@ -170,6 +182,14 @@ const VERSION_WEIGHTS_KEY = 'hsr.advice.versionWeights';
 const HIDDEN_COSTS_KEY = 'hsr.advice.hiddenCosts';
 /** 权重改动后延迟多久重算：用户在输入框里连着敲数字，不必每一下都打一次服务端。 */
 const WEIGHTS_DEBOUNCE = 450;
+/**
+ * 搜索框的防抖（用户 2026-10-18 的两个搜索框）。
+ *
+ * 比权重那个 450 ms 短得多：搜索是**纯前端过滤**（不请求服务端、不重算分数），
+ * 代价只有一次 `filter + 重画`（总榜 81 行 / 方案 20 张卡，都在几毫秒内），
+ * 而 450 ms 的延迟会让人觉得「输入框没反应」。120 ms 足够避开连续按键。
+ */
+const SEARCH_DEBOUNCE = 120;
 
 /** 单位类型的中文名（**抽卡方案**那一节按 kind 分段时用）。 */
 const KIND_LABEL = { char: '角色', eidolon: '星魂', cone: '光锥' };
@@ -236,11 +256,49 @@ const state = {
   unitEidolon: 'all',
   onlyMissing: false,
   /**
+   * **两个搜索框的词**（用户 2026-10-18：「为角色总榜和抽卡方案添加 2 个搜索框，能够根据
+   * 角色或光锥名称进行搜索」）。
+   *
+   * ⚠️ 只存在内存里、**不进 localStorage**：搜索是一次性的动作（「我把那个角色放哪了」），
+   *    与三类权重 / 隐金那种长期偏好不同；下次打开页面还留着上次的词，会让榜面莫名其妙
+   *    缺一大半。空串 = 不过滤。
+   * ⚠️ 存的是**用户敲的原串**（含大小写 / 空格），归一化只在比较时做（`queryOf()`），
+   *    因为输入框要原样回显、状态行也要原样印出来。
+   */
+  unitQuery: '',
+  teamPlanQuery: '',
+  /** 两个搜索框的防抖计时器（互不相关，共用会互相取消）。 */
+  unitQueryTimer: null,
+  teamPlanQueryTimer: null,
+  /**
    * 跨模式综合结论（服务端算好的）。
    */
   conclusion: null,
   conclusionKey: null,
   conclusionError: '',
+  /**
+   * **抽卡方案的分页状态**（用户 2026-10-18：「提供尽可能多的配队，为此可以进行分页显示，
+   * 每页显示 20 个配队」）。
+   *
+   * `teamPlanPage` 是**过滤之后**那一段的页码（1 起）。搜索词一变就回到第 1 页 ——
+   * 否则「搜索一个只在第 3 页才出现的角色」会先落到一个空页上。
+   */
+  teamPlanPage: 1,
+  /**
+   * **抽卡方案的计算结果缓存**。
+   *
+   * `teamPlan()` 在**浏览器里**跑（服务端不下发队伍方案），全池 284 支实测约 22 ms ——
+   * 翻一次页 / 敲一个字都重算一遍会明显卡手。所以按「输入签名」缓存一份：
+   * 只有结论对象换了、账号持有变了、或三类权重里的抽卡权重变了才重算。
+   *
+   * ⚠️ 签名**必须**含 `conclusion` 的对象身份：换账号 / 改关卡权重 / 改版本权重都会
+   *    让服务端重算出一份**新的** `conclusion`（旧对象被丢弃），靠身份就能识别；
+   *    只比 `counts` 之类的字段会在「同账号改权重」时漏掉。
+   * ⚠️ 也含 `owned` / `eidolons` / `coneRanks` 的**规模**：同一份结论下换一个「角色数
+   *    相同」的虚拟账号，池里的队伍不变但差额全变（`marginalCostOf` 吃这三份）。
+   *    规模相同、内容不同的极端情形由上面的 `conclusion` 身份兜住 —— 换账号必然重取结论。
+   */
+  teamPlanCache: null,
   /**
    * 三个分项的归一上下限，**当结论还没加载过时**由 `/api/archive/packs` 随包带回
    * （角色面板那条路：用户可能直接在「角色信息」页点开一张卡）。
@@ -1940,6 +1998,38 @@ const perfCurveText = (meta) => {
 
 /** 角色总榜里一次最多渲染几行（其余靠表头提示，避免一屏铺上千行）。 */
 const UNIT_ROWS_MAX = 80;
+
+/**
+ * **抽卡方案每页显示多少支队伍**（用户 2026-10-18：「每页显示 20 个配队」）。
+ *
+ * ⚠️ 它是**展示层**的常量，与 `SCORING.teamPlanMaxRows`（下发上限）是两件事：
+ *    后者决定 `teamPlan()` 回多少条（现在是全池，兜底 500），这个决定一次画几张卡。
+ *    一页 20 张卡按结构数是**几百个 DOM 节点**（每卡 4 个位置 + 3 条分项条 + 补金顺序
+ *    + 过渡行），全池 284 张就是**近万个节点** —— 那一下重建是肉眼可见的卡顿，
+ *    而 20 张这一档在正常机器上感觉不到。⚠️ 这里**不写具体毫秒数**：本机起不了浏览器
+ *    （`bin/serve.mjs` 的 DPAPI 要 spawn 系统命令行进程，沙箱拦下），没有实测数据就不编。
+ */
+const TEAM_PLAN_PAGE_SIZE = 20;
+
+/**
+ * 总榜每个单位（= 角色 + 星魂档 + 光锥整包）的可搜索文本。
+ *
+ * ⚠️ 名字的**来源**在这里拼（`cn` / `cnCone` 是本文件唯一的中文名入口），
+ *    归一化与匹配规则在 `advice-paging.js`（那份能被 Node 直接测）。
+ * ⚠️ 按**对象**缓存（`WeakMap`）：每次敲字都要过一遍全榜，`frontierUnit` 对象在一次
+ *    结论里是稳定的复用对象，所以每个单位只拼一次字符串。不用在数据对象上加字段 ——
+ *    那会污染服务端下发的载荷（并且会被 `JSON.stringify` 带回去）。
+ */
+const unitSearchCache = new WeakMap();
+const unitSearchText = (unit) => {
+  if (!unit || typeof unit !== 'object') return '';
+  let cached = unitSearchCache.get(unit);
+  if (cached === undefined) {
+    cached = searchTextOf([unit.name, cn(unit.name), unit.lc, cnCone(unit.lc)]);
+    unitSearchCache.set(unit, cached);
+  }
+  return cached;
+};
 
 /** 星魂档在界面上的写法：`0 → E0`、`2 → E2`（内部档位就是数字）。 */
 const tierNameOf = (tier) => `E${Math.max(0, Math.round(Number(tier) || 0))}`;
@@ -4463,6 +4553,116 @@ const planRecommendation = (row) => {
   };
 };
 
+// ------------------------------------------------- 抽卡方案：缓存 / 搜索 / 分页
+
+/**
+ * 抽卡方案的**输入签名**（决定要不要重算 `teamPlan()`）。
+ *
+ * 只有这几样东西会改变方案：结论对象本身（换账号 / 改关卡权重 / 改版本权重 / 改隐金
+ * 都会让服务端重新发一份）、账号的三份持有规模、以及**抽卡权重**（它直接在浏览器里
+ * 参与加权，不发服务端）。其余状态（翻页、搜索词、滚动位置）一律不该触发重算。
+ *
+ * ⚠️ 权重取 `Number(...) || 0`：输入框被清空时 `state.drawWeights` 里是空串，
+ *    `advice.js` 的 `normalizeDrawWeights()` 会把它当默认值 —— 这里只要保证「同样的
+ *    输入得到同样的签名」，不必与归一化口径一致。
+ */
+const teamPlanInputsKey = () => JSON.stringify([
+  state.owned.size,
+  state.eidolons.size,
+  state.coneRanks.size,
+  Number(state.drawWeights?.strength) || 0,
+  Number(state.drawWeights?.cost) || 0,
+  Number(state.drawWeights?.versatility) || 0,
+]);
+
+/**
+ * 一支队伍的可搜索文本：四个成员的**角色名 + 光锥名**（中文名与英文键都进）。
+ *
+ * 用户 2026-10-18 的原话是「能够根据角色或光锥名称进行搜索」，所以光锥也必须能搜 ——
+ * 「我想找用某某专锥的那支队」是真实需求。搜索**只看成员**，不看「最佳证据的副本名」：
+ * 那是筛选条件不是队伍身份。
+ */
+const teamPlanRowText = (row) => searchTextOf((row.members || []).flatMap(
+  (m) => [m.char, cn(m.char), m.lc, cnCone(m.lc)],
+));
+
+/**
+ * 取抽卡方案（**带缓存**）。
+ *
+ * `teamPlan()` 在浏览器里跑：全池 284 支实测 22 ms（见 `tools/_probe-team-plan-perf.mjs`）。
+ * 翻一页、敲一个字都重算一遍的话，第二次点「下一页」就开始卡手 —— 而这两件事跟分数
+ * **一点关系都没有**（截断与过滤都只是展示层）。所以按签名缓存一份，命中时连
+ * 搜索用的 haystack 也一起复用（那一份是 284 × 8 个字符串，没必要每次重拼）。
+ */
+const planWithCache = (conclusion) => {
+  const key = teamPlanInputsKey();
+  const cached = state.teamPlanCache;
+  if (cached && cached.conclusion === conclusion && cached.key === key) return cached;
+  const plan = teamPlan(conclusion, {
+    owned: state.owned,
+    eidolons: state.eidolons,
+    cones: state.coneRanks,
+  }, {
+    availability: conclusion.availability || {},
+    // 抽卡权重（用户 2026-10-12 第 3、4 条）：界面发**用户敲的原值**，归一化在
+    // `advice.js` 的 `normalizeDrawWeights()` 里做一次（两边各算一遍就会分叉）。
+    drawWeights: state.drawWeights,
+  });
+  const haystacks = new Map(plan.rows.map((row) => [row, teamPlanRowText(row)]));
+  state.teamPlanCache = { conclusion, key, plan, haystacks };
+  return state.teamPlanCache;
+};
+
+/**
+ * 画翻页条（用户 2026-10-18：「每页显示 20 个配队」）。
+ *
+ * 上下各一条（`#adviceTeamPlanPager` / `#adviceTeamPlanPagerBottom`）：一页 20 张卡已经
+ * 要滚很远，看完最后一张还得滚回顶部才能翻页是很差的手感。两条**同一份实现**，只是
+ * 挂在不同位置 —— 不做第二套逻辑，否则「上面能点到第 7 页、下面不能」这种事早晚出现。
+ *
+ * 只有一页时整条**隐藏**（`hidden`），免得一块没有信息量的按钮占着版面。
+ */
+const renderTeamPlanPager = (total, pages) => {
+  const show = pages > 1;
+  for (const host of [el.teamPlanPager, el.teamPlanPagerBottom]) {
+    if (!host) continue;
+    host.innerHTML = '';
+    host.hidden = !show;
+    if (!show) continue;
+    const page = clampPage(state.teamPlanPage, pages);
+    const go = (target) => {
+      const next = clampPage(target, pages);
+      if (next === state.teamPlanPage) return;
+      state.teamPlanPage = next;
+      // 只重画这一块：`teamPlan()` 走缓存（翻页不是计算动作）。
+      renderTeamPlan(state.conclusion);
+      // 翻页后回到列表顶部 —— 否则人还停在上一页的末尾，看到的是新一页的后半截。
+      if (el.teamPlanPager) el.teamPlanPager.scrollIntoView({ block: 'start', inline: 'nearest' });
+    };
+    const button = (label, target, { active = false, disabled = false, title = '' } = {}) => {
+      const node = document.createElement('button');
+      node.type = 'button';
+      node.className = `advice-page-btn${active ? ' is-active' : ''}`;
+      node.textContent = label;
+      if (title) node.title = title;
+      if (disabled) node.disabled = true;
+      else node.addEventListener('click', () => go(target));
+      if (active) node.setAttribute('aria-current', 'page');
+      return node;
+    };
+    host.appendChild(button('«', 1, { disabled: page === 1, title: '第一页' }));
+    host.appendChild(button('‹', page - 1, { disabled: page === 1, title: '上一页' }));
+    for (const p of pageWindowOf(page, pages)) {
+      if (p === '…') host.appendChild(text('span', 'advice-page-gap', '…'));
+      else host.appendChild(button(String(p), p, { active: p === page, title: `第 ${p} 页` }));
+    }
+    host.appendChild(button('›', page + 1, { disabled: page === pages, title: '下一页' }));
+    host.appendChild(button('»', pages, { disabled: page === pages, title: '最后一页' }));
+    host.appendChild(text('span', 'advice-page-count',
+      `第 ${page}/${pages} 页 · 共 ${total} 支`));
+  }
+};
+
 /**
  * ② 抽卡方案（**队伍口径**，2026-10-11 用户第 10 轮）。
  *
@@ -4484,6 +4684,10 @@ const planRecommendation = (row) => {
  * **「队伍强度 / 队伍性价比 / 队伍泛用性」**（三项统一加前缀、去掉「得分」二字），
  * 与角色总榜那边的「角色强度 / 角色性价比 / 角色泛用性」区分开 —— 两个榜共用同一组
  * 权重旋钮，但**分项名**必须各叫各的。⚠️ 抽卡权重那三个**输入框**不改名（用户确认）。
+ * ⚠️ **2026-10-18**：列表从「最多 15 条」改成**整池 + 每页 20 支**（用户：「提供尽可能多的
+ * 配队，为此可以进行分页显示配队，每页显示 20 个配队」），并加了按角色 / 光锥名的搜索框。
+ * 三件展示层的事各归各：`planWithCache()` 管**算一次**、`pageSliceOf()` 管**切哪一段**、
+ * `renderTeamPlanPager()` 管**画翻页条**。卡片构建只跑「当前这一页」的 20 条。
  */
 const renderTeamPlan = (conclusion) => {
   if (!el.teamPlanBody) return;
@@ -4496,6 +4700,7 @@ const renderTeamPlan = (conclusion) => {
 
   if (!state.owned.size) {
     setMeta('');
+    renderTeamPlanPager(0, 0);
     el.teamPlanBody.appendChild(text('p', 'muted small',
       '先在「角色信息」页扫码登录并读取一次战绩：这一节要按你的角色池算'
       + '「哪支队伍最值得照抄、还差几金」。上面的角色总榜不需要登录。'));
@@ -4503,6 +4708,7 @@ const renderTeamPlan = (conclusion) => {
   }
   if (!conclusion) {
     setMeta('');
+    renderTeamPlanPager(0, 0);
     el.teamPlanBody.appendChild(text('p', 'muted small',
       state.conclusionError ? `读取失败：${state.conclusionError}` : '正在计算…'));
     return;
@@ -4514,16 +4720,11 @@ const renderTeamPlan = (conclusion) => {
   //
   // 是否叠加「三月七 = 两命途互通」的别名，由 `advice.js` 决定（它在 `ownedCharacters`
   // 里做），界面不复制那条规则 —— 复制一份早晚会分叉。
-  const plan = teamPlan(conclusion, {
-    owned: state.owned,
-    eidolons: state.eidolons,
-    cones: state.coneRanks,
-  }, {
-    availability: conclusion.availability || {},
-    // 抽卡权重（用户 2026-10-12 第 3、4 条）：界面发**用户敲的原值**，归一化在
-    // `advice.js` 的 `normalizeDrawWeights()` 里做一次（两边各算一遍就会分叉）。
-    drawWeights: state.drawWeights,
-  });
+  //
+  // ⚠️ 2026-10-18 起 `teamPlan()` 的结果走**缓存**（`planWithCache()`）：翻页与搜索
+  // 只重画这一页的 20 张卡，不重算全池（全池 22 ms 是 `_probe-team-plan-perf.mjs` 实测的；
+  // 重建 20 张卡的耗时本机测不了 —— 没有浏览器，见 `docs/CDP布局套件.md` §2.1）。
+  const { plan, haystacks } = planWithCache(conclusion);
   // 生效的权重由 `plan` 回显（已归一化）——界面照它印那**三个**系数，不自己再算一遍。
   const draw = plan.drawWeights || normalizeDrawWeights(state.drawWeights || {});
   const ws = formatShare(draw.strength);
@@ -4531,28 +4732,55 @@ const renderTeamPlan = (conclusion) => {
   // ③ 泛用性（用户 2026-10-13 第 3 条）：它现在也进补金推荐分，卡片的等式要印出来。
   const wv = formatShare(draw.versatility);
 
+  // ---- 搜索 + 分页（用户 2026-10-18）-----------------------------------------
+  //
+  // 搜索只筛**这一批要展示的队伍**（不重算分数）：命中的队伍仍按补金推荐分排，
+  // 名次沿用它在完整列表里的序号 —— 「我搜出来的这一支是第 12 名」要有意义。
+  const query = queryOf(state.teamPlanQuery);
+  const matched = query
+    ? plan.rows.filter((row) => matchesQuery(haystacks.get(row), query))
+    : plan.rows;
+  // 页码越界（搜索把结果缩短了 / 换账号后池子变小）时夹回最后一页 —— 否则会停在空页上。
+  // 这段算术在 `advice-paging.js`（`pageSliceOf` 一份实现，Node 直接测）。
+  const { rows: pageRows, start, page, pages } = pageSliceOf(
+    matched, state.teamPlanPage, TEAM_PLAN_PAGE_SIZE,
+  );
+  state.teamPlanPage = page;
+
+  const hit = query ? ` · 搜索「${state.teamPlanQuery.trim()}」命中 ${matched.length} 支` : '';
+  const range = matched.length
+    ? ` · 第 ${start + 1}–${start + pageRows.length} 条 / 共 ${matched.length} 条`
+    : '';
   setMeta(plan.rows.length
     ? `候选 ${plan.pool} 支队伍（逐档榜 ∪ 总榜 ∪ 行动值前沿 ${plan.poolAll} 支里去掉「补金 0」的）`
-      + `${plan.truncated ? ` · 只列前 ${plan.rows.length} 条` : ''}`
+      + `${hit}${range}${pages > 1 ? ` · 第 ${page}/${pages} 页` : ''}`
     : '没有需要补金的队伍');
 
-  if (!plan.rows.length) {
-    el.teamPlanBody.appendChild(text('p', 'muted small',
-      '当前角色池下，角色总榜的候选池里没有「还需要补金」的队伍（能上榜的队伍你已经凑齐）。'));
+  renderTeamPlanPager(matched.length, pages);
+
+  if (!matched.length) {
+    el.teamPlanBody.appendChild(text('p', 'muted small', query
+      ? `没有队伍包含「${state.teamPlanQuery.trim()}」这个角色或光锥。`
+        + '（搜索只在这批候选队伍里找 —— 想换人或换队，看上面的角色总榜。）'
+      : '当前角色池下，角色总榜的候选池里没有「还需要补金」的队伍（能上榜的队伍你已经凑齐）。'));
     return;
   }
 
-  plan.rows.forEach((row, i) => {
+  pageRows.forEach((row, i) => {
     const card = text('div', 'advice-plan-team');
     const head = text('div', 'advice-plan-team-head');
-    head.appendChild(text('span', 'advice-unit-rank', `#${i + 1}`));
+    // 名次用**筛选后的全局序号**（不是页内序号）：搜出来的那一支仍然报它在完整列表里
+    // 的名次，「第 2 页第 3 张卡」就不会被误读成「第 3 名」。
+    head.appendChild(text('span', 'advice-unit-rank', `#${start + i + 1}`));
     // 用户 2026-10-11（抽卡方案第 2 条）：「改为：补金推荐分 + 75.7 = 强度得分 68.0 × 0.5
     // + 性价比 83.3 × 0.5，注意空格不要离得太远」——所以徽标的标签改成「补金推荐分」、
     // 后面那句用普通空格（改前是 `　+　` 全角空格，实测两处各多出 ~8px）。
     // ⚠️ 2026-10-12 第 3、4、6 条之后第二项叫**性价比**（它本来就是那句原话里的名字）：
     // v4.6.87 一度改成合成的「性价比得分」，v4.6.89 按用户要求收回成单一刻度 ——
     // 所以这里印的是 `gapPct`，不是中间量。
-    // ⚠️ 同样**懒构建**（`lazyTip()`）：抽卡方案有 15 张卡，改前 15 套详情也一起建进 DOM。
+    // ⚠️ 同样**懒构建**（`lazyTip()`）：改前一张卡就建一套详情，15 张卡 = 15 套；
+    //    现在每页 20 张（v4.6.122 分页），懒构建更要紧 —— 20 套详情窗口一次全建进 DOM
+    //    是白白多出的几万个节点。
     // `teamSlots` 这里给 0 —— 那个计数只服务总榜那条探针的选择逻辑（见 `lazyTip()` 的注释）。
     head.appendChild(valueBadge(row.total, lazyTip(() => teamPlanTip(row, plan)),
       (v) => Number(v || 0).toFixed(1), '补金推荐分'));
@@ -4769,7 +4997,10 @@ const renderTeamPlan = (conclusion) => {
     + `行动值前沿 = 各副本行动值最好的几支队，${plan.poolAv ?? 0} 支；共 ${plan.poolAll} 支），`
     + `去掉补金 0 金的之后剩 ${plan.pool} 支 —— `
     + '**这样同一支队伍的低配档位也在池内**，便宜但强度略低的队伍能靠补金少拉分；'
-    + `**下面这 ${plan.rows.length} 条是其中最靠前的**（按补金推荐分排，截断只影响显示）；`
+    // ⚠️ 2026-10-18 起**整池都列出来**（用户要求「尽可能多的配队」），所以这里不能再写
+    //    「只列前 N 条」——那句文案从 v4.6.56 起一直是「截断只影响显示」，现在没有截断了。
+    + `**${plan.rows.length} 支**全部列在这里（按补金推荐分排），每页 ${TEAM_PLAN_PAGE_SIZE} 支、`
+    + '可翻页，上面的搜索框按角色 / 光锥名筛；'
     // ⚠️ 2026-10-15：① 换成角色总榜那一列的**绝对强度分**（用户 2026-10-14 第 10 条重定：
     //    围绕行动值 + 投入单调，**省金是性价比那一项的事**）。v4.6.91~2026-10-14 这里写的是
     //    「含金数项的整包分按候选池归一」，那会让**池内最省金**的那支自动拿 100 分 ——
@@ -4786,7 +5017,7 @@ const renderTeamPlan = (conclusion) => {
     + `指数 ${gapPower} 是「给要补大量金的队伍少给点分」那条曲线 —— 补 2 金 `
     + `${gapSample(2)} 分、补 ${gapHalf} 金 ${gapSample(gapHalf)} 分、`
     + `补到 ${plan.gapMax} 金 0 分、补 ${gapOver} 金 ${gapSample(gapOver)} 分，`
-    + `下面这批有 ${capped} 支落在这一档`
+    + `候选池里有 ${capped} 支落在这一档`
     + `${Number(plan.gapRealMax) > Number(plan.gapMax)
       ? `、补金最多的是 ${plan.gapRealMax} 金` : ''}）；`
     + '「这支队总共几金」（卡片上的账面金数）只作参考，**不进分数**；'
@@ -4820,19 +5051,32 @@ const renderUnits = () => {
     return;
   }
   const list = unitListOf(state.conclusion, state.unitEidolon);
-  const filtered = list.filter((unit) => !state.onlyMissing || ownedStateOf(unit) !== 'have');
+  // 搜索（用户 2026-10-18）：在**当前星魂档**那一份榜里按「角色名 / 光锥名（中英都认）」
+  // 做子串匹配。次序仍按榜面名次 —— 搜索结果不该自己重排，用户是在**找**某一项，
+  // 而不是在比较它们。
+  const query = queryOf(state.unitQuery);
+  const matched = query
+    ? list.filter((unit) => matchesQuery(unitSearchText(unit), query))
+    : list;
+  const filtered = matched.filter((unit) => !state.onlyMissing || ownedStateOf(unit) !== 'have');
   const rows = filtered.slice(0, UNIT_ROWS_MAX);
   if (el.unitMeta) {
     // 口径写清楚：切到某一档时，这一行报的是**这一档**的角色数，不是「全部」那份的子集。
     const scope = state.unitEidolon === 'all'
       ? `共 ${list.length} 条（每个角色一条）`
       : `${tierNameOf(state.unitEidolon)} 档 ${list.length} 个角色各一条（它抽到这一档时最强的整包）`;
-    el.unitMeta.textContent = rows.length < filtered.length
+    // 搜索状态**必须印出来**：否则「榜上只剩 3 条」看着像数据丢了（搜索词在工具条里，
+    // 而工具条可能已经滚出屏幕）。命中数按「搜索后、只筛匹配前」数 —— 那才是搜索的答案。
+    const hit = query ? `搜索「${state.unitQuery.trim()}」命中 ${matched.length} 条` : '';
+    const tail = rows.length < filtered.length
       ? `只显示前 ${rows.length} 条（${scope}，筛后 ${filtered.length} 条）`
       : (state.onlyMissing ? `${scope}，筛掉已有的后剩 ${filtered.length} 条` : scope);
+    el.unitMeta.textContent = hit ? `${hit} · ${tail}` : tail;
   }
   if (!rows.length) {
-    el.conclusionUnits.appendChild(text('p', 'muted small', '当前筛选下没有条目。'));
+    el.conclusionUnits.appendChild(text('p', 'muted small',
+      query ? `当前星魂档里没有匹配「${state.unitQuery.trim()}」的角色或光锥。`
+        : '当前筛选下没有条目。'));
     return;
   }
   // 并列：分子只来自队伍，所以同一支队伍的成员必然同分。名次照旧按顺序编，
@@ -5289,6 +5533,58 @@ export const mountAdviceView = (options = {}) => {
   state.onOpenCharacter = options.onOpenCharacter || null;
   // 角色面板浮层（战斗记录里点角色）：关闭 / 背景 / ESC
   wireRecordPanel();
+
+  /**
+   * 搜索框接线（用户 2026-10-18：「为角色总榜和抽卡方案添加 2 个搜索框」）。
+   *
+   * 三个细节都不是可选项：
+   *   ① **防抖**（`SEARCH_DEBOUNCE`）：一次 `input` 事件就是一次重画，连续按键不防抖
+   *      等于一秒钟重画十次；
+   *   ② **中文输入法**：`compositionstart` 到 `compositionend` 之间，输入框的 `value`
+   *      是**拼音**（「liuying」/「liumang」），此时过滤只会得到一片空白，且每敲一个字母
+   *      重画一次。所以组字期间只记状态、不触发；
+   *   ③ **`search` 事件**：`<input type="search">` 自带的清除按钮（×）在部分浏览器上
+   *      只发 `search` 不发 `input`，不接这一条就会出现「点了 × 但榜面没恢复」。
+   * ESC 也顺手当清除用（桌面端的老习惯）。
+   */
+  const wireSearchInput = (input, { timerKey, onQuery }) => {
+    if (!input) return;
+    let composing = false;
+    const apply = () => {
+      clearTimeout(state[timerKey]);
+      state[timerKey] = setTimeout(() => { onQuery(input.value); }, SEARCH_DEBOUNCE);
+    };
+    input.addEventListener('compositionstart', () => { composing = true; });
+    input.addEventListener('compositionend', () => { composing = false; apply(); });
+    input.addEventListener('input', () => { if (!composing) apply(); });
+    input.addEventListener('search', apply);
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && input.value) {
+        event.preventDefault();
+        input.value = '';
+        apply();
+      }
+    });
+  };
+  // 角色总榜：只重画榜面（搜索是纯过滤，名次与分数都不变，所以不重取结论）。
+  wireSearchInput(el.unitSearch, {
+    timerKey: 'unitQueryTimer',
+    onQuery: (value) => {
+      if (value === state.unitQuery) return;
+      state.unitQuery = value;
+      renderUnits();
+    },
+  });
+  // 抽卡方案：换词就**回第 1 页** —— 否则「搜一个只在第 4 页出现的角色」会先落在空页上。
+  wireSearchInput(el.teamPlanSearch, {
+    timerKey: 'teamPlanQueryTimer',
+    onQuery: (value) => {
+      if (value === state.teamPlanQuery) return;
+      state.teamPlanQuery = value;
+      state.teamPlanPage = 1;
+      renderTeamPlan(state.conclusion);
+    },
+  });
 
   // 权重三大类：先恢复用户上次定下的倾向（关卡权重 + 抽卡权重 + 版本权重），再把
   // 三组输入框画出来（用户 2026-10-16 第 3 条起是三类，三组各占一行）。
