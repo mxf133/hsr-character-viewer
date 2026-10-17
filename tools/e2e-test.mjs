@@ -253,11 +253,34 @@ const main = async () => {
        *    所以把上限抬到 660 KB（仍留 ~24 KB 余量继续当护栏）。
        *    ⚠️ 别顺手再往上调：真需要更多空间时，先看能不能挪去按需接口 ——
        *    这正是这条判据存在的意义。
+       *
+       * ⚠️ **2026-10-17 这道判据救了一次命**（v4.6.120）：强度 / 泛用性 / 性价比 /
+       *    版本权重四个分支并行开发、各自都加过字段，合进 main 之后载荷到了
+       *    **661.5 KB** —— 正好顶穿这道上限。而且 v4.6.120 起**档位数由用户控制
+       *    （1~12）**，档位越多参与加权的版本越多（12 档时 `frontierTiers` 261 → 281 条），
+       *    载荷会涨到 **713.7 KB**。削法：队友名单 `members` 只留**头条那一支**
+       *    （原来 5 个副本各带一份，81 条 × 4 关 = 87.8 KB），其余 4 关改由按需的
+       *    `/api/archive/packs` 补。削完 **6 档 596.2 KB / 12 档 638.1 KB**
+       *    —— 比四个分支合进来**之前**（649.6 KB）还小 53 KB。
+       *    ⚠️ `members` **不能整条删**：`advice.js` 的 `teamPoolUnits` 按它建候选池、
+       *    按阵容键去重，整条删掉补金推荐会整个空掉（实测两个套件当场红）。
        */
       const CONCLUSION_PAYLOAD_CAP_BYTES = 660 * 1024;
       check('conclusion stays small enough to send to the browser',
         Buffer.byteLength(JSON.stringify(conclusion.body)) < CONCLUSION_PAYLOAD_CAP_BYTES,
         `${Math.round(Buffer.byteLength(JSON.stringify(conclusion.body)) / 1024)} KB`);
+      // ⚠️ **上面那条只覆盖了默认 6 档**，而 v4.6.120 起档位数由用户控制（1~12）：
+      //    档位越多 → 跨版本加权覆盖的版本越多 → 拿到证据的「角色 × 星魂档」越多
+      //    （实测 `frontierTiers` 6 档 261 条 → 12 档 281 条），载荷跟着长。
+      //    四个分支合进 main 时正是 6 档先顶穿的（661.5 KB），所以两端都要钉住。
+      const conclusion12 = await post('/api/archive/conclusion', {
+        account: { owned: [], eidolons: {}, cones: {} },
+        versionWeights: [3, 2.5, 2, 1.5, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+      });
+      check('conclusion stays under the cap with the version-weight slots maxed out (12)',
+        conclusion12.status === 200
+        && Buffer.byteLength(JSON.stringify(conclusion12.body)) < CONCLUSION_PAYLOAD_CAP_BYTES,
+        `${Math.round(Buffer.byteLength(JSON.stringify(conclusion12.body)) / 1024)} KB @ 12 档`);
       check('unknown archive mode lists valid ones',
         Array.isArray(badMode.body?.availableModes) && badMode.body.availableModes.length > 0);
 

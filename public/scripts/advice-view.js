@@ -2410,11 +2410,29 @@ const wireValueTips = (container) => {
     //      理由见 `src/server/conclusion.js` 里 `slimFrontierUnit` 那段「为什么不上榜」）；
     //   ③ **来源视频**（用户 2026-10-14 第 6 条）：`/conclusion` 只给逐档榜的头条那一支带它
     //      （600 KB 硬上限，见 `slimFrontierUnit` 的 env 投影），总榜那条路要在这里补回来。
-    const needEnvs = Number(unit.envCount) > (unit.envs || []).length;
+    /**
+     * ⚠️ **「明细齐不齐」不再只看条数**（2026-10-17，v4.6.120）。
+     *
+     * `/conclusion` 那份载荷的队友名单 `members` **只给头条那一支**了（其余 4 关省下来
+     * 的 87.8 KB 是用来把载荷压回 660 KB 护栏内的，见 `src/server/conclusion.js` 的
+     * `slimFrontierUnit`）。
+     * 而**总榜**那 81 条的 `envs` 条数本来就是齐的（5 关全给），只看条数的话
+     * `needEnvs` 恒为 false、整份替换那支走不到 —— 详情窗口就只剩头条那一支队伍。
+     * 所以再加一条：**缺 `members` 也要去按需取**。
+     *
+     * 取不到时不会空窗：详情窗口照旧走「名次靠后：未展开队友名单」那条兜底文案。
+     */
+    const envsHere = unit.envs || [];
+    const needEnvs = Number(unit.envCount) > envsHere.length
+      || envsHere.some((env) => !Array.isArray(env.members));
     const needVersatility = !Array.isArray(unit.versatilityMembers);
-    const needVideo = (unit.envs || []).some((env) => !env.video);
+    const needVideo = envsHere.some((env) => !env.video);
     if (!needEnvs && !needVersatility && !needVideo) return;
     const hit = await fetchPacks(unit.name);
+    // ⚠️ **取过就记一笔**（`frontierTip` 的「未展开队友名单」脚注要看它）：
+    //    `/conclusion` 2026-10-17 起只给头条那一支带 `members`，未补齐的窗口里
+    //    其余关卡一律「没有队友」，不记这一笔的话那条脚注会在**补齐之前**先闪一下错话。
+    unit.__packsTried = true;
     if (!hit) return;
     let learned = false;
     if (hit.frontierExtents) {
@@ -2440,7 +2458,13 @@ const wireValueTips = (container) => {
     const match = (needEnvs || needVideo)
       ? (hit.packs || []).find((p) => p.key === unit.key) || null
       : null;
-    if (needEnvs && match?.envs?.length && match.envs.length > (unit.envs || []).length) {
+    // ⚠️ 替换判据同样是「**更多** **或** 更全」：总榜那 81 条两边条数相等（都是 5 关），
+    //    但 `/conclusion` 那份没有 `members`，而按需这份有（`slimCharacterPack` 给的名
+    //    单还多带 `nameCn` / `icon` / `lcCn` / `lcIcon` —— 队伍卡片要的就是它们）。
+    //    只比条数的话，条数相等的一律不会被换上来。
+    if (needEnvs && match?.envs?.length
+      && (match.envs.length > envsHere.length
+        || match.envs.some((env) => Array.isArray(env.members)))) {
       // ⚠️ 这一支是**整份替换**：换进来的每一行本来就带着 `video`，所以不必再合并。
       unit.envs = match.envs;
       learned = true;
@@ -3984,7 +4008,11 @@ const frontierTip = (unit) => {
   // ⚠️ 触发条件是「**所有**关卡都没有 members」，不是「第一个关卡没有」：
   //    改前那样写时，只要有一个关卡带着队伍、另一个没带，脚注就会说「未展开队友名单」
   //    —— 而旁边明明画着队伍卡片，脚注在说谎。
-  if (unit.envs.length && unit.envs.every((env) => !env.members?.length)) {
+  // ⚠️ `unit.__packsTried` 那一条是 2026-10-17 加的：`/conclusion` 的 `members` 只给
+  //    头条那一支之后，未补齐的窗口里的其余关卡**一律**满足下面的条件，不看这一笔
+  //    就会在按需取回名单**之前**先闪一句「未展开队友名单」，再在补齐后把它撤掉
+  //    —— 读者看到的是窗口抖了一下。
+  if (unit.__packsTried && unit.envs.length && unit.envs.every((env) => !env.members?.length)) {
     notes.push('（名次靠后：未展开队友名单。）');
   }
   const tip = tipBox({

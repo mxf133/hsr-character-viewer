@@ -532,9 +532,28 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null, withVideo = false) =>
       //    ~10 KB，把 660 KB 硬上限顶破（实测 661 KB）。要按关卡解释继承时再加回来。
       // 这个整包最早可能存在的版本（角色与光锥里较晚登场的那个）。
       bornSeason: env.bornSeason ?? null,
-      members: (env.members || []).map((m) => ({
-        char: m.char, eidolon: m.eidolon, lc: m.lc || null, superimp: m.superimp,
-      })),
+      //
+      // ⚠️ **队友名单（`members`）只给头条那一支**（2026-10-17，v4.6.120）。
+      //
+      //    改前是**每个副本都带**一份（总榜 81 条 × 5 关 × 4 人 = **87.8 KB**，占整份
+      //    载荷的 13%）。四个分支合进 main 之后载荷到了 **661.5 KB**，正好顶穿 e2e 那道
+      //    660 KB 护栏（12 档时 713.7 KB），所以得从这条投影上把它削下来。
+      //
+      //    **只削「非头条那 4 关」**，头条那一支必须留 —— 理由是抽卡方案的候选池
+      //    （`advice.js` 的 `teamPoolUnits`）靠它建队伍：它按 `envs[].members` 找第一支
+      //    带名单的队伍、再用阵容键去重。**整条删掉会让补金推荐整个空掉**
+      //    （实测 `team-plan-test` / `version-weight-plan-test` 当场红）。
+      //    而「按阵容去重」只需要**一支**代表队伍，多给的 4 份是纯重复。
+      //
+      //    剩下那 4 关的名单由 `/api/archive/packs` 补（它逐关卡全给、且不截
+      //    `FRONTIER_DETAIL_ROWS`）：详情窗口打开时本来就要取一次，`enrichTipDetail` 的
+      //    `needEnvs` 判据已经加上「缺 `members` 也要去取」这一条 —— 与逐档榜那份
+      //    「只带 1 个 env」是同一条老路子。
+      ...(envIndex === 0 ? {
+        members: (env.members || []).map((m) => ({
+          char: m.char, eidolon: m.eidolon, lc: m.lc || null, superimp: m.superimp,
+        })),
+      } : {}),
       // **来源视频**（用户 2026-10-14 第 6 条）：这一行的队伍对应的 b 站 / 油管投稿地址。
       // 界面在队伍卡片上画一个外链图标，点击 `target="_blank"` 打开（不内嵌播放器）。
       //
