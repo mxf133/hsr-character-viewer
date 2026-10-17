@@ -927,21 +927,29 @@ await evaluate(`document.getElementById('adviceFrontierWeightsReset')?.click()`)
 await sleep(2500);
 const drawReset = await drawProbe();
 /**
- * ⚠️ **2026-10-16 第 1 条改过默认值**：三个框回到 **`1 / 1 / 0.5`**（泛用性降到 0.5），
- * 归一后是 `0.4 / 0.4 / 0.2` —— 所以摘要里印 `× 0.4`（强度/性价比）与 `× 0.2`（泛用性），
- * 总榜那行印 `强度 40% / 性价比 40% / 泛用性 20%`。
- * 改前是三个框都 `1` → 三等分 → `formatShare(1/3)` 印 `0.33`（别再按那个写）。
+ * ⚠️ **默认值在 2026-10-18（v4.6.121）又换了一次**：用户原话「抽卡权重默认
+ * 强度：性价比：泛用性 = 4:5:1」，于是三个框回到 **`4 / 5 / 1`**，归一后是
+ * `0.4 / 0.5 / 0.1` —— 摘要里印 `× 0.4`（强度）、`× 0.5`（性价比）、`× 0.1`（泛用性），
+ * 总榜那行印 `强度 40% / 性价比 50% / 泛用性 10%`。
+ *
+ * 换挡史（每次都是用户拍板后同步的，**别再按旧表写死**）：
+ *   * `1 : 1 : 1` → 三等分，摘要印 `0.33`；
+ *   * `1 : 1 : 0.5`（2026-10-16 第 1 条）→ `0.4 / 0.4 / 0.2`；
+ *   * **`4 : 5 : 1`（2026-10-18，现行）** → `0.4 / 0.5 / 0.1`。
+ *
+ * ⚠️ 这两条断言 2026-10-18 之前一直是红的（代码早已改成 4:5:1，测试还写着 1:1:0.5），
+ *    但**本机跑不了 CDP 套件**，所以没人看见。这次套件跑起来才暴露。
  */
-const drawResetOk = (drawReset.inputs || []).join(',') === '1,1,0.5'
-  && Boolean(drawReset.eq && drawReset.eq.includes('× 0.4') && drawReset.eq.includes('× 0.2')
-    && drawReset.eq.includes('泛用性'));
+const drawResetOk = (drawReset.inputs || []).join(',') === '4,5,1'
+  && Boolean(drawReset.eq && drawReset.eq.includes('× 0.4') && drawReset.eq.includes('× 0.5')
+    && drawReset.eq.includes('× 0.1') && drawReset.eq.includes('泛用性'));
 if (!drawResetOk) failures += 1;
-console.log(`  ${drawResetOk ? '✓' : '✗'} 「恢复默认」把抽卡权重还原成 1 : 1 : 0.5 `
-  + `（归一 0.4 / 0.4 / 0.2）—— ${drawReset.eq}`);
+console.log(`  ${drawResetOk ? '✓' : '✗'} 「恢复默认」把抽卡权重还原成 4 : 5 : 1 `
+  + `（归一 0.4 / 0.5 / 0.1）—— ${drawReset.eq}`);
 const drawResetMetaOk = Boolean(drawReset.meta && drawReset.meta.includes('强度 40%')
-  && drawReset.meta.includes('性价比 40%') && drawReset.meta.includes('泛用性 20%'));
+  && drawReset.meta.includes('性价比 50%') && drawReset.meta.includes('泛用性 10%'));
 if (!drawResetMetaOk) failures += 1;
-console.log(`  ${drawResetMetaOk ? '✓' : '✗'} 恢复默认后总榜摘要印 40 / 40 / 20 —— ${drawReset.meta}`);
+console.log(`  ${drawResetMetaOk ? '✓' : '✗'} 恢复默认后总榜摘要印 40 / 50 / 10 —— ${drawReset.meta}`);
 
 // ---- 总榜行图标 / 详情大窗口 / 文案（用户 2026-10 点名的四条）--------------------
 //
@@ -3460,6 +3468,48 @@ if (pagingProbe?.first) {
   console.log(`  ${geomOk ? '✓' : '✗'} 工具条几何：搜索框 ${g.searchWidth}px、翻页条同一行（dy=${g.dy}px）、`
     + `在列表上方 ${Number(g.bodyTop) - Number(g.toolbarTop)}px、横向溢出 ${g.overflowX}px`);
 
+  // ⚠️ 2026-10-18 用户追加：「搜索框和选择页面框都应当位于界面左侧，且两者是选择按钮在左、
+  //    搜索框在右」。这里量三件事：① 两个工具条的 left 都贴住容器左边（靠左起排，
+  //    不是被 space-between 推到最右）；② 方案工具条里翻页条（选择按钮）在搜索框左边；
+  //    ③ 总榜工具条里筛选按钮组也在搜索框左边。
+  const layout = await evaluate(`(() => {
+    const box = (sel) => {
+      const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
+      return el ? el.getBoundingClientRect() : null;
+    };
+    const planBar = box('.advice-plan-toolbar');
+    const planPager = box('#adviceTeamPlanPager');
+    const planSearch = box('#adviceTeamPlanSearch');
+    const unitBar = box('.advice-unit-toolbar');
+    const unitFilters = box('#adviceUnitFilter');
+    const unitSearch = box('#adviceUnitSearch');
+    // ⚠️ 基准必须取**同一栏下方那一块的左边**，不能取外层容器：容器有 17px 内边距，
+    //    拿它的 border-box 左边缘比，贴左的工具条也会被判成「没贴左」（实测 left=76 vs 59）。
+    const unitBody = box('#adviceConclusionUnits');
+    const planBody = box('#adviceTeamPlanBody');
+    return {
+      planLeft: planBar ? Math.round(planBar.left) : null,
+      unitLeft: unitBar ? Math.round(unitBar.left) : null,
+      unitBodyLeft: unitBody ? Math.round(unitBody.left) : null,
+      planBodyLeft: planBody ? Math.round(planBody.left) : null,
+      pagerBeforeSearch: planPager && planSearch ? planPager.left < planSearch.left : null,
+      filtersBeforeSearch: unitFilters && unitSearch ? unitFilters.left < unitSearch.left : null,
+    };
+  })()`);
+  // 贴左 = 与同栏下方内容块左边对齐（容差 4px）。两个都在靠右的话会差出几百 px，
+  // 4px 的容差只够吸收亚像素与滚动条，不至于把真错放过去。
+  const leftOk = layout.planLeft !== null && layout.unitLeft !== null
+    && Math.abs(layout.planLeft - layout.planBodyLeft) <= 4
+    && Math.abs(layout.unitLeft - layout.unitBodyLeft) <= 4;
+  if (!leftOk) failures += 1;
+  console.log(`  ${leftOk ? '✓' : '✗'} 两个工具条都靠左起排（用户 2026-10-18）：`
+    + `方案工具条 left=${layout.planLeft}（列表 ${layout.planBodyLeft}）、`
+    + `总榜工具条 left=${layout.unitLeft}（列表 ${layout.unitBodyLeft}）`);
+  const orderOk = layout.pagerBeforeSearch && layout.filtersBeforeSearch;
+  if (!orderOk) failures += 1;
+  console.log(`  ${orderOk ? '✓' : '✗'} 选择按钮在左、搜索框在右：`
+    + `翻页条在搜索框左侧=${layout.pagerBeforeSearch}、筛选按钮在搜索框左侧=${layout.filtersBeforeSearch}`);
+
   // ---- 抽卡方案的搜索框：敲第一张卡里的角色名 → 只剩含这个角色的队伍 --------------
   const planSearch = await evaluate(`(async () => {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -3474,12 +3524,15 @@ if (pagingProbe?.first) {
     };
     await type(target);
     const list = cards();
+    const rankOf = (c) => Number(((c.querySelector('.advice-unit-rank')?.textContent) || '').replace('#', ''));
     const hit = {
       target,
       cards: list.length,
       allContain: Boolean(target) && list.every((c) => (c.textContent || '').includes(target)),
       meta: document.getElementById('adviceTeamPlanMeta')?.textContent || '',
       count: document.getElementById('adviceTeamPlanPager')?.querySelector('.advice-page-count')?.textContent || '',
+      // ⚠️ 2026-10-18：名次必须是**完整候选池**里的真实名次，不是筛选后从 1 重排。
+      ranks: list.map(rankOf).filter((n) => Number.isFinite(n) && n > 0),
     };
     await type('');
     return { hit, cleared: { cards: cards().length, value: input.value } };
@@ -3496,6 +3549,21 @@ if (pagingProbe?.first) {
   const planClearOk = planSearch?.cleared?.cards === 20 && planSearch?.cleared?.value === '';
   if (!planClearOk) failures += 1;
   console.log(`  ${planClearOk ? '✓' : '✗'} 清空方案搜索后回到 20 张（实测 ${planSearch?.cleared?.cards} 张）`);
+  // ⚠️ 2026-10-18（用户：「搜索到的结果应当显示其真实的排名，而不是重新开始算」）：
+  //    搜索出的卡片，名次要是**完整候选池**里的名次。判据有三条同时成立才算真名次：
+  //      ① 名次严格递增（排序没乱）；
+  //      ② **第一张不一定是 #1**（若恰好命中榜首才会是 1）；
+  //      ③ 名次都落在候选池总数（`total`）之内 —— 从 1 重排也会满足 ①，所以必须靠 ②③
+  //         才能把它和「重新编号」区分开。
+  const ranks = hit.ranks || [];
+  const realRankOk = ranks.length === Math.min(20, hits)
+    && ranks.every((n, i) => i === 0 || ranks[i - 1] < n)
+    && ranks.every((n) => n >= 1 && n <= total)
+    && (hits < total || ranks[0] !== 1 || ranks.length === 1);
+  if (!realRankOk) failures += 1;
+  console.log(`  ${realRankOk ? '✓' : '✗'} 搜索结果显示**真实名次**（不重新编号）：`
+    + `名次 [${ranks.slice(0, 6).join(', ')}${ranks.length > 6 ? ' …' : ''}]`
+    + `（递增且 ≤ 候选池 ${total}；第一张=${ranks[0]}，重排的话会是 1）`);
 
   // ---- 角色总榜的搜索框：只输前两个字（验「不是前缀限定」）------------------------
   const unitSearch = await evaluate(`(async () => {
@@ -3512,12 +3580,15 @@ if (pagingProbe?.first) {
     };
     await type(target);
     const list = rows();
+    const rankOf = (r) => Number(((r.querySelector('.advice-unit-rank')?.textContent) || '').replace('#', ''));
     const hit = {
       target,
       rows: list.length,
       allContain: Boolean(target) && list.every((r) => (r.textContent || '').includes(target)),
       meta: document.getElementById('adviceUnitMeta')?.textContent || '',
       overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      // ⚠️ 2026-10-18：总榜搜索同样要显示**完整榜里的真实名次**。
+      ranks: list.map(rankOf).filter((n) => Number.isFinite(n) && n > 0),
     };
     await type('');
     return { before, firstName, hit, after: rows().length };
@@ -3531,6 +3602,13 @@ if (pagingProbe?.first) {
   console.log(`  ${unitSearchOk ? '✓' : '✗'} 总榜搜索「${uh.target}」（「${unitSearch?.firstName}」的前两字）：`
     + `${unitSearch?.before} 行 → 命中 ${uhHits} 行、渲染 ${uh.rows} 行、每行都含这两个字 `
     + `${uh.allContain ? '✓' : '✗'}｜横向溢出 ${uh.overflowX}px`);
+  // 真实名次：搜索「千冶」命中的是榜上第 N 行的角色，它印的名次就该是 N，而不是 #1。
+  const uRanks = uh.ranks || [];
+  const unitRankOk = uRanks.length === uh.rows
+    && uRanks.every((n, i) => i === 0 || uRanks[i - 1] < n);
+  if (!unitRankOk) failures += 1;
+  console.log(`  ${unitRankOk ? '✓' : '✗'} 总榜搜索结果显示**真实名次**：`
+    + `名次 [${uRanks.join(', ')}]（递增；重新编号的话会是 [1, 2, …]）`);
   const unitClearOk = unitSearch?.after === unitSearch?.before && uh.overflowX <= 1;
   if (!unitClearOk) failures += 1;
   console.log(`  ${unitClearOk ? '✓' : '✗'} 清空总榜搜索后行数还原（${unitSearch?.after} / ${unitSearch?.before}）`);

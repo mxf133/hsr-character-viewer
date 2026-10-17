@@ -2587,7 +2587,10 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  /* ⚠️ 2026-10-18（用户：「搜索框和选择页面框都应当位于界面左侧」）：改成 `flex-start`。
+     原来是 `space-between`，把「搜索框 + 状态行」推到了整行最右、像贴边工具栏；
+     现在整块从左侧起排，块内顺序「筛选按钮 → 搜索框」保持不变。 */
+  justify-content: flex-start;
   gap: 8px 12px;
   margin: 2px 0 9px;
 }
@@ -2616,7 +2619,9 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 10px;
-  margin-left: auto;
+  /* ⚠️ 2026-10-18：原来这里是 `margin-left: auto`（配合父级 `space-between` 把这组推到最右）。
+     用户要求整块靠左放置「选择按钮 → 搜索框」，所以去掉自动左边距，紧跟在筛选按钮后面。 */
+  margin-left: 0;
   min-width: 0;
 }
 /* 两个搜索框（角色总榜 / 抽卡方案）共用一套外观：与 `.advice-filter` 同一族的胶囊形，
@@ -2654,7 +2659,10 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  /* ⚠️ 2026-10-18（用户：「搜索框和选择页面框都应当位于界面左侧，且选择按钮在左、搜索框在右」）：
+     与总榜工具条统一改成 `flex-start`。这一条的 DOM 顺序已对调为「翻页条（选择按钮）→ 搜索框」，
+     配合靠左起排即满足要求。改前是 `space-between` + 「搜索框在前」，显示成搜索框靠左、翻页条靠右。 */
+  justify-content: flex-start;
   gap: 8px 12px;
   margin: 4px 0 10px;
 }

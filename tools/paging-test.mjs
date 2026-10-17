@@ -14,6 +14,7 @@
 //   ④ 翻页条窗口：首末页恒在、当前页 ±2、跳段用省略号，格子数不随池子长大。
 import {
   clampPage, matchesQuery, pageCountOf, pageSliceOf, pageWindowOf, queryOf, searchTextOf,
+  withRealRank,
 } from '../public/scripts/advice-paging.js';
 
 let passed = 0;
@@ -99,6 +100,28 @@ check('窗口里的页码恒在合法区间',
 check('窗口大小有上界（不随池子长大）', pageWindowOf(50, 100).length <= 9,
   `实际 ${pageWindowOf(50, 100).length} 个格子`);
 check('页码越界时窗口也夹回来', JSON.stringify(pageWindowOf(99, 15)) === JSON.stringify(pageWindowOf(15, 15)));
+
+// ---- ⑤ 搜索结果的名次 = 完整榜里的真实名次（用户 2026-10-18）------------------
+console.log('\n[真实名次]');
+const BOARD = Array.from({ length: 40 }, (_, i) => ({ key: `c${i + 1}` }));
+const picked = [BOARD[7], BOARD[19], BOARD[20], BOARD[33]];
+const ranked = withRealRank(BOARD, picked, (r) => r.key);
+eq('命中的四行标出它们在完整榜里的名次',
+  ranked.map((x) => x.rank), [8, 20, 21, 34]);
+check('名次严格递增（与榜面顺序一致）',
+  ranked.every((x, i) => i === 0 || ranked[i - 1].rank < x.rank));
+// ⚠️ 这条是本节的核心：**不是** 1 起重新编号（那等于说「它在榜上排第 1」）。
+check('第一行不是 #1（没有重新编号）', ranked[0].rank !== 1, `实测 ${ranked[0].rank}`);
+// 不传 keyOf（两个数组引用同一批对象）也要能用 —— 那是视图里的常见形状。
+eq('不传 keyOf 时按对象身份匹配',
+  withRealRank(BOARD, picked).map((x) => x.rank), [8, 20, 21, 34]);
+// 同一页里被截断/翻页切出来的片段，名次同样要落在完整榜里。
+const pageSlice = pageSliceOf(picked, 2, 2);
+eq('翻页后再标名次仍然对得上',
+  withRealRank(BOARD, pageSlice.rows, (r) => r.key).map((x) => x.rank), [21, 34]);
+// 未知行 → 0（保留而不是丢弃，便于排查「列表对不上」）。
+eq('不在完整列表里的行给 0', withRealRank(BOARD, [{ key: 'nope' }], (r) => r.key)[0].rank, 0);
+eq('空结果不炸', withRealRank(BOARD, [], (r) => r.key), []);
 
 // ---- 汇总 -------------------------------------------------------------------
 console.log(`\n分页与搜索检查: ${passed} passed, ${failed} failed`);

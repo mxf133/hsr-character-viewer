@@ -69,7 +69,7 @@ import {
 // —— 它们不碰 DOM、不碰评分，而「284 条是不是 15 页、最后一页几条、页码怎么夹」这类
 // 算术不该为了测它去起一次真浏览器（本机沙箱也起不来服务，见 docs/CDP布局套件.md §2.1）。
 import {
-  clampPage, matchesQuery, pageSliceOf, pageWindowOf, queryOf, searchTextOf,
+  clampPage, matchesQuery, pageSliceOf, pageWindowOf, queryOf, searchTextOf, withRealRank,
 } from './advice-paging.js';
 import { renderRecordSection, wireRecordPanel } from './battle-record.js';
 import { accessHeaders, readAccessToken } from './access.js';
@@ -4746,6 +4746,12 @@ const renderTeamPlan = (conclusion) => {
     matched, state.teamPlanPage, TEAM_PLAN_PAGE_SIZE,
   );
   state.teamPlanPage = page;
+  // ⚠️ 2026-10-18（用户：「搜索到的结果应当显示其真实的排名，而不是重新开始算」）：
+  //    卡片上的名次必须是**完整候选池**里的名次，不是「筛选后第几条」。
+  //    改前用的是 `start + i + 1` —— 搜索后那是从 1 重排的，于是搜出来的卡片印着
+  //    `#1 / #2 / …`，读起来就是「它在榜上排第 1」，那是假话。
+  //    `start + i + 1` 本身没错（没搜索时它就等于真名次），所以保留给状态行的「第几条」。
+  const pageRanked = withRealRank(plan.rows, pageRows);
 
   const hit = query ? ` · 搜索「${state.teamPlanQuery.trim()}」命中 ${matched.length} 支` : '';
   const range = matched.length
@@ -4769,9 +4775,9 @@ const renderTeamPlan = (conclusion) => {
   pageRows.forEach((row, i) => {
     const card = text('div', 'advice-plan-team');
     const head = text('div', 'advice-plan-team-head');
-    // 名次用**筛选后的全局序号**（不是页内序号）：搜出来的那一支仍然报它在完整列表里
-    // 的名次，「第 2 页第 3 张卡」就不会被误读成「第 3 名」。
-    head.appendChild(text('span', 'advice-unit-rank', `#${start + i + 1}`));
+    // 名次 = **完整候选池**里的真实名次（2026-10-18 用户要求）。搜索 / 翻页都只是视图，
+    // 它们不许改写名次 —— 没搜索时它等于 `start + i + 1`，搜索后那才是对的。
+    head.appendChild(text('span', 'advice-unit-rank', `#${pageRanked[i].rank || start + i + 1}`));
     // 用户 2026-10-11（抽卡方案第 2 条）：「改为：补金推荐分 + 75.7 = 强度得分 68.0 × 0.5
     // + 性价比 83.3 × 0.5，注意空格不要离得太远」——所以徽标的标签改成「补金推荐分」、
     // 后面那句用普通空格（改前是 `　+　` 全角空格，实测两处各多出 ~8px）。
@@ -5060,6 +5066,11 @@ const renderUnits = () => {
     : list;
   const filtered = matched.filter((unit) => !state.onlyMissing || ownedStateOf(unit) !== 'have');
   const rows = filtered.slice(0, UNIT_ROWS_MAX);
+  // ⚠️ 2026-10-18（用户：「搜索到的结果应当显示其真实的排名，而不是重新开始算」）：
+  //    行首的 `#N` 要是这一行在**完整榜**（当前星魂档那一份 `list`）里的名次。
+  //    改前那个 `#${i+1}` 是筛选后从 1 重排的，于是搜出来的第一行印「#1」——
+  //    读起来像「这个角色在榜上排第 1」，其实是第 41。搜索只是视图，名次是榜的。
+  const rowRank = new Map(withRealRank(list, rows).map((x) => [x.row, x.rank]));
   if (el.unitMeta) {
     // 口径写清楚：切到某一档时，这一行报的是**这一档**的角色数，不是「全部」那份的子集。
     const scope = state.unitEidolon === 'all'
@@ -5087,7 +5098,7 @@ const renderUnits = () => {
   rows.forEach((unit, i) => {
     const row = text('div', 'advice-unit is-pack');
     const head = text('div', 'advice-unit-head');
-    head.appendChild(text('span', 'advice-unit-rank', `#${i + 1}`));
+    head.appendChild(text('span', 'advice-unit-rank', `#${rowRank.get(unit) || i + 1}`));
     if (i > 0 && sameScore(unit, rows[i - 1])) {
       const tie = text('span', 'advice-unit-tie', '并列');
       tie.title = '与上一行同分：它们属于同一支队伍的最佳证据 —— '

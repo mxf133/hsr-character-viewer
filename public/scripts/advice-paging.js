@@ -95,3 +95,32 @@ export const pageSliceOf = (list, page, pageSize) => {
   const start = (current - 1) * size;
   return { rows: rows.slice(start, start + size), start, page: current, pages, total: rows.length };
 };
+
+/**
+ * 给**过滤后**的那一批行标上它在**完整列表**里的真实名次（1 起）。
+ *
+ * 用户 2026-10-18：「搜索到的结果应当显示其真实的排名，而不是重新开始算」。
+ * 改之前搜索完直接拿 `i + 1` 编号，于是搜「千冶」出来第 3 张卡印着 `#3` ——
+ * 读起来就是「这个角色在榜上排第 3」，是**假话**（它在完整榜上排第 41）。
+ * 搜索是**视图**，名次是**榜的**，两者不该互相污染。
+ *
+ * @param {Array} source  完整列表（名次按它自己的下标）
+ * @param {Array} matched 过滤/分页之后的那些行（通常是 `source` 的子集，顺序不变）
+ * @param {(row:any)=>any} [keyOf] 行标识。默认按对象本身 —— 两个列表若引用**同一批对象**
+ *                        就够用；万一中间被反序列化过（`JSON.parse` 出来的新对象），
+ *                        传一个 `(row) => row.key` / `(row) => row.name` 之类的键函数。
+ * @returns {Array<{row:any, rank:number}>} 与 `matched` 同序；`rank` 为 0 = 不在完整列表里
+ *                        （理论上不该发生，仍然保留 0 而不是丢弃这一行 —— 少显示一行更难查）
+ */
+export const withRealRank = (source, matched, keyOf = (row) => row) => {
+  const rank = new Map();
+  (Array.isArray(source) ? source : []).forEach((row, i) => {
+    const key = keyOf(row);
+    // 同一 key 只记第一次：完整列表里本来就该唯一，重名以先出现的为准（与页面渲染一致）。
+    if (!rank.has(key)) rank.set(key, i + 1);
+  });
+  return (Array.isArray(matched) ? matched : []).map((row) => ({
+    row,
+    rank: rank.get(keyOf(row)) || 0,
+  }));
+};
