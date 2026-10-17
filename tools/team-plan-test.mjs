@@ -998,7 +998,19 @@ check('真载荷能跑通 teamPlan（空账号 → 每支队伍的差额都 > 0�
   }, { availability: livePayload.availability });
   assert.ok(plan.rows.length > 0, '空账号下应该有可补的队伍');
   assert.ok(plan.rows.every((r) => r.gap > 0), '差额 0 的队伍必须被剔除');
-  assert.ok(plan.rows.every((r) => r.total >= 0 && r.total <= 100), '总分必须落在 0~100');
+  // ⚠️ 2026-10-18：断言从「总分 0~100」放宽到「各分项在自己的刻度内、总分 = 加权和」。
+  //    v4.6.122 前只下发前 15 条，那 15 条都是补金少的（②≥0），总分自然落在 0~100；
+  //    现在**整池下发**（用户要「尽可能多的配队」+ 分页），尾部那些「补 30 金」的队伍
+  //    ② 是负分（2026-10-15 起 0 以下不再截断），总分也就可能为负 —— 这正是它们的
+  //    真实位置（排在最后一页），不是 bug。上界仍是 100（三项各 100 × 权重之和 = 1）。
+  const w = normalizeDrawWeights(plan.drawWeights || {});
+  assert.ok(plan.rows.every((r) => r.total >= -100 && r.total <= 100 + 1e-9),
+    '总分必须落在 −100~100（② 可以负，①③ 不会）');
+  assert.ok(plan.rows.every((r) => Math.abs(r.total
+    - (w.strength * r.strengthPct + w.cost * r.gapPct + w.versatility * r.versatilityPct)) < 0.01),
+  '总分必须等于三项 × 权重之和');
+  assert.ok(plan.rows.some((r) => r.gapPct < 0),
+    '整池下发后应当能看到「超过封顶值」的负分队伍（否则说明又被截断了）');
   for (let i = 1; i < plan.rows.length; i += 1) {
     assert.ok(plan.rows[i - 1].total >= plan.rows[i].total - 1e-9, '总分必须降序');
   }

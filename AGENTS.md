@@ -30,6 +30,7 @@ These are hard rules for every session (human and agent alike). This directory h
 | Recommendation data, scoring, or conclusion algorithms | `public/scripts/advice.js`, `src/server/conclusion.js` | `herta-test.mjs`, `team-plan-test.mjs`; add `e2e-test.mjs` for API payload changes |
 | Version weights reaching both weighted chains (`archiveFrontier` and `resolveScope`/`conclusionEnvs`) | `src/server/archive.js`, `src/server/conclusion.js` | `version-weight-plan-test.mjs` (any change to `resolveScope`, `conclusionEnvs`, `avRowFor`, or `buildAvTeams`) |
 | Recommendation rendering or styles | `public/scripts/advice-view.js`, `public/scripts/battle-record.js`, `public/index.html`, `public/styles/` | `herta-test.mjs`, `e2e-test.mjs`; `check-advice-layout.mjs` for browser geometry |
+| Board / team-plan search and pagination | `public/scripts/advice-paging.js`, `public/scripts/advice-view.js` | `paging-test.mjs` (offline: matching, page slicing, pager window) |
 | Server routes, records, cache, or persistence | `src/server/` | `e2e-test.mjs` plus the matching focused test (`cache-policy-test.mjs`, `request-throttle-test.mjs`, or `team-plan-test.mjs`) |
 | Login, signing, or Star Rail payload parsing | `src/mihoyo/` | `qr-poll-regression.mjs`, `api-wiring-test.mjs`, `hsr-parse-test.mjs`, or `devicefp-test.mjs` as applicable |
 | QR encoding/decoding | `src/qr/` | `qr-tables-check.mjs`, `qr-selftest.mjs` |

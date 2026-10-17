@@ -1114,15 +1114,27 @@ export const SCORING = {
    */
   budgetPlanMaxSteps: 24,
   /**
-   * 队伍抽卡方案（`teamPlan`）最多列多少支队伍。
+   * 队伍抽卡方案（`teamPlan`）最多列多少支队伍 = **下发上限**。
    *
    * 候选池本身**不在这里定**（用户 2026-10-11 第 1 条：由程序自主决定，不能写死）：
    * 它是「性价比**逐档榜**按队伍去重」的结果，随数据与账号自动变
-   * （本机实测：账号 1 是 78 → **245** 支，见 `teamPoolUnits` 的注释）。
-   * 这里只是**下发上限**，防止载荷被铺开；实测全量也只 ~35 KB。
-   * ⚠️ 用户 2026-10-11 第 5 条：「仅显示前 15 的补金建议」⇒ 40 改成 **15**。
+   * （本机实测：账号 1 是 **284** 支，见 `teamPoolUnits` 的注释）。
+   *
+   * 换挡史：
+   *   * **40 → 15**（用户 2026-10-11 第 5 条「仅显示前 15 的补金建议」）；
+   *   * **15 → 500**（用户 2026-10-18：「目前抽卡方案仅提供了 15 个配队，我希望改为
+   *     提供**尽可能多**的配队，为此可以进行**分页**显示配队，每页 20 个」）。
+   *     ⚠️ 界面那一侧**每页只画 20 张卡**（`advice-view.js` 的 `TEAM_PLAN_PAGE_SIZE`），
+   *     所以「列全池」不等于「一次画全池」—— 翻页时只重建 20 张卡，`teamPlan()` 的
+   *     结果还会被缓存（翻页 / 搜索不重算）。这一点是性能的**硬约束**：本机实测
+   *     `teamPlan()` 全池 284 条约 22 ms（含逐条 `alternatives`，见
+   *     `_probe-team-plan-perf.mjs`）；而「一次画 284 张卡」那种量级（近万个 DOM
+   *     节点）是肉眼可见的卡顿 —— 20 张这一档是常规做法，**本机没有浏览器、量不了**，
+   *     所以这里只按节点规模定性，不编毫秒数。
+   *   * 500 不是「另一个 15」：它只是**兜底**（候选池异常膨胀时不至于把浏览器撑爆）。
+   *     要改这个数请连着看 `_probe-team-plan-perf.mjs` 打出来的耗时。
    */
-  teamPlanMaxRows: 15,
+  teamPlanMaxRows: 500,
   /**
    * 队伍抽卡方案「差额接近度」的**封顶分位**（用户 2026-10-15 调整：p60，让 10 金归零）。
    *
@@ -3301,10 +3313,48 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     || String(a.rosterKey).localeCompare(String(b.rosterKey)));
   const delivered = ranked.slice(0, maxRows);
 
+  /**
+   * **成员倒排索引**（2026-10-18，为「全池下发 + 分页」加的性能护栏）。
+   *
+   * 「次选配队」（`alternatives`）本来是**每一条**都对整个 `ranked` 做一次
+   * `filter → map → filter → sort`，也就是 O(n²) 并且每一趟都给全部候选新建一个
+   * `{ o, shared, diff }` 对象。下发条数还是 15 时那是 15 × 245 ≈ 3700 次，看不出来；
+   * 改成全池之后是 **284 × 284 ≈ 8 万次**（探针实测光这一段就 15.9 ms）。
+   *
+   * 换成「角色 → 出现在哪些候选里」的倒排表之后，每一行只碰**至少共享一个成员**的
+   * 那几十支。判据与排序键**逐字不变**：
+   *   * 共享成员数仍按 `o.members.filter(m => mine.has(m.char)).length` 数（不是数 `t`
+   *     的成员 —— 那在两支队都有重复角色时会数错）；
+   *   * 「共享 ≥ 2」才算是次选；
+   *   * 同分先后仍按「共享人数降序 → 分差升序」；并列时补上 `rankOf`（名次）作第三键 ——
+   *     原来靠 `Array.prototype.sort` 对 `ranked` 的**稳定性**保住这个次序，显式写出来
+   *     才与原来逐条相同（`_probe-team-plan-perf.mjs --check` 会逐条对拍）。
+   */
+  const byMember = new Map();
+  const rankOf = new Map();
+  ranked.forEach((t, i) => {
+    rankOf.set(t, i);
+    for (const m of t.members) {
+      const bucket = byMember.get(m.char);
+      if (bucket) bucket.push(t); else byMember.set(m.char, [t]);
+    }
+  });
+
   // ---- 补金顺序：每抽收益降序 + 「光锥跟在载体之后」的载体约束 ----------------
-  const charScoreOf = (name) => units
-    .filter((u) => u.name === name)
-    .reduce((best, u) => Math.max(best, Number(u.total) || 0), 0);
+  //
+  // ⚠️ 2026-10-18：`charScoreOf` 从「每次都 `units.filter(...)` 扫一遍」改成**预建一次
+  //    `Map<角色, 最高队分>`**。展示条数从 15 涨到全池（284 支）之后，原来那个写法会被
+  //    调用 `候选数 × 补金笔数 + 下发条数 × 成员数` ≈ **1800 次 × 81 个单位** ≈ 15 万次
+  //    filter（每次还新建一个数组）。改完是 O(units) 一次 + O(1) 查表，`teamPlan()`
+  //    全池耗时从 39.5 ms 降到 22.2 ms（探针 `_probe-team-plan-perf.mjs` 可复算）。
+  //    口径**逐字不变**：同一角色有多个整包时取 `total` 最大的那个，且下限是 0
+  //    （原式 `reduce` 的初值就是 0，所以负分会被抬回 0 —— 这里必须一样）。
+  const charScoreMap = new Map();
+  for (const u of units) {
+    const value = Math.max(0, Number(u.total) || 0);
+    if (value > (charScoreMap.get(u.name) || 0)) charScoreMap.set(u.name, value);
+  }
+  const charScoreOf = (name) => charScoreMap.get(name) || 0;
 
   for (const t of candidates) {
     // 隐金设置下**每一笔实际要花的金**。
@@ -3506,15 +3556,23 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
       //    若只在这 15 条里找次选，每支次选的视频按钮都永远画不出来。全池里仍有证据池
       //    （`byRoster`）的相似队，它们的地址是全的 —— 用户要的「次选也要有视频按钮」
       //    只有把候选范围放开才成立。仍按「共享成员数 → 分差」排序，语义不变。
-      return ranked
-        .filter((o) => o.rosterKey !== t.rosterKey)
+      // ⚠️ 但**不必**扫全池（2026-10-18）：共享 ≥2 的候选一定出现在「这支队的某个成员」
+      //    那一桶里，所以取四个桶的并集即可 —— 见上面 `byMember` 的注释。
+      const near = new Set();
+      for (const m of t.members) {
+        for (const o of byMember.get(m.char) || []) {
+          if (o.rosterKey !== t.rosterKey) near.add(o);
+        }
+      }
+      return [...near]
         .map((o) => ({
           o,
           shared: o.members.filter((m) => mine.has(m.char)).length,
           diff: Math.abs(Number(o.total_score) - Number(t.total_score)),
         }))
         .filter((x) => x.shared >= 2)
-        .sort((a, b) => b.shared - a.shared || a.diff - b.diff)
+        .sort((a, b) => b.shared - a.shared || a.diff - b.diff
+          || (rankOf.get(a.o) ?? 0) - (rankOf.get(b.o) ?? 0))
         .slice(0, 3)
         .map((x) => ({
           key: x.o.rosterKey,

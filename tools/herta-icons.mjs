@@ -82,10 +82,32 @@ if (ONLY === 'all' || ONLY === 'previews') {
 }
 
 const items = [];
+/**
+ * 把图标表里的一串地址还原成「能真正下载」的 CDN 地址。
+ *
+ * `loadI18n()` 会把图标改写成**本地优先**的路由 `/icons/<rel>?fallback=<原 CDN>`
+ * （见 `src/server/archive.js` 的 `localizeIconUrls`）—— 那是对的：界面上本地有就 200、
+ * 没有就 302 回 CDN。但它对本脚本是错的：这里要**下载**，`fetch("/icons/...")` 拿不到
+ * 任何东西（2026-10-18 实测 259 张全部 "Failed to parse URL"）。所以：
+ *   * 是 `/icons/<rel>?fallback=<CDN>` 形态 → 取 `fallback` 参数里的 CDN 地址；
+ *   * 是 `<base>/<rel>` 的裸 CDN 形态（老数据 / 未 localize）→ 原样用。
+ */
+const downloadUrlOf = (raw) => {
+  if (!raw || typeof raw !== "string") return null;
+  if (raw.startsWith("/icons/")) {
+    try {
+      const u = new URL(raw, "http://local.invalid");
+      const fb = u.searchParams.get("fallback");
+      if (fb) return fb;
+    } catch { /* fallthrough */ }
+  }
+  return raw;
+};
 for (const g of groups) {
   for (const [key, url] of Object.entries(g.table || {})) {
-    if (!url || typeof url !== 'string' || !url.startsWith(base)) continue;
-    items.push({ group: g.label, key, url, rel: url.slice(base.length + 1) });
+    const real = downloadUrlOf(url);
+    if (!real || typeof real !== 'string' || !/^https:\/\//.test(real)) continue;
+    items.push({ group: g.label, key, url: real, rel: real.slice(base.length + 1) });
   }
 }
 if (!items.length) {

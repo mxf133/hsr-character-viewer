@@ -1988,7 +1988,7 @@ if (!tipTarget) {
   // 三条**跟着数据走**的：① 里的整包金数、⑤ 里的版本窗口「7」（出了新版本自己往前滚）、
   // 以及上面那条「表现」（判据线来自数据集）。
   const NOTE_RE = [
-    /^整包 = 角色 \+ 星魂档 \+ 光锥（含叠影）；整包自身 \d+ 金按「该角色最便宜 ÷ 本整包」折成系数。$/,
+    /^整包 = 角色 \+ 星魂档 \+ 光锥（含叠影）；整包自身 \d+ 金按「该角色最便宜 \/ 本整包」折成系数。$/,
     // ⚠️ 比例与版数都**跟着数据走**（2026-10-12 第 5 条把窗口从 7 版收到 3 版，
     // `VERSION_WEIGHTS` 也随之从 2:2:2:1:1:1:1 变成 2:2:2；2026-10-14 用户又改成
     // `3:2.5:2:1.5:1:0.5`），所以正则只能钉形状。
@@ -3129,9 +3129,12 @@ if (teamPlanProbe.missing) {
     console.log(`  ${stepOk ? '✓' : '✗'} 补金顺序：**已拥有**的角色写「E1→E2」、没拥有才写「本体 / 本体+E1」`
       + `（用户 2026-10-11 报的「我已有遐蝶」），全文不出现抽数（${noPulls ? '✓' : '✗'}）`
       + `（首条 ${JSON.stringify(teamPlanProbe.rows[0]?.fillSteps || [])}）`);
-    const capOk = teamPlanProbe.cards <= 15;
+    // ⚠️ 2026-10-18：这条判据从「≤ 15 张」改成「**正好一页 20 张**」——用户把
+    //    「只显示前 15 条」换成了「尽可能多 + 每页 20」（分页行为见下面那一节真点击）。
+    const planTotal = Number((String(teamPlanProbe.meta).match(/共 (\d+) 条/) || [])[1]) || 0;
+    const capOk = teamPlanProbe.cards === Math.min(20, planTotal || 20);
     if (!capOk) failures += 1;
-    console.log(`  ${capOk ? '✓' : '✗'} 只列前 15 条补金建议（实测 ${teamPlanProbe.cards} 张）`);
+    console.log(`  ${capOk ? '✓' : '✗'} 每页正好 20 张卡（实测 ${teamPlanProbe.cards} 张 / 候选 ${planTotal} 条）`);
     // ---- 用户 2026-10-11 第 7、8 条（界面） ----------------------------------------
     //   ⑦ 需要补多笔的卡片上要有「过渡：先补前 k 笔（N 金）→ …，再补 M 金到本方案」那一行；
     //   ⑧ 点「补金推荐分」徽标 → 打开详情窗口，里面有分数的来源（刻度表）与次选配队。
@@ -3345,6 +3348,197 @@ if (teamPlanProbe.missing) {
 // 是满的 —— 于是切到 E0/E1/E2/E6 再点开详情，表里只剩一行。
 // 修法：点开时按需取 `/api/archive/packs?char=`（与「该角色的全部配队」同一份缓存）
 // 把整包的全部关卡补回来（`advice-view.js` 的 `enrichTierDetail()`）。
+// ---- 分页 + 两个搜索框（用户 2026-10-18）------------------------------------
+//
+// 用户原话：「目前抽卡方案仅提供了 15 个配队，我希望改为提供尽可能多的配队，为此可以进行
+// 分页显示配队，每页显示 20 个配队；为角色总榜和抽卡方案添加 2 个搜索框，能够根据角色或
+// 光锥名称进行搜索」。这一节**真点**：翻三页（下一页 / 末页 / 回首页）、两个搜索框各敲一次。
+//
+// ⚠️ 为什么还要在真浏览器里验：分页/搜索的算术有 `tools/paging-test.mjs`（离线 40 项），
+//    但「点了按钮到底有没有换一批卡」「敲字后有没有真的筛」只有真 DOM 能回答。
+// ⚠️ 本段里包着 `evaluate(...)` 的模板字符串，**注释里不能出现反引号**、内层不能用
+//    `${...}`（HANDOFF §6.1 第 16 条）——内层一律单引号 + 字符串拼接。
+console.log('\n▶ 抽卡方案分页 / 两个搜索框（2026-10-18）');
+const pagingProbe = await evaluate(`(async () => {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const cards = () => [ ...document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team') ];
+  const rankOf = (c) => ((c && c.querySelector('.advice-unit-rank')?.textContent) || '').trim();
+  const pager = document.getElementById('adviceTeamPlanPager');
+  const pagerBottom = document.getElementById('adviceTeamPlanPagerBottom');
+  const btn = (label) => [ ...((pager && pager.querySelectorAll('.advice-page-btn')) || []) ]
+    .find((b) => b.textContent === label);
+  const snap = () => {
+    const list = cards();
+    const bar = document.querySelector('.advice-plan-toolbar');
+    const search = document.getElementById('adviceTeamPlanSearch');
+    const br = bar ? bar.getBoundingClientRect() : null;
+    const sr = search ? search.getBoundingClientRect() : null;
+    const pr = pager ? pager.getBoundingClientRect() : null;
+    return {
+      cards: list.length,
+      first: rankOf(list[0]),
+      last: rankOf(list[list.length - 1]),
+      meta: document.getElementById('adviceTeamPlanMeta')?.textContent || '',
+      count: pager?.querySelector('.advice-page-count')?.textContent || '',
+      buttons: [ ...((pager && pager.querySelectorAll('.advice-page-btn')) || []) ].map((b) => b.textContent),
+      // 省略号是 span（不是按钮），单独收一份 —— 只数按钮会以为窗口里没有跳段。
+      gaps: [ ...((pager && pager.querySelectorAll('.advice-page-gap')) || []) ].map((s) => s.textContent),
+      active: pager?.querySelector('.advice-page-btn.is-active')?.textContent || '',
+      hidden: [ Boolean(pager && pager.hidden), Boolean(pagerBottom && pagerBottom.hidden) ],
+      geom: (br && sr) ? {
+        searchWidth: Math.round(sr.width),
+        pagerVisible: Boolean(pr && pr.width > 0),
+        pagerInToolbar: Boolean(pr && br && pr.top >= br.top - 1 && pr.bottom <= br.bottom + 1),
+        dy: pr ? Math.round(Math.abs((sr.top + sr.height / 2) - (pr.top + pr.height / 2))) : null,
+        overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        toolbarTop: Math.round(br.top),
+        bodyTop: Math.round(document.getElementById('adviceTeamPlanBody').getBoundingClientRect().top),
+      } : null,
+    };
+  };
+  const first = snap();
+  if (btn('›')) btn('›').click();
+  await wait(450);
+  const second = snap();
+  if (btn('»')) btn('»').click();
+  await wait(450);
+  const last = snap();
+  if (btn('«')) btn('«').click();
+  await wait(450);
+  const back = snap();
+  return { first, second, last, back };
+})()`);
+if (pagingProbe?.first) {
+  const total = Number((String(pagingProbe.first.meta).match(/共 (\d+) 条/) || [])[1]) || 0;
+  const pages = Number((String(pagingProbe.first.count).match(/第 \d+\/(\d+) 页/) || [])[1]) || 0;
+  const lastPageCards = total - (pages - 1) * 20;
+  const sizeOk = total > 20 && pages === Math.ceil(total / 20)
+    && pagingProbe.first.cards === 20
+    && pagingProbe.first.hidden.join() === 'false,false';
+  if (!sizeOk) failures += 1;
+  console.log(`  ${sizeOk ? '✓' : '✗'} 整池下发 + 每页 20 支（候选 ${total} 支 → ${pages} 页；`
+    + `本页 ${pagingProbe.first.cards} 张）｜上下翻页条都显示 ${pagingProbe.first.hidden.join('/')}`);
+  // 页码窗口：首末页 + 当前 ±2 + 省略号；首屏必须看得见 1 / 2 / 3 / 末页。
+  const firstButtons = pagingProbe.first.buttons;
+  const pagerOk = firstButtons[0] === '«' && firstButtons[1] === '‹'
+    && firstButtons[firstButtons.length - 2] === '›' && firstButtons[firstButtons.length - 1] === '»'
+    && firstButtons.includes('1') && firstButtons.includes('2') && firstButtons.includes('3')
+    && firstButtons.includes(String(pages))
+    && pagingProbe.first.gaps.includes('…');
+  if (!pagerOk) failures += 1;
+  console.log(`  ${pagerOk ? '✓' : '✗'} 翻页条形状（首末页 + 当前 ±2 + 省略号）：`
+    + `[${firstButtons.join(' ')}] 跳段 ${JSON.stringify(pagingProbe.first.gaps)}｜计数「${pagingProbe.first.count}」`);
+  // 「第 1–20 条 / 共 N 条」必须在状态行里：不然「一页 20 条」看不出是全量的哪一段。
+  const rangeOk = /第 1–20 条 \/ 共 \d+ 条/.test(pagingProbe.first.meta);
+  if (!rangeOk) failures += 1;
+  console.log(`  ${rangeOk ? '✓' : '✗'} 状态行写明这一页是哪一段：「${pagingProbe.first.meta}」`);
+  // 下一页：名次从 #1 变 #21（**全局**名次，不是页内 1 起）。
+  const secondOk = pagingProbe.second.cards === 20 && pagingProbe.second.first === '#21'
+    && pagingProbe.second.active === '2'
+    && new RegExp('第 21–40 条 / 共 ' + total + ' 条').test(pagingProbe.second.meta);
+  if (!secondOk) failures += 1;
+  console.log(`  ${secondOk ? '✓' : '✗'} 点「下一页」：${pagingProbe.second.cards} 张、`
+    + `首张 ${pagingProbe.second.first}、当前页 ${pagingProbe.second.active}`
+    + `（状态行「${pagingProbe.second.meta}」）`);
+  // 末页：条数 = 总数 − (页数−1)×20（286 → 6），最后一张的名次 = 总数。
+  const lastOk = pagingProbe.last.cards === lastPageCards
+    && pagingProbe.last.last === '#' + total && pagingProbe.last.active === String(pages);
+  if (!lastOk) failures += 1;
+  console.log(`  ${lastOk ? '✓' : '✗'} 点「最后一页」：${pagingProbe.last.cards} 张`
+    + `（应为 ${lastPageCards}）、末张 ${pagingProbe.last.last}、当前页 ${pagingProbe.last.active}`);
+  // 回首页：名次重新从 #1 开始。
+  const backOk = pagingProbe.back.first === '#1' && pagingProbe.back.active === '1'
+    && pagingProbe.back.cards === 20;
+  if (!backOk) failures += 1;
+  console.log(`  ${backOk ? '✓' : '✗'} 点「第一页」回到 ${pagingProbe.back.first}（${pagingProbe.back.cards} 张）`);
+  // 几何：搜索框可用、翻页条与它在同一行、**没有把页面撑出横向滚动**。
+  const g = pagingProbe.first.geom || {};
+  const geomOk = Number(g.searchWidth) >= 120 && g.pagerVisible && g.pagerInToolbar
+    && Math.abs(Number(g.dy) || 0) <= 14 && Number(g.overflowX) <= 1
+    && Number(g.toolbarTop) < Number(g.bodyTop);
+  if (!geomOk) failures += 1;
+  console.log(`  ${geomOk ? '✓' : '✗'} 工具条几何：搜索框 ${g.searchWidth}px、翻页条同一行（dy=${g.dy}px）、`
+    + `在列表上方 ${Number(g.bodyTop) - Number(g.toolbarTop)}px、横向溢出 ${g.overflowX}px`);
+
+  // ---- 抽卡方案的搜索框：敲第一张卡里的角色名 → 只剩含这个角色的队伍 --------------
+  const planSearch = await evaluate(`(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const input = document.getElementById('adviceTeamPlanSearch');
+    const cards = () => [ ...document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team') ];
+    const chars = () => [ ...document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team-char') ];
+    const target = (chars()[0]?.textContent || '').trim();
+    const type = async (value) => {
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(320);
+    };
+    await type(target);
+    const list = cards();
+    const hit = {
+      target,
+      cards: list.length,
+      allContain: Boolean(target) && list.every((c) => (c.textContent || '').includes(target)),
+      meta: document.getElementById('adviceTeamPlanMeta')?.textContent || '',
+      count: document.getElementById('adviceTeamPlanPager')?.querySelector('.advice-page-count')?.textContent || '',
+    };
+    await type('');
+    return { hit, cleared: { cards: cards().length, value: input.value } };
+  })()`);
+  const hit = planSearch?.hit || {};
+  const hits = Number((String(hit.meta).match(/命中 (\d+) 支/) || [])[1]) || 0;
+  const planSearchOk = Boolean(hit.target) && hits > 0 && hit.allContain
+    && hit.cards === Math.min(20, hits)
+    && String(hit.meta).includes('搜索「' + hit.target + '」');
+  if (!planSearchOk) failures += 1;
+  console.log(`  ${planSearchOk ? '✓' : '✗'} 方案搜索「${hit.target}」：命中 ${hits} 支，`
+    + `这一页 ${hit.cards} 张、**每张都含**这个角色 ${hit.allContain ? '✓' : '✗'}`
+    + `（状态行「${hit.meta}」）`);
+  const planClearOk = planSearch?.cleared?.cards === 20 && planSearch?.cleared?.value === '';
+  if (!planClearOk) failures += 1;
+  console.log(`  ${planClearOk ? '✓' : '✗'} 清空方案搜索后回到 20 张（实测 ${planSearch?.cleared?.cards} 张）`);
+
+  // ---- 角色总榜的搜索框：只输前两个字（验「不是前缀限定」）------------------------
+  const unitSearch = await evaluate(`(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const input = document.getElementById('adviceUnitSearch');
+    const rows = () => [ ...document.querySelectorAll('#adviceConclusionUnits .advice-unit') ];
+    const before = rows().length;
+    const firstName = (rows()[0]?.querySelector('.advice-unit-name')?.textContent || '').trim();
+    const target = firstName.slice(0, 2);
+    const type = async (value) => {
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(320);
+    };
+    await type(target);
+    const list = rows();
+    const hit = {
+      target,
+      rows: list.length,
+      allContain: Boolean(target) && list.every((r) => (r.textContent || '').includes(target)),
+      meta: document.getElementById('adviceUnitMeta')?.textContent || '',
+      overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    };
+    await type('');
+    return { before, firstName, hit, after: rows().length };
+  })()`);
+  const uh = unitSearch?.hit || {};
+  const uhHits = Number((String(uh.meta).match(/命中 (\d+) 条/) || [])[1]) || 0;
+  const unitSearchOk = Boolean(uh.target) && uhHits > 0 && uhHits < Number(unitSearch?.before)
+    && uh.allContain && uh.rows === Math.min(uhHits, 80)
+    && String(uh.meta).includes('搜索「' + uh.target + '」命中');
+  if (!unitSearchOk) failures += 1;
+  console.log(`  ${unitSearchOk ? '✓' : '✗'} 总榜搜索「${uh.target}」（「${unitSearch?.firstName}」的前两字）：`
+    + `${unitSearch?.before} 行 → 命中 ${uhHits} 行、渲染 ${uh.rows} 行、每行都含这两个字 `
+    + `${uh.allContain ? '✓' : '✗'}｜横向溢出 ${uh.overflowX}px`);
+  const unitClearOk = unitSearch?.after === unitSearch?.before && uh.overflowX <= 1;
+  if (!unitClearOk) failures += 1;
+  console.log(`  ${unitClearOk ? '✓' : '✗'} 清空总榜搜索后行数还原（${unitSearch?.after} / ${unitSearch?.before}）`);
+} else {
+  // 没渲染出卡片（未登录 / 空账号）时这一节整体跳过，不算失败 —— 与其余「环境缺东西」同规矩。
+  console.log('  – 分页 / 搜索：跳过（页面上没有队伍方案卡片）');
+}
+
 console.log('\n▶ 逐档榜的详情页必须显示全部关卡（用户 2026-10-11 报过「只显示一种关卡」）');
 let tierTipRows = 0;
 let tierTipUnit = '?';

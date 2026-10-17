@@ -2598,6 +2598,95 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   border-color: rgba(111, 211, 232, 0.55);
   background: rgba(111, 211, 232, 0.12);
 }
+/* 工具条右侧那一组：搜索框 + 状态行（用户 2026-10-18 加了搜索框）。
+   `margin-left: auto` 让它在 `justify-content: space-between` 之外仍然靠右贴齐 ——
+   工具条现在是「筛选 chips | 搜索 + 状态」两段，中间那段空白不该吃掉状态行的宽度。 */
+.advice-unit-toolbar-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-left: auto;
+  min-width: 0;
+}
+/* 两个搜索框（角色总榜 / 抽卡方案）共用一套外观：与 `.advice-filter` 同一族的胶囊形，
+   高度对齐，并排放时不会一高一低。 */
+.advice-search-input {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 12px;
+  width: 200px;
+  max-width: 100%;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.advice-search-input::placeholder { color: var(--text-muted); }
+.advice-search-input:focus {
+  outline: none;
+  border-color: rgba(111, 211, 232, 0.6);
+  box-shadow: 0 0 0 3px rgba(103, 232, 249, 0.12);
+}
+/* `type=search` 自带的那颗清除按钮（×）在深色底上是黑的、等于看不见。
+   ⚠️ 不能直接 `appearance: none` 把它去掉 —— 那颗按钮是搜索框唯一的「一键清空」入口
+   （ESC 只是键盘用户的习惯，鼠标用户不会去猜）。所以保留它、只做反色。 */
+.advice-search-input::-webkit-search-cancel-button {
+  filter: invert(1);
+  opacity: 0.55;
+  cursor: pointer;
+}
+.advice-search-input::-webkit-search-cancel-button:hover { opacity: 0.9; }
+
+/* 抽卡方案的工具条（搜索 + 翻页，用户 2026-10-18）。搜索框在左、翻页条在右。 */
+.advice-plan-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin: 4px 0 10px;
+}
+/* 翻页条：上下各一条，同一套外观。只有一页时由 JS 打上 `hidden`（`[hidden]` 有
+   `display: none !important`，不会被这里的 `display: flex` 顶掉）。 */
+.advice-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 10px;
+}
+.advice-plan-toolbar .advice-pager { margin: 0; }
+.advice-page-btn {
+  font: inherit;
+  font-size: 12px;
+  min-width: 26px;
+  padding: 3px 8px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+.advice-page-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: rgba(111, 211, 232, 0.5);
+}
+.advice-page-btn.is-active {
+  color: var(--cyan);
+  border-color: rgba(111, 211, 232, 0.55);
+  background: rgba(111, 211, 232, 0.12);
+}
+.advice-page-btn:disabled { opacity: 0.38; cursor: default; }
+.advice-page-gap { color: var(--text-muted); padding: 0 2px; }
+.advice-page-count { margin-left: 4px; font-size: 11.5px; color: var(--text-dim); }
+/* 窄屏：一行放不下「搜索 + 翻页 + 计数」时，翻页条换到下一行并左对齐。 */
+@media (max-width: 720px) {
+  .advice-plan-toolbar { justify-content: flex-start; }
+  .advice-search-input { width: 100%; }
+}
 
 /* ② 抽卡方案（**队伍口径**，用户 2026-10-11 第 10 轮）：一支队伍一张卡。
    ⚠️ 类名一律带 `plan` 前缀（`advice-plan-team-*`）：`advice-team-*` 已经被浮层里的
