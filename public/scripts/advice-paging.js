@@ -31,12 +31,39 @@ export const searchTextOf = (names) => (Array.isArray(names) ? names : [names])
   .toLowerCase();
 
 /**
- * 这一行是否命中搜索词（`query` 必须是 `queryOf()` 的结果）。
+ * 这一行是否命中搜索词。
  *
  * 子串匹配（`includes`）而不是前缀匹配：用户常常只记得名字的中间一段
  * （「流萤」「Firefly」「专锥」），前缀匹配会让「我记得后半截」的使用者搜不到。
+ *
+ * ⚠️ **多关键词 = AND**（用户 2026-10-18：「搜索框应当支持多个关键词或者多个角色/光锥
+ *    的搜索，给出**同时包含**这些词的搜索结果」）。`query` 传数组或带分隔符的字符串
+ *    都行，逐个 term 都命中才算命中（`every`）。
+ *    为什么是 AND 而不是 OR：「流萤 银狼」要的是「**这两个都有**的队伍」，OR 会把
+ *    「只有流萤」和「只有银狼」全倒出来，等于没筛。
+ *    传字符串时按 `queryTermsOf()` 拆 —— 中文里没有词边界，只能靠分隔符。
  */
-export const matchesQuery = (text, query) => !query || String(text ?? '').includes(query);
+export const matchesQuery = (text, query) => {
+  const terms = Array.isArray(query) ? query.filter(Boolean) : queryTermsOf(query);
+  if (!terms.length) return true;
+  const hay = String(text ?? '');
+  return terms.every((term) => hay.includes(term));
+};
+
+/**
+ * 把输入框那一串拆成**若干个关键词**（用户 2026-10-18 的多关键词搜索）。
+ *
+ * 分隔符取「空白 + 中英文逗号 + 顿号 + 加号 + 竖线」：`流萤 银狼`、`流萤,银狼`、
+ * `流萤，银狼`、`流萤+银狼`、`流萤|银狼` 都认。中文输入法下用户最常敲的是**空格**
+ * （选字候选之间就是空格），所以空格必须是最主要的分隔符。
+ *
+ * ⚠️ 每个 term 各自 `toLowerCase()`，所以「Firefly 银狼」与「firefly 银狼」等价。
+ * ⚠️ 连续分隔符产生空段，全部丢掉（`  流萤  ` → `['流萤']`），空数组 = 不过滤。
+ */
+export const queryTermsOf = (value) => String(value ?? '')
+  .toLowerCase()
+  .split(/[\s,，、+|]+/)
+  .filter(Boolean);
 
 /** 总页数。**至少 1 页**：结果为空时翻页条也要能算出「第 1/1 页」，而不是 0。 */
 export const pageCountOf = (total, pageSize) => {

@@ -13,8 +13,8 @@
 //   ③ 页码越界要夹回（搜索把结果缩短后不能停在空页上）；
 //   ④ 翻页条窗口：首末页恒在、当前页 ±2、跳段用省略号，格子数不随池子长大。
 import {
-  clampPage, matchesQuery, pageCountOf, pageSliceOf, pageWindowOf, queryOf, searchTextOf,
-  withRealRank,
+  clampPage, matchesQuery, pageCountOf, pageSliceOf, pageWindowOf, queryOf, queryTermsOf,
+  searchTextOf, withRealRank,
 } from '../public/scripts/advice-paging.js';
 
 let passed = 0;
@@ -122,6 +122,34 @@ eq('翻页后再标名次仍然对得上',
 // 未知行 → 0（保留而不是丢弃，便于排查「列表对不上」）。
 eq('不在完整列表里的行给 0', withRealRank(BOARD, [{ key: 'nope' }], (r) => r.key)[0].rank, 0);
 eq('空结果不炸', withRealRank(BOARD, [], (r) => r.key), []);
+
+// ---- ⑥ 多关键词 AND 搜索（用户 2026-10-18）------------------------------------
+//
+// 用户原话：「搜索框应当支持多个关键词或者多个角色/光锥的搜索，给出同时包含这些词的
+// 搜索结果」。关键是「**同时包含**」= AND，不是 OR。
+console.log('\n[多关键词 — AND]');
+const TEAM = searchTextOf(['流萤', 'Firefly', '银狼', 'SilverWolf', '银狼专锥']);
+eq('空格分隔 → 两个词', queryTermsOf('流萤 银狼'), ['流萤', '银狼']);
+eq('半角逗号分隔', queryTermsOf('流萤,银狼'), ['流萤', '银狼']);
+eq('全角逗号分隔', queryTermsOf('流萤，银狼'), ['流萤', '银狼']);
+eq('顿号分隔', queryTermsOf('流萤、银狼'), ['流萤', '银狼']);
+eq('加号分隔', queryTermsOf('流萤+银狼'), ['流萤', '银狼']);
+eq('混合分隔符 + 多余空白', queryTermsOf(' 流萤 ， 银狼、  '), ['流萤', '银狼']);
+eq('英文大小写归一', queryTermsOf('Firefly silverwolf'), ['firefly', 'silverwolf']);
+eq('只有分隔符 → 空数组（= 不过滤）', queryTermsOf('  , 、 '), []);
+
+check('两个词都在 → 命中', matchesQuery(TEAM, '流萤 银狼'));
+check('AND：只中一个词 → 不命中（不是 OR）', !matchesQuery(TEAM, '流萤 黄泉'));
+check('AND：顺序无关', matchesQuery(TEAM, '银狼 流萤'));
+check('角色 + 光锥可以混着搜', matchesQuery(TEAM, '流萤 银狼专锥'));
+check('中英混写（大小写无关）', matchesQuery(TEAM, 'Firefly SilverWolf'));
+check('三个词全中', matchesQuery(TEAM, '流萤 firefly 银狼'));
+check('数组形式等价于字符串形式',
+  matchesQuery(TEAM, ['流萤', '银狼']) === matchesQuery(TEAM, '流萤 银狼'));
+check('空搜索词 = 全部命中', matchesQuery(TEAM, '') && matchesQuery(TEAM, '   '));
+// 「同时包含」必须是**逐词**判据，不是「整串连续出现」：这条最容易被写成 includes(整串)。
+check('两个词不必相邻（逐词各命中即可）',
+  matchesQuery(searchTextOf(['流萤', '银狼', '黄泉']), '流萤 黄泉'));
 
 // ---- 汇总 -------------------------------------------------------------------
 console.log(`\n分页与搜索检查: ${passed} passed, ${failed} failed`);

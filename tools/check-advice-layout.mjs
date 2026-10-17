@@ -3612,6 +3612,73 @@ if (pagingProbe?.first) {
   const unitClearOk = unitSearch?.after === unitSearch?.before && uh.overflowX <= 1;
   if (!unitClearOk) failures += 1;
   console.log(`  ${unitClearOk ? '✓' : '✗'} 清空总榜搜索后行数还原（${unitSearch?.after} / ${unitSearch?.before}）`);
+
+  // ---- 多关键词「同时包含」（用户 2026-10-18）--------------------------------------
+  //
+  // 原话：「搜索框应当支持多个关键词或者多个角色/光锥的搜索，给出**同时包含**这些词的
+  // 搜索结果」。所以要验的是 AND 语义：敲 `A B` 之后，**每一张**留下的卡都必须同时含 A 和 B。
+  //
+  // 怎么造词才稳：从**同一张卡**上取两个成员（它们必然同时出现在这张卡里），于是
+  // 「A B」至少有这一张命中；再用「只含 A 不含 B」的另一个词做反向对照，验它被滤掉。
+  const multi = await evaluate(`(async () => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const input = document.getElementById('adviceTeamPlanSearch');
+    const cards = () => [ ...document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team') ];
+    const members = (c) => [ ...new Set([ ...c.querySelectorAll('.advice-plan-team-char') ]
+      .map((n) => n.textContent.trim()).filter(Boolean)) ];
+    const type = async (value) => {
+      input.value = value;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await wait(340);
+    };
+    const first = cards()[0];
+    const [a, b] = members(first);
+    // 反向对照词：在全榜里找一个**只出现在部分队伍**里的名字（取第二张卡的成员多半与第一张不同）。
+    const other = members(cards()[1] || first).find((n) => n !== a && n !== b) || '';
+    const read = () => {
+      const list = cards();
+      return {
+        cards: list.length,
+        allA: list.every((c) => (c.textContent || '').includes(a)),
+        allB: list.every((c) => (c.textContent || '').includes(b)),
+        meta: document.getElementById('adviceTeamPlanMeta')?.textContent || '',
+        ranks: list.map((c) => Number(((c.querySelector('.advice-unit-rank')?.textContent) || '').replace('#', ''))),
+      };
+    };
+    await type(a);
+    const onlyA = read();
+    await type(a + ' ' + b);
+    const both = read();
+    await type(a + ' ' + (other || '不存在的词xyz'));
+    const onlyAOther = read();
+    await type(a + ' ' + (other || '不存在的词xyz') + ' ' + b);
+    const allThree = read();
+    await type('');
+    return {
+      a, b, other,
+      onlyA, both, onlyAOther, allThree,
+      cleared: cards().length,
+    };
+  })()`);
+  const multiOk = Boolean(multi?.a && multi?.b) && multi.both.cards > 0
+    && multi.both.cards <= multi.onlyA.cards
+    && multi.both.allA && multi.both.allB
+    && String(multi.both.meta).includes('同时包含');
+  if (!multiOk) failures += 1;
+  console.log(`  ${multiOk ? '✓' : '✗'} 多关键词「${multi?.a} ${multi?.b}」**同时包含**（AND）：`
+    + `单搜 ${multi?.onlyA.cards} 张 → 双搜 ${multi?.both.cards} 张`
+    + `（结果每张都含「${multi?.a}」${multi?.both.allA ? '✓' : '✗'}、`
+    + `都含「${multi?.b}」${multi?.both.allB ? '✓' : '✗'}）｜状态行「${multi?.both.meta}」`);
+  // ⚠️ AND 的单调性必须在**同一组词上**加词来量：`A C` 的结果集必须**包含**
+  //    `A C B` 的结果集。之前我写成 `A + other`（换掉了 b）—— 那是**另一个查询**，
+  //    两者的条数本来就没有可比性（实测 1 张 vs 11 张，看着像 bug，其实是判据写错）。
+  const multiExtraOk = Boolean(multi?.other)
+    && multi.allThree.cards <= multi.onlyAOther.cards
+    && multi.allThree.allA && multi.allThree.allB;
+  if (!multiExtraOk) failures += 1;
+  console.log(`  ${multiExtraOk ? '✓' : '✗'} 在同一组词上加第三个「${multi?.b}」：`
+    + `「${multi?.a} ${multi?.other}」${multi?.onlyAOther.cards} 张 → `
+    + `加词后 ${multi?.allThree.cards} 张（只会更少，且仍每张都含前两个词）`);
 } else {
   // 没渲染出卡片（未登录 / 空账号）时这一节整体跳过，不算失败 —— 与其余「环境缺东西」同规矩。
   console.log('  – 分页 / 搜索：跳过（页面上没有队伍方案卡片）');

@@ -69,7 +69,8 @@ import {
 // —— 它们不碰 DOM、不碰评分，而「284 条是不是 15 页、最后一页几条、页码怎么夹」这类
 // 算术不该为了测它去起一次真浏览器（本机沙箱也起不来服务，见 docs/CDP布局套件.md §2.1）。
 import {
-  clampPage, matchesQuery, pageSliceOf, pageWindowOf, queryOf, searchTextOf, withRealRank,
+  clampPage, matchesQuery, pageSliceOf, pageWindowOf, queryOf, queryTermsOf, searchTextOf,
+  withRealRank,
 } from './advice-paging.js';
 import { renderRecordSection, wireRecordPanel } from './battle-record.js';
 import { accessHeaders, readAccessToken } from './access.js';
@@ -4737,8 +4738,12 @@ const renderTeamPlan = (conclusion) => {
   // 搜索只筛**这一批要展示的队伍**（不重算分数）：命中的队伍仍按补金推荐分排，
   // 名次沿用它在完整列表里的序号 —— 「我搜出来的这一支是第 12 名」要有意义。
   const query = queryOf(state.teamPlanQuery);
-  const matched = query
-    ? plan.rows.filter((row) => matchesQuery(haystacks.get(row), query))
+  // ⚠️ 2026-10-18：多关键词**同时包含**（AND）。`matchesQuery` 内部把整串拆成若干词
+  //    逐个判，所以这里传整串即可；用 `terms.length` 判空是为了让「只敲了分隔符」
+  //    （例如 `  ,  `）被当成「没搜索」而不是白跑一次 filter。
+  const terms = queryTermsOf(state.teamPlanQuery);
+  const matched = terms.length
+    ? plan.rows.filter((row) => matchesQuery(haystacks.get(row), terms))
     : plan.rows;
   // 页码越界（搜索把结果缩短了 / 换账号后池子变小）时夹回最后一页 —— 否则会停在空页上。
   // 这段算术在 `advice-paging.js`（`pageSliceOf` 一份实现，Node 直接测）。
@@ -4753,7 +4758,12 @@ const renderTeamPlan = (conclusion) => {
   //    `start + i + 1` 本身没错（没搜索时它就等于真名次），所以保留给状态行的「第几条」。
   const pageRanked = withRealRank(plan.rows, pageRows);
 
-  const hit = query ? ` · 搜索「${state.teamPlanQuery.trim()}」命中 ${matched.length} 支` : '';
+  // ⚠️ 状态行在多词时要把「**同时包含**」说出来（用户 2026-10-18）：只印
+  //    「搜索「A B」命中 24 支」的话，读者分不清是「名字里有 AB」还是「A 和 B 都要有」。
+  const hit = terms.length
+    ? ` · 搜索「${terms.join(' + ')}」${terms.length > 1 ? '（同时包含）' : ''}`
+      + `命中 ${matched.length} 支`
+    : '';
   const range = matched.length
     ? ` · 第 ${start + 1}–${start + pageRows.length} 条 / 共 ${matched.length} 条`
     : '';
@@ -4766,7 +4776,10 @@ const renderTeamPlan = (conclusion) => {
 
   if (!matched.length) {
     el.teamPlanBody.appendChild(text('p', 'muted small', query
-      ? `没有队伍包含「${state.teamPlanQuery.trim()}」这个角色或光锥。`
+      ? (terms.length > 1
+        ? `没有队伍**同时**包含「${terms.join(' + ')}」这些角色或光锥`
+          + `（多个关键词用空格分隔，结果要全都出现在同一支队伍里）。`
+        : `没有队伍包含「${state.teamPlanQuery.trim()}」这个角色或光锥。`)
         + '（搜索只在这批候选队伍里找 —— 想换人或换队，看上面的角色总榜。）'
       : '当前角色池下，角色总榜的候选池里没有「还需要补金」的队伍（能上榜的队伍你已经凑齐）。'));
     return;
@@ -5061,8 +5074,11 @@ const renderUnits = () => {
   // 做子串匹配。次序仍按榜面名次 —— 搜索结果不该自己重排，用户是在**找**某一项，
   // 而不是在比较它们。
   const query = queryOf(state.unitQuery);
-  const matched = query
-    ? list.filter((unit) => matchesQuery(unitSearchText(unit), query))
+  // ⚠️ 2026-10-18：多关键词**同时包含**（AND），与抽卡方案同一把尺子
+  //    （`matchesQuery` + `queryTermsOf` 都在 advice-paging.js）。
+  const terms = queryTermsOf(state.unitQuery);
+  const matched = terms.length
+    ? list.filter((unit) => matchesQuery(unitSearchText(unit), terms))
     : list;
   const filtered = matched.filter((unit) => !state.onlyMissing || ownedStateOf(unit) !== 'have');
   const rows = filtered.slice(0, UNIT_ROWS_MAX);
@@ -5078,7 +5094,10 @@ const renderUnits = () => {
       : `${tierNameOf(state.unitEidolon)} 档 ${list.length} 个角色各一条（它抽到这一档时最强的整包）`;
     // 搜索状态**必须印出来**：否则「榜上只剩 3 条」看着像数据丢了（搜索词在工具条里，
     // 而工具条可能已经滚出屏幕）。命中数按「搜索后、只筛匹配前」数 —— 那才是搜索的答案。
-    const hit = query ? `搜索「${state.unitQuery.trim()}」命中 ${matched.length} 条` : '';
+    // ⚠️ 同抽卡方案那边：多词要印「同时包含」，否则读者以为是在搜一个长名字。
+    const hit = terms.length
+      ? `搜索「${terms.join(' + ')}」${terms.length > 1 ? '（同时包含）' : ''}命中 ${matched.length} 条`
+      : '';
     const tail = rows.length < filtered.length
       ? `只显示前 ${rows.length} 条（${scope}，筛后 ${filtered.length} 条）`
       : (state.onlyMissing ? `${scope}，筛掉已有的后剩 ${filtered.length} 条` : scope);
@@ -5086,7 +5105,10 @@ const renderUnits = () => {
   }
   if (!rows.length) {
     el.conclusionUnits.appendChild(text('p', 'muted small',
-      query ? `当前星魂档里没有匹配「${state.unitQuery.trim()}」的角色或光锥。`
+      query ? (terms.length > 1
+        ? `当前星魂档里没有同时包含「${terms.join(' + ')}」的角色或光锥`
+          + '（多个关键词用空格分隔）。'
+        : `当前星魂档里没有匹配「${state.unitQuery.trim()}」的角色或光锥。`)
         : '当前筛选下没有条目。'));
     return;
   }

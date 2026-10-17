@@ -376,8 +376,9 @@
                    不重算分数。中英名与光锥名都认（见 advice-view.js 的 unitSearchText）。
                    `type="search"` 是为了那一颗自带的清除按钮。 -->
               <input id="adviceUnitSearch" class="advice-search-input" type="search"
-                     autocomplete="off" spellcheck="false" placeholder="搜索角色 / 光锥"
-                     aria-label="按角色或光锥名称搜索角色总榜">
+                     autocomplete="off" spellcheck="false"
+                     placeholder="搜索角色 / 光锥（空格分隔多个 = 都要有）"
+                     aria-label="按角色或光锥名称搜索角色总榜（多个关键词用空格分隔，结果需同时包含）">
               <span class="muted small" id="adviceUnitMeta"></span>
             </div>
           </div>
@@ -424,8 +425,8 @@
             <div id="adviceTeamPlanPager" class="advice-pager" hidden></div>
             <input id="adviceTeamPlanSearch" class="advice-search-input" type="search"
                    autocomplete="off" spellcheck="false"
-                   placeholder="搜索角色 / 光锥（在这批方案里筛）"
-                   aria-label="按角色或光锥名称搜索抽卡方案">
+                   placeholder="搜索角色 / 光锥（空格分隔多个 = 都要有）"
+                   aria-label="按角色或光锥名称搜索抽卡方案（多个关键词用空格分隔，结果需同时包含）">
           </div>
           <div id="adviceTeamPlanBody" class="advice-team-plan"></div>
           <div id="adviceTeamPlanPagerBottom" class="advice-pager" hidden></div>
