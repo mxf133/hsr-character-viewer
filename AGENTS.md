@@ -35,7 +35,7 @@ These are hard rules for every session (human and agent alike). This directory h
 | Login, signing, or Star Rail payload parsing | `src/mihoyo/` | `qr-poll-regression.mjs`, `api-wiring-test.mjs`, `hsr-parse-test.mjs`, or `devicefp-test.mjs` as applicable |
 | QR encoding/decoding | `src/qr/` | `qr-tables-check.mjs`, `qr-selftest.mjs` |
 | Windows startup scripts | `start.bat`, `bin/` | `launcher-test.mjs`, `launcher-open-test.mjs` |
-| Translation data | `theherta/i18n-zh.json`, `tools/data/hsr-bosses-zh.mjs` | `herta-i18n-check.mjs` |
+| Translation data | `theherta/i18n-zh.json`, `tools/data/hsr-bosses-zh.mjs` | `herta-i18n-check.mjs`（生成物）+ `i18n-audit.mjs`（源表 / 官方简中 / 全数据源） |
 
 Run one or more focused suites while iterating:
 

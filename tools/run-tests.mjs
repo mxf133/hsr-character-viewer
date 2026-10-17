@@ -52,6 +52,11 @@ const suites = [
   // 离线、读仓库内的真数据集，不联网。
   ['版本权重 → 抽卡方案（两条链同一份表）', 'version-weight-plan-test.mjs'],
   ['中文名称映射 (对照游戏内中文)', 'herta-i18n-check.mjs'],
+  // 译名体检的另一半（2026-10-18）：`herta-i18n-check.mjs` 只盯生成物 `i18n-zh.json`，
+  // 于是「首领译名源表 tools/data/hsr-bosses-zh.mjs 根本没进版本库、重建脚本直接崩」
+  // 这种事它看不出来。这一套盯上游：源表能不能复算出生成物、以及 archive.json
+  // **之外**那些同样会显示名字的数据源。离线；官方语言表缓存在 .snapref/ 时多跑一段。
+  ['译名体检 (源表 / 官方简中 / 全数据源)', 'i18n-audit.mjs'],
   // 「和 GitHub 上的最新发布比一比」（用户 2026-10-14 第 5 条）。**完全不联网**：
   // `fetchImpl` 是注入的，所以断网 / 被墙的机器照样跑，也不消耗 GitHub 匿名配额。
   ['版本检查（GitHub 最新发布比对）', 'update-check-test.mjs'],
