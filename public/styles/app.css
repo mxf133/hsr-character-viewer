@@ -3921,25 +3921,32 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
       金色（5★）/ 紫色（4★）/ 蓝色（3★）区分，与角色卡左侧星级色条同一套语义。
    ========================================================================== */
 
-/* 光锥行：紧跟在星级/Lv/星魂 tags 下面，一条独立的细行。左对齐、图标与文字基线对齐。 */
+/* 光锥行：紧跟在星级/Lv/星魂 tags 下面的**一个整框小卡片**（用户 2026-10-18：
+   「这个光锥的框应当把图片、名称、叠影，都一起框到，这样更美观」）——
+   图标、名字、叠影装进同一个圆角框里，框线与底色随星级变色。
+   ⚠️ inline-flex 而不是 flex：框**按内容收缩**（药丸形），而不是占满整行；
+   max-width: 100% 兜住超长光锥名，让省略号仍然生效。 */
 .char-cone {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   margin-top: 9px;
-  padding-top: 8px;
-  border-top: 1px dashed rgba(120, 150, 220, 0.14);
+  padding: 4px 11px 4px 5px;
+  border: 1px solid var(--cone-border, rgba(120, 150, 220, 0.20));
+  border-radius: 8px;
+  background: var(--cone-bg, rgba(255, 255, 255, 0.03));
   min-width: 0;
+  max-width: 100%;
   font-size: 12px;
 }
-/* 光锥图标：小方图（光锥是竖长方卡面，缩成小尺寸方角），带星级色描边。 */
+/* 光锥图标：小方图（光锥是竖长方卡面，缩成小尺寸方角）。框线已经带了星级色，
+   图标自己不再描一圈，避免「框里再框」的双层边框。 */
 .char-cone-icon {
   width: 22px;
   height: 22px;
   flex: none;
   object-fit: cover;
   border-radius: 5px;
-  border: 1px solid var(--cone-color, var(--border-strong));
   background: rgba(0, 0, 0, 0.3);
 }
 /* 光锥名：与星级同色，突出「这是一把几星的锥」。溢出省略，不撑破卡片。 */
@@ -3960,7 +3967,20 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
   white-space: nowrap;
 }
 /* 星级三色：金（5★）/ 紫（4★）/ 蓝（3★）。与 format.js 的 rarityColor()（--r5/--r4/--r3）
-   同源取值，只是这里作用到光锥行的图标描边与名字颜色上。 */
-.char-cone[data-rarity="5"] { --cone-color: var(--r5); }
-.char-cone[data-rarity="4"] { --cone-color: var(--r4); }
-.char-cone[data-rarity="3"] { --cone-color: var(--r3); }
+   同源取值：名字用实色，框线与底色用同一 hue 的半透明（改前用 color-mix，考虑老内核
+   兼容直接写死 rgba，色值与 --r5/--r4/--r3 一一对应）。 */
+.char-cone[data-rarity="5"] {
+  --cone-color: var(--r5);
+  --cone-border: rgba(240, 169, 44, 0.45);
+  --cone-bg: rgba(240, 169, 44, 0.07);
+}
+.char-cone[data-rarity="4"] {
+  --cone-color: var(--r4);
+  --cone-border: rgba(169, 124, 224, 0.45);
+  --cone-bg: rgba(169, 124, 224, 0.07);
+}
+.char-cone[data-rarity="3"] {
+  --cone-color: var(--r3);
+  --cone-border: rgba(91, 155, 213, 0.45);
+  --cone-bg: rgba(91, 155, 213, 0.07);
+}
