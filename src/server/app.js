@@ -7,6 +7,7 @@
 //   * optional shared-secret gate via DSH_HSR_TOKEN for LAN use.
 
 import { createServer } from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -99,12 +100,20 @@ const rosterFromSnapshot = (snapshot, i18n) => {
 };
 
 const json = (res, status, payload) => {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
+  const raw = JSON.stringify(payload);
+  const rawBuf = Buffer.from(raw);
+  // HTTP gzip：大载荷（如 allTeams 全队伍表）压到 ~8% 体积（实测 826 KB → 70 KB）。
+  // 用 res.req 拿 Accept-Encoding，不必改 88 个 json() 调用点。
+  const accept = String(res.req?.headers?.['accept-encoding'] || '').toLowerCase();
+  const canGzip = accept.includes('gzip') && rawBuf.length > 1024;
+  const body = canGzip ? gzipSync(rawBuf) : rawBuf;
+  const headers = {
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body),
+    'Content-Length': body.length,
     'Cache-Control': 'no-store',
-  });
+  };
+  if (canGzip) headers['Content-Encoding'] = 'gzip';
+  res.writeHead(status, headers);
   res.end(body);
 };
 
@@ -438,6 +447,35 @@ export const createApp = (options = {}) => {
       // `return` 了，那份永远执行不到（纯死代码，且会让人以为两处都要维护）。
 
       // 把自己队伍丢进榜单里比一比：只回传命中的那几行，不把整个池子发给浏览器。
+      // 全部有通关记录的队伍（用户 2026-10-18：候选池放宽到「全部队伍」，配合前端
+      // 搜索/分页捞回「强但非性价比最优」的组队）。独立接口 + HTTP gzip（826 KB → ~70 KB），
+      // 不进 /conclusion（那有 660 KB 硬上限）。
+      if (path === '/api/archive/teams' && req.method === 'GET') {
+        try {
+          if (!(await archiveExists())) {
+            json(res, 200, { ok: true, available: false, allTeams: [],
+              hint: '尚未采集资料。请在项目目录运行：node tools/herta-fetch.mjs && node tools/herta-build.mjs' });
+            return;
+          }
+          const versionWeights = JSON.parse(url.searchParams.get('versionWeights') || 'null');
+          const result = await archiveConclusion({ owned: [], eidolons: {}, cones: {} }, {
+            versionWeights: Array.isArray(versionWeights) ? versionWeights : undefined,
+            includeAllTeams: true,
+          });
+          // 只回 allTeams + 视频字典，其余结论字段不重复下发。
+          json(res, 200, {
+            ok: true,
+            available: true,
+            allTeams: result.allTeams || [],
+            videos: result.allTeamVideos || [],
+          });
+        } catch (err) {
+          console.warn('[archive] 读取全队伍列表失败：', err.message);
+          json(res, 200, { ok: true, available: false, allTeams: [], detail: err.message });
+        }
+        return;
+      }
+
       if (path === '/api/archive/compare' && (req.method === 'POST' || req.method === 'GET')) {
         const unavailable = {
           ok: true,

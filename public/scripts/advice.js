@@ -559,6 +559,26 @@ export const metricValueText = (mode, stage, raw) => {
 };
 
 /**
+ * **单条证据**的成绩写法（带单位）：`0T` / `积分 4000` / `行动值 289`。
+ *
+ * 入参是数据集**内部值**（统一「越小越好」方向）：
+ *   - 混沌回忆 / 虚构叙事 / 王棋和骑士关：内部 av = 轮次；
+ *   - 末日幻影：内部 av = 4000 − 积分；
+ *   - 异相仲裁 · 绝境王棋关：内部 av = 行动值。
+ *
+ * 与 `metricShortText()` 的区别：本函数**带上量纲单位**，用在卡片上只有这一处数字、
+ * 不写单位读者分不清是分/轮/行动值的地方（用户 2026-10-18：末日幻影写具体积分，
+ * 轮次制关卡不许写「0 行动值」）。
+ */
+export const metricValueTextOf = (mode, stage, av) => {
+  if (!Number.isFinite(av)) return '';
+  if (mode === 'as') return `积分 ${formatAv(Math.round(4000 - av))}`;
+  if (stage === 'plight') return `行动值 ${formatAv(av)}`;
+  return `${formatAv(av)}T`;
+};
+
+
+/**
  * 阵容卡上的主指标：`平均 0T` / `平均积分 3940` / `平均行动值 289`。
  * 入参是 `avgAv`（末日幻影已换算成 4000 − 积分）。
  */
@@ -3023,6 +3043,61 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
         }
       }
     }
+    // ---- 「全部有通关记录的队伍」并进候选池（用户 2026-10-18）----------------
+    //
+    // 用户报：「抽卡推荐没有推荐我抽取同时包含长夜月E2、昔涟E2、风堇E2，但不包含遐蝶的
+    // 队伍，这是我账号上最强的配队」。根因是逐档榜 / 总榜对每个整包只留「性价比最优」
+    // 那一支代表，强但非性价比最优的组队被收敛丢了。这里把 /api/archive/teams 下发的
+    // 全量队伍（4113 支，极简字段 { m: 成员[], a: [[副本id, 行动值, 版本, 档位], …] }）并进本池，
+    // 与 avTeams 同一套评分路径（行动值 → 两档规则 → 副本权重加权）。
+    //
+    // ⚠️ allTeams 没有 cost/minCost；压金度（minCost 缺失）按不压金计（0 行动值 = 100）。
+    //   视频索引在 a 记录第 5 位，回查 conclusion.allTeamVideos 拿真实 URL（用户报
+    //   「很多队伍没显示视频图标」）。行动值/版本/档位/视频都带了，卡片能正常写全。
+    if (Array.isArray(conclusion?.allTeams) && conclusion.allTeams.length) {
+      const envById = new Map((conclusion.frontierEnvs || []).map((e) => [e.id, e]));
+      const allTeamVideos = conclusion.allTeamVideos || [];
+      for (const team of conclusion.allTeams) {
+        const members = (team.m || []).map((m) => ({
+          char: m[0], eidolon: Number(m[1]) || 0, lc: m[2] || null, superimp: Number(m[3]) || 1,
+        })).filter((m) => m.char);
+        if (!members.length) continue;
+        const key = rosterKeyOf(members);
+        if (byRoster.has(key) || avByRoster.has(key)) continue;
+        const hits = [];
+        for (const rec of team.a || []) {
+          const [envId, av, season, tier, videoIdx] = rec;
+          const meta = envById.get(envId);
+          const weight = Number(meta?.weight) || 0;
+          const avNum = Number(av);
+          if (!(weight > 0) || !Number.isFinite(avNum)) continue;
+          const videoUrl = Number.isFinite(videoIdx) ? (allTeamVideos[videoIdx] || null) : null;
+          hits.push({
+            id: envId,
+            weight,
+            av: avNum,
+            // 版本号与档位随 allTeams 一起下发（卡片要写「（4.6 版本）· 行动值 297」）。
+            tier: tier ?? null,
+            season: season ?? null,
+            // ⚠️ 必须是 **null 而不是 0**（用户 2026-10-18 截图报「很多队伍会再写个 0 金」）。
+            //   allTeams 没带 `cost`（它只带成员与成绩），而卡片用
+            //   `Number.isFinite(Number(b.bestTeamGold))` 判空 —— `Number(null) === 0`
+            //   是有限数，于是「没有金数」会被当成「0 金」印在「行动值 440」后面。
+            //   写 0 时顶格档按金数区分算出 `0.1 × max(0, 0 − 0) = 0`，与 null 同分，
+            //   所以这一处**只影响显示**，算分不变。
+            cost: null,
+            video: videoUrl,
+            minCost: 0,
+            tierLines: meta?.tierLines || null,
+            lowerIsBetter: meta?.lowerIsBetter !== false,
+            avLo: Number(meta?.avLo),
+            avHi: Number(meta?.avHi),
+          });
+        }
+        if (!hits.length) continue;
+        avByRoster.set(key, { rosterKey: key, members, hits, allTeamsSource: true });
+      }
+    }
     for (const av of avByRoster.values()) {
       const hitEnvs = av.hits.filter((h) => Number.isFinite(h.av));
       if (!hitEnvs.length) continue;
@@ -3130,6 +3205,12 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
         // 标记「这一支来自行动值前沿」—— 界面据此把强度来源写成「本队自己的行动值」，
         // 而不是「角色总榜那一列」。
         avSource: true,
+        // ⚠️ 这一支来自 `allTeams`（全部有通关记录的队伍）而不是逐档前沿：
+        //   两者共用同一条 `avByRoster` 路径，所以下游看到的一切都一样，
+        //   **唯独没有 `cost`**（allTeams 只带成员与成绩）。
+        //   这一个标记只给探针/调试用（`tools/_probe-plan-display.mjs` 靠它
+        //   统计「哪些行没有金数是正常的」），界面不读它。
+        allTeamsSource: av.allTeamsSource === true,
       });
     }
   }
@@ -3461,6 +3542,10 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     // 「这一支来自行动值前沿」标记（用户 2026-10-16 第 2 条）：它的强度 ① 是**本队
     // 自己各关行动值**的加权，不是角色总榜那一列 —— 来源表据此换一行解释。
     avSource: Boolean(t.avSource),
+    // 「这一支来自 allTeams 全队伍表」标记：与 `avSource` 分开，因为它**没有 `cost`**
+    //（allTeams 只带成员与成绩）。`bestTeamGold` 为 null 且此标记为 true 才是正常的，
+    // 其余情况说明金数丢了 —— `tools/_probe-plan-display.mjs` 靠它核对。
+    allTeamsSource: Boolean(t.allTeamsSource),
     // 队伍成员（整包三要素）：界面按它画 4 个位置，并标出「已有 / 缺」。
     members: t.members.map((m) => ({
       char: m.char, eidolon: eidolonTierOf(m.eidolon), lc: m.lc || null, superimp: m.superimp,
