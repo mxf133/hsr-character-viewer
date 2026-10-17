@@ -1663,16 +1663,58 @@ const lineWeightOf = (weights, key, fallback, hardDefault) => {
  *
  * 放在这个文件（而不是 `src/server/archive.js`）：本文件是浏览器与服务端**共用**
  * 的那一份，总榜在客户端按版本加权时读的就是这张表，服务端只是 import 它。
+ *
+ * ⚠️ 2026-10-17 起这张表只提供**前 6 档的默认值**：「窗口里有几版」由用户那几档决定
+ * （界面上能「加一版 / 删一版」到 1~12 档），第 7 档起沿用最后一档 0.5
+ * （`versionWeightDefaultAt()`）。别再把它当「窗口恒 6 版」用。
  */
 export const VERSION_WEIGHTS = [3, 2.5, 2, 1.5, 1, 0.5];
 
-/** 版本窗口 = 权重表的长度（6 个版本）。 */
+/**
+ * 版本窗口 = 权重表的长度（6 个版本）。
+ *
+ * ⚠️ 2026-10-17 起它只是**默认**窗口，不再是硬上限：用户在界面上可以「加一版 / 删一版」
+ * （见 `VERSION_WEIGHT_MIN` / `VERSION_WEIGHT_MAX`），实际窗口 = 用户那几档的个数。
+ */
 export const VERSION_WINDOW = VERSION_WEIGHTS.length;
+
+/**
+ * 版本权重的槽位数**上下限**（用户 2026-10-17：「添加两个按钮，点击添加更多的版本权重，
+ * 或者删除最后一个版本」）。
+ *
+ * 上限取 **12**：本地数据集里最长的副本（混沌回忆）有 15 个版本，其余 10~13 个，
+ * 12 档已经足够把「有数据的版本」全摆上来；再往上没有数据支撑，只会让界面无限拉长。
+ * 下限取 **1**：至少要留一版，否则整条链没有权重可用（全 0 本来就退回默认表）。
+ */
+export const VERSION_WEIGHT_MIN = 1;
+export const VERSION_WEIGHT_MAX = 12;
+
+/** 槽位数收敛到 [MIN, MAX]；`undefined` / 空串 / 非数字 → 默认窗口（6）。 */
+const versionWeightCount = (count) => {
+  if (count === undefined || count === null || count === '') return VERSION_WINDOW;
+  const n = Math.floor(Number(count));
+  if (!Number.isFinite(n)) return VERSION_WINDOW;
+  return Math.max(VERSION_WEIGHT_MIN, Math.min(VERSION_WEIGHT_MAX, n));
+};
+
+/**
+ * 第 `index` 档（0 = 当前版本）的**默认**权重。
+ *
+ * 默认表只有 6 档；用户手动加到第 7 档及以后时，**沿用最后一档的值（0.5）而不是归零**
+ * —— 归零等于「这一版不进窗口」，与「加一版让它参与」的意图正好相反。
+ */
+export const versionWeightDefaultAt = (index) => {
+  const i = Math.floor(Number(index));
+  if (!Number.isFinite(i) || i < 0) return 0;
+  return VERSION_WEIGHTS[i] ?? VERSION_WEIGHTS[VERSION_WEIGHTS.length - 1] ?? 1;
+};
 
 /**
  * 版本权重的**旋钮清单**（用户 2026-10-16：版本权重也要能自己设）。
  *
- * 6 个槽位 = 版本窗口的 6 个版本，**下标 0 = 最新版**。
+ * `count` 个槽位 = 版本窗口里有几个版本，**下标 0 = 最新版**；默认 6 档（= 默认表）。
+ * 用户 2026-10-17 起档位可增删（界面两个按钮），所以这里是**函数**：给几档就出几行 ——
+ * 界面不会再出现「输入框 7 个、表只有 6 档」那种对不上的状态。
  *
  * ⚠️ 槽位是**按下标**的、不绑定具体版本号 —— 黑塔网加了新版本之后整张表自动前移
  * （下标 0 从 4.6 变成 4.7）。**槽位名（用户 2026-10-16 第 2 条改）**：
@@ -1682,46 +1724,88 @@ export const VERSION_WINDOW = VERSION_WEIGHTS.length;
  * ⚠️ 每个副本各有一套版本号（混沌 4.5 与异相仲裁 4.5 不是同一期），所以「当前版本」
  * 是**逐副本**的 —— 界面脚注要说清这一点。
  */
-export const VERSION_WEIGHT_ROWS = VERSION_WEIGHTS.map((value, index) => ({
-  index,
-  // 键用**槽位下标**：`versionWeightValues()` 两种形状都认（数组 / `{'0': 3}` 这种对象）。
-  key: String(index),
-  label: index === 0 ? '当前版本' : `前${index}个版本`,
-}));
+export const versionWeightRows = (count = VERSION_WINDOW) => {
+  const n = versionWeightCount(count);
+  return Array.from({ length: n }, (_, index) => ({
+    index,
+    // 键用**槽位下标**：`versionWeightValues()` 两种形状都认（数组 / `{'0': 3}` 这种对象）。
+    key: String(index),
+    label: index === 0 ? '当前版本' : `前${index}个版本`,
+  }));
+};
 
-/** 版本权重的默认值（= `VERSION_WEIGHTS`）。形状是**数组**，下标即槽位。 */
-export const versionWeightDefaults = () => VERSION_WEIGHTS.slice();
+/**
+ * 默认 6 档的旋钮清单 —— **这个名字留着**：历史调用点（界面 / 服务端 / 测试）读的是
+ * 「默认表」那一份，逐字等于 `versionWeightRows()`。需要非默认档位时用那个函数。
+ */
+export const VERSION_WEIGHT_ROWS = versionWeightRows();
+
+/**
+ * 版本权重的默认值（前 `count` 档照抄 `VERSION_WEIGHTS`，超出部分沿用最后一档）。
+ * 形状是**数组**，下标即槽位。
+ */
+export const versionWeightDefaults = (count = VERSION_WINDOW) => (
+  versionWeightRows(count).map((row) => versionWeightDefaultAt(row.index))
+);
+
+/**
+ * 从入参**推断档位数**：数组按长度、对象按「最大下标 + 1」，再收敛到 [MIN, MAX]。
+ *
+ * ⚠️ 两种形状的口径**故意不同**：
+ *   * **数组** = 现在这套界面自己的形状（`saveVersionWeights` 写的就是它）→
+ *     长度**就是**档位数。用户连点两次「删一版」存下来的是 4 档数组，读回来必须还是
+ *     4 档 —— 补齐到 6 等于删档按钮按了没反应。
+ *   * **对象** = 老形状（`{'0':3}`，界面从没写过它）→ 按最大下标推档位数，但**至少
+ *     补到默认窗口**，缺的档位按默认表补齐（与 v4.6.105 以来的口径一致）。
+ *   * 空数组 / 认不出的形状 → 默认窗口（6）—— 那属于「没有存档」，而不是「用户只要 0 档」。
+ */
+export const versionWeightCountOf = (input) => {
+  if (Array.isArray(input)) {
+    return input.length ? versionWeightCount(input.length) : VERSION_WINDOW;
+  }
+  if (input && typeof input === 'object') {
+    const keys = Object.keys(input).map(Number).filter((n) => Number.isFinite(n) && n >= 0);
+    return keys.length
+      ? versionWeightCount(Math.max(VERSION_WINDOW, Math.max(...keys) + 1))
+      : VERSION_WINDOW;
+  }
+  return VERSION_WINDOW;
+};
 
 /**
  * 读版本权重的**原值**（未归一化，缺的/非法的按默认值补齐）。边界规则与
  * `drawWeightValues` 完全同一套：
- *   * 缺的槽位（老存档只有 3 个版本、或者根本没存过）→ 按**默认表**补齐；
+ *   * 缺的槽位 / 根本没存过 → 按**默认表**补齐（第 7 档起默认 0.5，见 `versionWeightDefaultAt`）；
  *   * 空串 = 用户清空了输入框 → 按 **0** 算（那一版不进窗口）；
  *   * 非法值（负数 / NaN）→ 忽略，退回默认。
  *
- * ⚠️ 入参两种形状都收：**数组**（界面直接发 6 个框）与**对象**（`{'0': 3, '1': 2.5}`）。
+ * ⚠️ 入参两种形状都收：**数组**（界面发的 N 个框）与**对象**（`{'0': 3, '1': 2.5}`）。
+ * ⚠️ 返回长度**跟着入参档位走**（用户 2026-10-17 起档位可增删，不再恒 6）——
+ *    调用方读 `value.length` 就是「窗口里有几版」。
  */
-export const versionWeightValues = (input) => VERSION_WEIGHT_ROWS.map((row) => {
-  const fallback = VERSION_WEIGHTS[row.index] ?? 0;
-  const raw = Array.isArray(input) ? input[row.index] : input?.[row.key];
-  if (raw === null || raw === undefined) return fallback;
-  const text = String(raw).trim();
-  const n = text === '' ? 0 : Number(text);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
-});
+export const versionWeightValues = (input) => versionWeightRows(versionWeightCountOf(input))
+  .map((row) => {
+    const fallback = versionWeightDefaultAt(row.index);
+    const raw = Array.isArray(input) ? input[row.index] : input?.[row.key];
+    if (raw === null || raw === undefined) return fallback;
+    const text = String(raw).trim();
+    const n = text === '' ? 0 : Number(text);
+    return Number.isFinite(n) && n >= 0 ? n : fallback;
+  });
 
 /**
- * 归一化版本权重 → **长度 6 的数组**（下标 0 = 最新版）。
+ * 归一化版本权重 → **长度 = 档位数的数组**（下标 0 = 最新版）。
  *
  * ⚠️ 与抽卡权重不同，这里**不做「归一到和为 1」**：版本权重直接当加权平均的 `w` 用
  *    （分子分母同除同一个和），整体乘个常数不改变任何结果，而界面脚注要印出用户敲的
  *    **原值**（「3 : 2.5 : 2 : 1.5 : 1 : 0.5」）。
- * ⚠️ 全 0 → 退回**默认表**（用户把 6 个框全清空显然不是「哪个版本都别算」，
- *    与抽卡权重全清空退回等权是同一条约定）。
+ * ⚠️ 全 0 → 退回**默认表**（用户把输入框全清空显然不是「哪个版本都别算」，
+ *    与抽卡权重全清空退回等权是同一条约定）。退回时**保留档位数** —— 用户加了 8 档
+ *    再全清空，界面不该自己塌回 6 档。
  */
 export const normalizeVersionWeights = (input) => {
   const value = versionWeightValues(input);
-  return value.some((v) => v > 0) ? value : versionWeightDefaults();
+  return value.some((v) => v > 0) ? value : versionWeightDefaults(value.length);
 };
 
 /**
@@ -5118,8 +5202,10 @@ const buildConclusionInner = (envs, options = {}) => {
             avHi: avUsable ? avHi : null,
             lowerIsBetter,
             // 版本维度（第 6、7 条）：窗口内的版本数，以及每个版本的权重。
-            // 界面据此写「按 7 个版本加权」，不必自己再抄一遍权重表。
-            versionWindow: VERSION_WINDOW,
+            // 界面据此写「按 N 个版本加权」，不必自己再抄一遍权重表。
+            // ⚠️ 用**窗口实际的版本数**而不是默认 `VERSION_WINDOW`（6）：用户 2026-10-17
+            //    起档位可增删，写死 6 会让界面印「按 6 个版本加权」而实际用了 8 版。
+            versionWindow: windowSeasons.length,
             seasons: [...windowSeasons],
             seasonWeights: Object.fromEntries(windowSeasons.map((s) => [s, seasonWeightOfRow(s)])),
             // 「行动值前沿」（用户 2026-10-16 第 2 条）：本关卡**最近一版**行动值最好的

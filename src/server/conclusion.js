@@ -11,7 +11,7 @@
 import { archiveFrontierAll, archiveIndex, archiveTeams, loadI18n, zhName } from './archive.js';
 import {
   buildConclusion, EIDOLON_TIERS, eidolonTierOf, normalizeDrawWeights, normalizeHiddenCosts,
-  VERSION_WINDOW,
+  normalizeVersionWeights, VERSION_WEIGHT_MAX,
 } from '../../public/scripts/advice.js';
 
 /** 结论覆盖的副本顺序（按游戏解锁顺序）。 */
@@ -104,7 +104,13 @@ export const listEnvs = (index) => {
  * #3、界面上是 #14」正是这么来的。要改口径就改这里，**不要再抄第二份**。
  */
 export const conclusionEnvs = async (index, options = {}) => {
-  const window = Math.max(1, Math.min(Number(options.window) || 6, 12));
+  // 版本窗口：**跟着用户「版本权重」的档位数走**（用户 2026-10-17 起可以加删档位），
+  // 不再写死 6。上限仍是 `VERSION_WEIGHT_MAX`（12）—— 与 `normalizeVersionWeights()`
+  // 收档位数的那一处同一个常量，两处各写一个数迟早对不上。
+  const window = Math.max(1, Math.min(
+    Number(options.window) || normalizeVersionWeights(options.versionWeights).length,
+    VERSION_WEIGHT_MAX,
+  ));
   const envs = [];
   const skipped = [];
   for (const env of listEnvs(index)) {
@@ -712,7 +718,8 @@ export const archiveCharacterPacks = async (name, options = {}) => {
     versionWeights: options.versionWeights,
   });
   const frontierAll = await archiveFrontierAll(envs, {
-    window: VERSION_WINDOW,
+    // 窗口同样跟着用户表的档位数走（2026-10-17 起档位可增删）。
+    window: normalizeVersionWeights(options.versionWeights).length,
     ...(options.frontierWeights ? { weights: options.frontierWeights } : {}),
     // 版本权重（用户 2026-10-16）：面板与总榜**必须同一份** —— 否则同一个整包在
     // 详情窗口里印的「跨版本发挥」与榜上那个对不上（与 frontierWeights / hiddenCosts
@@ -1054,12 +1061,13 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     // 前沿表带的是**总榜口径**的权重（界面上「总榜权重」那一行）：
     // 它只服务性价比总榜与「和主流强阵的差距」这两处展示，与抽卡方案各自独立。
     //
-    // ⚠️ 前沿的版本窗口**固定用 `VERSION_WINDOW`（7 个版本）**，不吃请求里的
-    // `window`：用户第 7 条把版本权重定义成 2:2:2:1:1:1:1（近 1-3 版 2 分、
-    // 近 4-7 版 1 分），少于 7 个版本就凑不齐那张表。上面聚合层的 `window` 仍然
-    // 按请求走 —— 它服务抽卡方案的阵容表，改它会连带改方案的口径。
+    // ⚠️ 前沿的版本窗口**跟着用户「版本权重」的档位数走**（2026-10-17 起档位可加删），
+    // 不吃请求里的 `window`：这里要的是「用户那张表有几档就覆盖几版」—— 写死 6 会让
+    // 用户点「加一版」之后总榜纹丝不动（`archiveFrontier` 的窗口 = 表长，与这里同源）。
+    // 上面聚合层的 `window` 仍然按请求走 —— 它服务抽卡方案的阵容表，改它会连带改方案的口径。
     const all = await archiveFrontierAll(envs, {
-      window: VERSION_WINDOW, weights: options.frontierWeights,
+      // 用上面 `conclusionEnvs()` 已经定下的那一份窗口（= 用户表的档位数，已收敛到上限）。
+      window, weights: options.frontierWeights,
       // 用户自定义的版本权重（2026-10-16）：只影响「按版本加权」那一层
       // （`seasonWeights` 现算 + 客户端跨版本加权）。不传 = 默认 `VERSION_WEIGHTS`。
       versionWeights: options.versionWeights,

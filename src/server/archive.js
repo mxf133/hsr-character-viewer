@@ -11,7 +11,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
-  VERSION_WEIGHTS, VERSION_WINDOW, envWeightOf, normalizeVersionWeights, versionWeightOf,
+  VERSION_WEIGHTS, envWeightOf, normalizeVersionWeights, versionWeightOf,
   videoUrlOf,
 } from '../../public/scripts/advice.js';
 import { applyCharacterIdOverrides } from './character-icon-ids.js';
@@ -612,12 +612,6 @@ export const archiveFrontier = async (mode, options = {}) => {
   if (!seasons.length) return { ok: false, error: '没有版本' };
   const wanted = options.season && stageData.seasons[options.season]
     ? options.season : seasons[seasons.length - 1];
-  const windowSize = Math.max(1, Math.min(
-    Number(options.window) || VERSION_WINDOW, VERSION_WINDOW, seasons.length,
-  ));
-  const idx = seasons.indexOf(wanted);
-  const recent = seasons.slice(Math.max(0, idx - windowSize + 1), idx + 1);
-  const recentDesc = [...recent].reverse();
   /**
    * 版本权重 = 按下标查表（下标 0 = 该副本最新的版本）。
    *
@@ -625,8 +619,19 @@ export const archiveFrontier = async (mode, options = {}) => {
    * `VERSION_WEIGHTS`（3 : 2.5 : 2 : 1.5 : 1 : 0.5）。传进来的原值在这里过一次
    * `normalizeVersionWeights()`（缺的/非法的按默认补齐、全 0 退回默认），**不归一化**
    * —— 它只有相对大小有意义，整体乘个常数不影响任何结果。
+   *
+   * ⚠️ **窗口长度跟着用户表的档位数走**（用户 2026-10-17：界面上加了「加一版 / 删一版」）。
+   *    这里原来把上限钉死在 `VERSION_WINDOW`（6）：用户点「加一版」之后第 7 档永远进不了
+   *    窗口，那个按钮等于没接线。上限仍受数据集实际版本数（`seasons.length`）约束 ——
+   *    数据集里没有的版本给不出成绩，给了权重也没用。
    */
   const vWeights = normalizeVersionWeights(options.versionWeights);
+  const windowSize = Math.max(1, Math.min(
+    Number(options.window) || vWeights.length, vWeights.length, seasons.length,
+  ));
+  const idx = seasons.indexOf(wanted);
+  const recent = seasons.slice(Math.max(0, idx - windowSize + 1), idx + 1);
+  const recentDesc = [...recent].reverse();
   const weightOf = (s) => versionWeightOf(recentDesc.indexOf(s), vWeights);
 
   // 旧的差距/星魂强度口径仍然只看满分；目标档只进入新的性价比总榜。
@@ -643,7 +648,7 @@ export const archiveFrontier = async (mode, options = {}) => {
   const seasonWeights = Object.fromEntries(recentDesc.map((s, i) => [s, versionWeightOf(i, vWeights)]));
   const empty = {
     ok: true, pool: 0, merged: 0, seasons: recent,
-    versionWindow: VERSION_WINDOW, seasonWeights,
+    versionWindow: vWeights.length, seasonWeights,
     characters: {}, eidolons: {}, raw: {}, rawEidolons: {}, frontierRows: [], avTeams: [],
   };
   if (!rows.length) return empty;
@@ -731,7 +736,7 @@ export const archiveFrontier = async (mode, options = {}) => {
     // ⚠️ v4.6.78 起 `pool` 与 `merged` **恒等**（= 窗口内的行数）：池就是全部成绩。
     // 两个字段都留着，是为了不打断既有探针与它们的历史对照输出。
     pool: front.length, merged: rows.length,
-    seasons: recent, versionWindow: VERSION_WINDOW, seasonWeights,
+    seasons: recent, versionWindow: vWeights.length, seasonWeights,
     characters, eidolons, raw, rawEidolons, frontierRows,
   };
 };
@@ -856,15 +861,6 @@ const resolveScope = (data, mode, season, options = {}) => {
   const seasons = Object.keys(stageData.seasons || {}).sort(seasonSort);
   const wanted = season && stageData.seasons[season] ? season : seasons[seasons.length - 1];
   const wantedIndex = seasons.indexOf(wanted);
-  // 窗口默认 7 个版本（= 版本权重表的长度，用户 2026-10 第 7 条）。上限也压在
-  // VERSION_WINDOW：第 8 个版本起的权重是 0，把它放进窗口只会让成本前沿被更旧的
-  // 投稿拉低，却一分权重都拿不到。
-  const windowSize = Math.max(1, Math.min(
-    Number(options.window) || VERSION_WINDOW, VERSION_WINDOW, seasons.length,
-  ));
-  const recent = seasons.slice(Math.max(0, wantedIndex - windowSize + 1), wantedIndex + 1);
-  // 降序：recentDesc[0] 是最新版本。版本权重按「距最新版本几个版本」查表。
-  const recentDesc = [...recent].reverse();
   /**
    * 版本权重（用户 2026-10-16 第 3 条：这张表用户自己也能设）。
    *
@@ -883,8 +879,18 @@ const resolveScope = (data, mode, season, options = {}) => {
    * 传进来的原值在这里过一次 `normalizeVersionWeights()`（缺的/非法按默认补齐、
    * 全 0 退回默认），与 `archiveFrontier` 逐字同一条规矩；**不归一化** ——
    * 它只有相对大小有意义。
+   *
+   * ⚠️ 窗口长度同样**跟着用户表的档位数走**（用户 2026-10-17 的「加一版 / 删一版」）：
+   *    原来上限钉在 `VERSION_WINDOW`，加出来的第 7 档永远进不了窗口。上限只剩数据集
+   *    实际版本数（`seasons.length`）。
    */
   const vWeights = normalizeVersionWeights(options.versionWeights);
+  const windowSize = Math.max(1, Math.min(
+    Number(options.window) || vWeights.length, vWeights.length, seasons.length,
+  ));
+  const recent = seasons.slice(Math.max(0, wantedIndex - windowSize + 1), wantedIndex + 1);
+  // 降序：recentDesc[0] 是最新版本。版本权重按「距最新版本几个版本」查表。
+  const recentDesc = [...recent].reverse();
   return {
     ok: true,
     slug,

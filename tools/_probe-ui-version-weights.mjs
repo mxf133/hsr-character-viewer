@@ -85,6 +85,10 @@ const makeEl = (id) => { const e = new FakeElement('div'); e.id = id; REGISTRY.s
 for (const id of ['adviceVersionWeightRow', 'adviceVersionWeightsMeta',
   'adviceFrontierWeightRow', 'adviceFrontierWeightsMeta', 'adviceDrawWeightRow',
   'adviceDrawWeightsMeta', 'adviceConclusionUnits', 'adviceTeamPlanBody',
+  // 版本权重的「加一版 / 删一版」两个按钮 + 版数标签（用户 2026-10-17）。
+  // ⚠️ 它们缺了不会 TypeError（`el.x?.` 都带可选链），但 ⑥ 的判据会直接红 ——
+  // 那正是我们要的：界面少画一个按钮，这里就该报出来。
+  'adviceVersionWeightAdd', 'adviceVersionWeightRemove', 'adviceVersionWeightCount',
   // `mountAdviceView()` 会直接对这几个节点调 addEventListener（缺了会 TypeError）
   'adviceMode', 'adviceSeason', 'adviceReload', 'adviceUpdate',
   'adviceFrontierWeightsReset']) makeEl(id);
@@ -193,8 +197,10 @@ STORE.set('hsr.advice.versionWeights', JSON.stringify({ 0: 5, 1: 1 }));
 check('对象形状（老存档）也认',
   V.loadVersionWeights().join(',') === '5,1,2,1.5,1,0.5', V.loadVersionWeights().join(','));
 STORE.set('hsr.advice.versionWeights', JSON.stringify([1, -1]));
-check('短数组 + 负数：负数退回默认、缺的补默认',
-  V.loadVersionWeights().join(',') === '1,2.5,2,1.5,1,0.5', V.loadVersionWeights().join(','));
+check('短数组：长度**就是**档位数（负数退回该档默认）',
+  V.loadVersionWeights().join(',') === '1,2.5',
+  `${V.loadVersionWeights().join(',')} —— 用户 2026-10-17 起「删一版」存的就是短数组，`
+    + '补齐到 6 档等于那个按钮按了没反应');
 STORE.set('hsr.advice.versionWeights', '"垃圾"');
 check('垃圾存档 → 默认表',
   JSON.stringify(V.loadVersionWeights()) === JSON.stringify(versionWeightDefaults()));
@@ -272,6 +278,66 @@ check('恢复默认后输入框也回到默认值',
   findInputs(REGISTRY.get('adviceVersionWeightRow')).map((i) => i.value).join(',')
     === '3,2.5,2,1.5,1,0.5',
   findInputs(REGISTRY.get('adviceVersionWeightRow')).map((i) => i.value).join(','));
+
+// ---- ⑥ 加一版 / 删一版（用户 2026-10-17） ------------------------------------
+//
+// 用户原话：「添加两个按钮，让用户可以点击按钮添加更多的版本权重，或者点击删除最后一个
+// 版本，这样会有更多或者更少的版本权重」。
+//
+// 这一段跑的是**真的按钮节点 + 真的 click 事件**（那两个按钮是按 id 建的空节点，
+// `mountAdviceView()` 已经把处理器挂上去了），钉四件事：
+//   ① 事件真的挂上了（节点 / id 改名 → 处理器静默失效，界面看着有按钮但点不动）；
+//   ② 加档**保住已有档位的数值**（整张重置 = 把用户调过的权重全抹掉）；
+//   ③ 请求体跟着档位数变（不然界面上多一个框、榜单纹丝不动）；
+//   ④ 上下限（12 / 1）真的封住了。
+console.log('\n▶ ⑥ 加一版 / 删一版（2026-10-17）');
+const addBtn = REGISTRY.get('adviceVersionWeightAdd');
+const rmBtn = REGISTRY.get('adviceVersionWeightRemove');
+check('两个按钮都挂了处理器（缺了 = 界面没画或 id 改了）', Boolean(addBtn && rmBtn));
+
+STORE = new Map();
+SENT.length = 0;
+state.versionWeights = [1, 0, 0, 0, 0, 0];
+V.renderVersionWeightRow();
+addBtn.dispatch('click');
+await new Promise((r) => setTimeout(r, 80));
+const afterAdd = findInputs(REGISTRY.get('adviceVersionWeightRow'));
+check('点「加一版」→ 7 个输入框', afterAdd.length === 7, String(afterAdd.length));
+check('已有档位的数值没被抹掉', afterAdd.map((i) => i.value).join(',') === '1,0,0,0,0,0,0.5',
+  afterAdd.map((i) => i.value).join(','));
+check('新档默认 0.5（沿用最后一档，不归零）', afterAdd[6]?.value === '0.5', afterAdd[6]?.value);
+check('state 与 localStorage 都是 7 档',
+  state.versionWeights.length === 7
+    && JSON.parse(STORE.get('hsr.advice.versionWeights') || '[]').length === 7,
+  `${state.versionWeights.length} / ${STORE.get('hsr.advice.versionWeights')}`);
+check('版数标签跟到「7 版」', REGISTRY.get('adviceVersionWeightCount').textContent === '7 版',
+  REGISTRY.get('adviceVersionWeightCount').textContent);
+const addReq = SENT.find((s) => s.url.includes('/api/archive/conclusion'));
+check('加档后立刻重算，请求体是 7 档',
+  JSON.stringify(addReq?.body?.versionWeights) === JSON.stringify([1, 0, 0, 0, 0, 0, 0.5]),
+  JSON.stringify(addReq?.body?.versionWeights));
+
+rmBtn.dispatch('click');
+await new Promise((r) => setTimeout(r, 80));
+check('点「删一版」→ 回到 6 档',
+  findInputs(REGISTRY.get('adviceVersionWeightRow')).length === 6,
+  String(findInputs(REGISTRY.get('adviceVersionWeightRow')).length));
+
+// 上限 12：按钮靠 `disabled` 封住，处理器里另有一道 return（直接改 state 也突不破）。
+for (let i = 0; i < 10; i += 1) addBtn.dispatch('click');
+await new Promise((r) => setTimeout(r, 150));
+check('最多 12 档（多点的几次被吃掉）', state.versionWeights.length === 12,
+  String(state.versionWeights.length));
+check('到上限后「加一版」是 disabled', addBtn.disabled === true, String(addBtn.disabled));
+check('12 档时「删一版」仍可点', rmBtn.disabled === false, String(rmBtn.disabled));
+
+state.versionWeights = [2];
+V.renderVersionWeightRow();
+rmBtn.dispatch('click');
+await new Promise((r) => setTimeout(r, 80));
+check('至少留 1 档（删到只剩一版就不动了）', state.versionWeights.length === 1,
+  JSON.stringify(state.versionWeights));
+check('到下限后「删一版」是 disabled', rmBtn.disabled === true, String(rmBtn.disabled));
 
 console.log(`\n${bad === 0 ? '全部通过' : `${bad} 条不通过`}`);
 process.exit(bad === 0 ? 0 : 1);

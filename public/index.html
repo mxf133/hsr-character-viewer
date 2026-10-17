@@ -260,7 +260,8 @@
                  ① 关卡权重 = 五个副本的权重（决定哪些副本算数，**角色总榜与抽卡方案都吃它**）；
                  ② 抽卡权重 = 强度 / 性价比 / 泛用性（三个分项在**角色总榜**与**抽卡方案**里
                     各占多少 —— v4.6.97 起两处共用同一组系数）；
-                 ③ 版本权重 = 每个副本窗口里从最新往前 6 个版本各占多少。
+                 ③ 版本权重 = 每个副本窗口里从最新往前 N 个版本各占多少
+                 （默认 6 版；用户 2026-10-17 起可点按钮加删档位，1~12 版）。
                用户原话：「总榜权重改名为权重，权重分为两大类，分别为关卡权重和抽卡权重，
                关卡权重照旧让用户设置5种关卡的权重」「抽卡方案也适用于以上权重」。
                ⚠️ 它们与「方案权重」那一行不是一回事：那一行在 2026-10-11 第 10 轮就已经
@@ -281,8 +282,9 @@
               <strong>抽卡权重</strong>决定角色总榜与抽卡方案里<strong>强度 / 性价比 / 泛用性</strong>
               各占多少（强度越高越推<strong>行动值低、投入高</strong>的强队，
               性价比越高越推<strong>你还要补得越少</strong>的队伍）；
-              <strong>版本权重</strong>决定每个副本窗口里<strong>从最新往前 6 个版本</strong>各占多少
-              （越旧被稀释得越厉害，某一版设 0 = 那一版不进窗口）。
+              <strong>版本权重</strong>决定每个副本窗口里<strong>从最新往前 N 个版本</strong>各占多少
+              （越旧被稀释得越厉害，某一版设 0 = 那一版不进窗口；默认 6 版，
+              用<strong>加一版 / 删一版</strong>改窗口长度，1~12 版）。
               三组都只有<strong>相对大小</strong>有意义，改任一组都会重算总榜。</span>
             <button type="button" id="adviceFrontierWeightsReset" class="btn btn-ghost btn-sm">恢复默认</button>
             <div class="advice-weights-groups">
@@ -297,7 +299,21 @@
                 <span class="muted small advice-weights-meta" id="adviceDrawWeightsMeta"></span>
               </div>
               <div class="advice-weights-group">
-                <span class="advice-weights-subtitle">版本权重</span>
+                <!-- 版本权重（用户 2026-10-17：「添加两个按钮，让用户可以点击按钮添加更多的
+                     版本权重，或者点击删除最后一个版本」）。
+                     ⚠️ 档位是**按下标**的（当前版本 / 前1个版本 …），加出来的第 N 档就是
+                     「再往回 N 个版本」；按钮只改**档位数**，不碰已有档位的数值。
+                     上限 / 下限（12 / 1）与按钮禁用状态在 advice-view.js 里同步维护，
+                     常量来自 advice.js 的 `VERSION_WEIGHT_MAX`（不在这里写第二份）。 -->
+                <span class="advice-weights-subtitle">版本权重
+                  <span class="advice-version-actions">
+                    <span class="advice-version-count" id="adviceVersionWeightCount">6 版</span>
+                    <button type="button" id="adviceVersionWeightAdd" class="btn btn-ghost btn-sm"
+                      title="窗口里再加一版（默认权重沿用最后一档 0.5）">加一版</button>
+                    <button type="button" id="adviceVersionWeightRemove" class="btn btn-ghost btn-sm"
+                      title="删掉最后一版（最旧的那一档）">删一版</button>
+                  </span>
+                </span>
                 <div class="advice-weights-grid is-version" id="adviceVersionWeightRow"></div>
                 <span class="muted small advice-weights-meta" id="adviceVersionWeightsMeta"></span>
               </div>
