@@ -412,9 +412,15 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null, withVideo = false) =>
   eidolon: Number(unit.eidolon) || 0,
   lc: unit.lc || null,
   superimp: Number(unit.superimp) || 1,
-  // 整包自己的金数：只用于展示（**不进公式、不参与排序**）
+  // 整包自己的金数：**2026-10-17 起进公式了**（配装口径的 `ownGoldFactor`，见下面那个字段）。
   gold: Number(unit.gold ?? unit.pulls) || 0,
   total: unit.total,
+  // 配装口径的「整包自身金数」系数（用户 2026-10-17「走 A + D」）：
+  //   `total` 已经乘过它，界面要在性价比来源表的标题行把它印出来，
+  //   否则「Σ逐关卡贡献 × 系数 = 合计」这条验算链就断了。
+  // `ownGoldRef` = 该角色榜上最便宜的整包金数（系数的分子），用于写出「1 金 ÷ 7 金」。
+  ownGoldFactor: unit.ownGoldFactor ?? 1,
+  ownGoldRef: unit.ownGoldRef ?? null,
   // ---- 三个分项 + 合成后的「角色得分」（用户 2026-10-13 第 1、2 条）------------------
   //
   // 用户第 2 条把「性价比得分」改名「**角色得分**」：榜上那个数不再是「含金数项总分」

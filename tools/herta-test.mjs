@@ -1171,6 +1171,48 @@ check('buildConclusion：差距榜量的是「照抄主流强阵还差几金」�
   assert.deepEqual(buildConclusion([], {}).gapUnits, []);
 });
 
+check('角色性价比是**配装口径**：同一个角色，更贵的整包性价比更低（用户 2026-10-17 「走 A + D」）', () => {
+  // 背景：改前金数项只看**队伍**金数（`min(1, 该期最便宜 ÷ 本队)`），整包自己花多少金
+  // 完全不进公式 —— 实测 `r(整包金数, 性价比得分) = 0.030`，一个叫「角色性价比」的分项
+  // 与「这个配装贵不贵」几乎无关。用户选了配装口径，于是加了
+  // `ownGoldFactor = (该角色最便宜整包金数 ÷ 本整包金数) ^ SCORING.ownGoldFactorPower`。
+  const availability = { characters: { Lim: { limited: true } }, lightCones: {} };
+  const account = {
+    owned: new Set(['A', 'B', 'C', 'Lim']),
+    eidolons: new Map(),
+    cones: new Map(),
+  };
+  // 两支成绩完全相同的队，只有 Lim 的星魂不同 → 整包金数不同、perf 相同
+  const cheapTeam = teamFixture(['A', 'B', 'C', 'Lim'], { perfect: 10, target: 0, pass: 0, below: 0 }, 0,
+    [{ char: 'A', eidolon: 0 }, { char: 'Lim', eidolon: 0 }]);
+  cheapTeam.cost = 3;
+  const richTeam = teamFixture(['A', 'B', 'C', 'Lim'], { perfect: 10, target: 0, pass: 0, below: 0 }, 0,
+    [{ char: 'A', eidolon: 0 }, { char: 'Lim', eidolon: 6 }]);
+  richTeam.cost = 9;
+  const out = buildConclusion([envFixture('moc', [cheapTeam, richTeam])], { availability, account });
+
+  const packs = Object.values(out.frontierTiers || {}).flat()
+    .filter((u) => u.name === 'Lim');
+  assert.ok(packs.length >= 2, `Lim 应当有 ≥2 个整包（E0 与 E6），实际 ${packs.length}`);
+  for (const u of packs) {
+    assert.ok(Number.isFinite(Number(u.ownGoldFactor)),
+      `${u.name} E${u.eidolon}：整包系数必须下发（界面靠它写「Σ贡献 × 系数 = 合计」）`);
+  }
+  const sorted = packs.slice().sort((a, b) => (Number(a.gold) || 0) - (Number(b.gold) || 0));
+  const cheap = sorted[0];
+  const rich = sorted[sorted.length - 1];
+  assert.ok((Number(rich.gold) || 0) > (Number(cheap.gold) || 0),
+    '夹具应当造出「便宜整包」与「贵的整包」两个金数');
+  assert.ok(Number(cheap.ownGoldFactor) > Number(rich.ownGoldFactor),
+    `更贵的整包系数必须更小：便宜 ${cheap.ownGoldFactor} vs 贵 ${rich.ownGoldFactor}`);
+  assert.ok((Number(rich.costScore) || 0) < (Number(cheap.costScore) || 0),
+    `同成绩下更贵的整包性价比得分必须更低：便宜 ${cheap.costScore} vs 贵 ${rich.costScore}`);
+  // 该角色最便宜的那个整包，系数必须正好是 1（分母就是它自己）
+  const ext = out.frontierExtents?.cost;
+  assert.ok(ext && Number.isFinite(ext.lo) && Number.isFinite(ext.hi),
+    '性价比的归一上下限必须仍然下发');
+});
+
 check('buildConclusion：星魂的分子是「期望出分」——分布往满分挪就加分，没挪就是 0', () => {
   // 用户 2026-10 的指正：「这两个角色的星魂对改善出分和压金 0T 都相当重要，
   // 尤其是用现有阵容挑战异相仲裁 / 绝境王棋」——分子必须量出**关键金带来的出分**。

@@ -4159,13 +4159,26 @@ schannel-only，`http.sslBackend=openssl` 在后者上会直接报「Unsupported
 给每个 agent 一个**独立目录 + 独立分支**，工作区与 index 彻底分开，`git add -A` 也不会串：
 
 ```bash
-git worktree add ../hsr-agentA -b feat/agentA
-git worktree add ../hsr-agentB -b fix/agentB
+git worktree add .worktrees/<分支名把 / 换成 -> <分支>   # 例：.worktrees/fix-agent-b
 git worktree list            # 看现有工作区
-git worktree remove ../hsr-agentA   # 收尾清理
+git worktree remove .worktrees/fix-agent-b   # 收尾清理
 ```
 
 - 共享同一个 `.git`，分支/历史互通，但工作区互不干扰。
+- ⚠️ **2026-10-17 起所有 worktree 一律放在 `.worktrees/`**（用户要求「统一管理」）。
+  迁移前有 **6 个**散在仓库外（`~/.codex/worktrees/<分支>/星穹铁道-读取角色信息` ×4、
+  `~/WorkBuddy/Worktrees/星穹铁道-读取角色信息/main-<hash>` ×2），已用
+  **`git worktree move <旧> .worktrees/<新>`** 全部搬进来（14 个现在都在这里）。
+  - 命名规则：**分支名把 `/` 换成 `-`**（`codex/agent-performance` →
+    `.worktrees/codex-agent-performance`）。早期那批直接用分支叶子名
+    （`fix/bugfix-batch` → `.worktrees/bugfix-batch`），不再重命名。
+  - `git worktree move` **保留未提交改动**（实测搬过 3 个脏文件的 detached HEAD）。
+  - ⚠️ **目录被进程占住时 move 会 `Permission denied`**：本轮 `workbuddy-main-3cc8ec76`
+    就是因为里面跑着 `start.bat` + `bin/serve.mjs --port 8360` 而失败 —— 先停掉那个
+    服务（`taskkill /PID <cmd 的 pid> /T /F`）再搬。搬之前用
+    `Get-CimInstance Win32_Process | Where CommandLine -like '*<worktree 名>*'` 查占用。
+  - 仓库外 `~/.codex/worktrees/*/` 只剩 codex 自己的 `.codex-worktree-name` 标记文件，
+    **不要删**（那是 codex 的记账，不是本仓库的）。
 - ⚠️ 新增 worktree 会重新 checkout 一份；`theherta/`（含 20.7 MB 的 `archive.json`）
   体积较大，嫌重就用 `git worktree add --no-checkout` + `git sparse-checkout` 按需展开。
   （`snapshots/` 已于 2026-10-10 清空，不再是顾虑，见 §9.3。）

@@ -3707,8 +3707,21 @@ const costSourceBlock = (unit) => {
     ];
   });
   const box = text('span', 'advice-score-split');
+  // ⚠️ 2026-10-17（配装口径，用户「走 A + D」）：`unit.total` 里多乘了一个
+  //    **整包自身金数系数**（`ownGoldFactor` = 该角色最便宜整包金数 ÷ 本整包金数 的 0.5 次方），
+  //    它不在下面那张逐关卡表里（它是**整包级**的常数，不是某一关的因子）。
+  //    所以必须印在标题行：否则「Σ逐关卡贡献」比「合计」小一截，读者会以为算错了
+  //    （`docs/功能要求.md` §7 第 4 条「数字必须可验算」）。
+  //    系数 = 1（这个整包就是该角色最便宜的那套）时不印，避免满屏「×1.00」。
+  const ownFactor = Number(unit.ownGoldFactor ?? 1);
+  const ownRef = Number(unit.ownGoldRef);
+  const ownPart = (Number.isFinite(ownFactor) && Math.abs(ownFactor - 1) > 1e-4)
+    ? ` × 整包系数 ${factorText(ownFactor)}`
+      + (Number.isFinite(ownRef) ? `（最便宜 ${ownRef} 金 ÷ 本整包 ${Number(unit.gold) || 0} 金）` : '')
+    : '';
   box.appendChild(text('span', 'advice-score-split-title',
-    '角色性价比来源：逐关卡「权重 × 100 × 表现 ×（该副本最便宜金数 / 这支队金数）× 跨版本发挥」'));
+    '角色性价比来源：逐关卡「权重 × 100 × 表现 ×（该副本最便宜金数 / 这支队金数）× 跨版本发挥」'
+    + ownPart));
   box.appendChild(tipTable(
     // 用户 2026-10-11 第 2 条：表头第一列原名「副本/关卡」，与下面第一列实际写的
     // 内容（两级写法 + 版本小字 + 队伍图标）已经不一致了，用户点名改成**「关卡」**。
@@ -4584,6 +4597,9 @@ const renderTeamPlan = (conclusion) => {
    *    封顶（池内 p75 ≈ 14 金）与**旧的**指数（^1.5）算出来的。封顶改成 p60、指数改成
    *    ^1.8 之后三个数**一个都不对**，而界面照样印出来 —— 这正是仓库里反复出现的
    *    「口径改了、文案没跟着改，于是界面上写着假话」。现算之后这类改动再也不会失同步。
+   * ⚠️ **指数后来又收回 1.5**（用户 2026-10-17「差额接近度以 1.5 为准」；^1.8 越界了
+   *    「小差额几乎不动」那条口径，理由见 `advice.js` 里 `teamPlanGapPower` 的换挡史）。
+   *    所以现在这一格印的是**封顶 p60 + 指数 1.5**——上面那段 ^1.8 只是当时的记录。
    */
   const gapSample = (g) => {
     const t = 1 - g / Math.max(1, plan.gapMax);

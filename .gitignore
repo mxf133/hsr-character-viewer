@@ -47,8 +47,13 @@ snapshots/
 # `git worktree add .worktrees/<名字>` 起的并行工作区（§9.2 第 2 层）——
 # 它是**同一个仓库的另一份检出**，里面的内容全在 git 里（各自的分支），
 # 所以这个目录本身不该进版本库（否则每次 `git add -A` 都会把别人的工作区带走）。
-# 注意：worktree 也可以建在仓库外（历史上就有建在 `../hsr-xxx` 与
-# `~/.codex/worktrees/` 的），那种情况不需要在这里忽略。
+#
+# ⚠️ **2026-10-17 起所有 worktree 都在这里**（用户要求「统一管理」）：迁移前有 6 个
+# 散在仓库外（`~/.codex/worktrees/` ×4、`~/WorkBuddy/Worktrees/` ×2），已用
+# `git worktree move` 全部搬进来。命名 = 分支名把 `/` 换成 `-`
+# （`codex/agent-performance` → `.worktrees/codex-agent-performance`）；
+# 早期那批直接用分支叶子名（`fix/bugfix-batch` → `.worktrees/bugfix-batch`），不再重命名。
+# 新建：`git worktree add .worktrees/<分支名把斜杠换成短横> <分支>`。
 .worktrees/
 
 # WorkBuddy 的项目工作记录（`.workbuddy/memory/` 下的会话记忆与本机上下文）——
