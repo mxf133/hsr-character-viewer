@@ -1225,6 +1225,36 @@ export const SCORING = {
    */
   drawWeight: { strength: 1, cost: 1, versatility: 0.5 },
   /**
+   * **泛用性归一尺子的两端裁剪比例**（2026-10-17 修复，原口径是裸 min-max）。
+   *
+   * 为什么必须裁：泛用性的原始量是「加权不同队友数」——**计数型、长尾**。真实数据
+   * （本机 109 个低档样本 / 50 个 E6 样本）里裸 min-max 的结果是：低档组榜面
+   * 180 条中 126 条 ≤10 分、中位 **3.8**，而 100 分只有知更鸟一条（原始量 6.01，
+   * 第二名 2.99）—— 一个离群值把整把尺子撑满，其余人全挤在 0 附近，泛用性这一维
+   * 在角色得分里等于没生效。E6 组同病（81 条里 55 条 ≤10 分、中位 2.0）。
+   *
+   * 裁剪 5%：两端各切掉 `versatilityExtentTrim` 的分位当尺子端点，超出部分由
+   * `spanOf` 之后的 `clamp(0, 1)` 夹到 0 / 100。实测裁后低档组中位 3.8 → **7.2**、
+   * p90 30.8 → **79.1**、90 分以上从 3 条变 18 条；E6 组中位 2.0 → 3.6。
+   *
+   * ⚠️ 取 0.05 而不是 0.1：0.1 会把「真正最百搭的那几个角色」也压成并列 100
+   *    （知更鸟 6.01 / 千冶•刃 2.99 / 风堇 2.35 都会顶格），区分度反而丢在最该区分的
+   *    头部；0.05 只夹掉那 5% 的长尾，头部的绝对差距仍保留。
+   * ⚠️ **样本少于 `versatilityExtentTrimMinSamples` 时退回 min/max**：三五个样本
+   *    「分位」没有统计意义，而测试夹具与合成数据正是这种规模 —— 那时离群值本身
+   *    就是真实端点，不该被夹掉。
+   */
+  versatilityExtentTrim: 0.05,
+  /**
+   * 泛用性尺子开始做分位裁剪所需的**最少样本数**（见上一条）。
+   *
+   * 取 20：低档组真实样本 109 条、E6 组 50 条，都远在上限之上；而 `herta-test` 的
+   * 夹具通常只有 3~9 条整包，它们走 min/max，断言里的具体端点值（1 ~ 5 之类）
+   * 因此不必跟着改 —— 那不是「放水」，是因为几个样本的 p5/p95 与 min/max 本就
+   * 只差内插的几个点，把它当「抗离群值」用反而是伪精度。
+   */
+  versatilityExtentTrimMinSamples: 20,
+  /**
    * **强度分项**的几个常数（用户 2026-10-14 定口径，**2026-10-17 第 2、3 条整条重做**）。
    *
    * ## 2026-10-17 新口径（用户原话，三句缺一不可）
@@ -2584,18 +2614,22 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
     const pick = (lo, hi) => (num(lo) !== null && num(hi) !== null
       ? { lo: num(lo), hi: num(hi) } : null);
     // 候选池现算的那两把（只在前者缺失时用）：分组判据与角色总榜一致 —— E6 档一组、其余一组。
-    const pool = { low: { lo: Infinity, hi: -Infinity }, e6: { lo: Infinity, hi: -Infinity } };
+    // ⚠️ **必须走 `versatilityExtentOf`**（p5/p95，样本少时退回 min/max）：队级 ③ 的
+    //    恒等式是「= 成员们在总榜上泛用性分的成本加权平均」，兜底路径若用裸 min/max
+    //    就会与总榜那把尺子分叉（工具 / 探针直接调 `teamPlan` 时最常见）。
+    const pool = { low: [], e6: [] };
     for (const unit of units) {
+      // ⚠️ 与总榜同一个取样口径：跳过「不用抽就有」的角色（它们原始量恒为 0，
+      //    留在样本里会把 lo 拉到 0 —— 改前这条兜底路径**没有**跳，与总榜分叉）。
+      if (isVersatilityIgnored(unit.name, availability)) continue;
       const g = eidolonTierOf(unit.eidolon) === 6 ? 'e6' : 'low';
-      const v = Number(unit.versatilityRaw) || 0;
-      if (v < pool[g].lo) pool[g].lo = v;
-      if (v > pool[g].hi) pool[g].hi = v;
+      pool[g].push(Number(unit.versatilityRaw) || 0);
     }
     const fixed = (x) => (Number.isFinite(x.lo) && Number.isFinite(x.hi) ? x : { lo: 0, hi: 0 });
     const v = conclusion?.frontierExtents?.versatility || null;
     return {
-      low: pick(v?.lo, v?.hi) ?? fixed(pool.low),
-      e6: pick(v?.byTier?.['6']?.lo, v?.byTier?.['6']?.hi) ?? fixed(pool.e6),
+      low: pick(v?.lo, v?.hi) ?? fixed(versatilityExtentOf(pool.low)),
+      e6: pick(v?.byTier?.['6']?.lo, v?.byTier?.['6']?.hi) ?? fixed(versatilityExtentOf(pool.e6)),
     };
   })();
   /**
@@ -3561,6 +3595,38 @@ const quantileOf = (values, p) => {
   const lo = Math.floor(at);
   const hi = Math.ceil(at);
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (at - lo);
+};
+
+/**
+ * **泛用性的唯一一把尺子**（2026-10-17 修复：裸 min-max → 分位裁剪）。
+ *
+ * 角色总榜（`versatilityExtentOfGroup` 两把组内尺子）与队级（`teamPlan` 的
+ * `groupExtents` 兜底）都走这一个函数 —— 两处各写一遍迟早分叉，而队级 ③ 的恒等式
+ * 「= 成员们在总榜上泛用性分的成本加权平均」正依赖两边用**同一对端点**。
+ *
+ * ```
+ *   n < SCORING.versatilityExtentTrimMinSamples → { lo: min, hi: max }（夹具 / 小样本）
+ *   否则                                       → { lo: p5,  hi: p95 }（两端各裁 5%）
+ * ```
+ *
+ * 超出 `[lo, hi]` 的原始量由调用方的 `clamp(0, 1)` 夹到 0 / 100，不会印出负数或
+ * 超过 100 的分（`unit.versatilityScore` 与 `memberVersatilityScore` 都有那一步）。
+ *
+ * @param {number[]} samples 原始量样本（**只该放限定角色**，见 `isVersatilityIgnored`）
+ * @returns {{lo:number, hi:number}} 退化样本（全同值）时 lo === hi，调用方按 1 处理
+ */
+export const versatilityExtentOf = (samples) => {
+  const list = (Array.isArray(samples) ? samples : [])
+    .map((v) => Number(v))
+    .filter((v) => Number.isFinite(v));
+  if (!list.length) return { lo: 0, hi: 0 };
+  if (list.length < Math.max(2, Number(SCORING.versatilityExtentTrimMinSamples) || 0)) {
+    return { lo: Math.min(...list), hi: Math.max(...list) };
+  }
+  const trim = Math.min(0.49, Math.max(0, Number(SCORING.versatilityExtentTrim) || 0));
+  const lo = quantileOf(list, trim);
+  const hi = quantileOf(list, 1 - trim);
+  return Number.isFinite(lo) && Number.isFinite(hi) ? { lo, hi } : { lo: 0, hi: 0 };
 };
 
 /**
@@ -6096,7 +6162,10 @@ const buildConclusionInner = (envs, options = {}) => {
           envStrengthValue: Number((envStrengthNew * weight).toFixed(4)),
           // 泛用性的**本副本**版本加权值（用户 2026-10-15）：`buildConclusionInner` 的
           // 第二趟按版本权重算好（与 score / strength 同一套两态口径），这里随关卡
-          // 权重进整包合成 —— 缺副本按 0 计，与 `strengthTotal` 的口径一致。
+          // 权重进整包合成。
+          // ⚠️ **2026-10-17 起跨副本那一步只对有数据的副本取加权平均**（不再像强度那样
+          //    「缺副本按 0」）—— 强度量成绩、缺成绩确实是差；泛用性量关系网，没投稿
+          //    不等于不百搭。理由与实测数字见 `versatilityPerTier` 那段注释。
           envVersatility: Number((Number(pack.versatility) || 0).toFixed(4)),
           // 新口径的原始证据（强度来源表要写出来）：这次成绩的行动值、金数、档位、版本，
           // 以及它是否落在满分档（界面据此解释「为什么这里按金数扣分」）。
@@ -6175,19 +6244,31 @@ const buildConclusionInner = (envs, options = {}) => {
       /**
        * 泛用性的**本档**原始量（用户 2026-10-15 的双重加权，仍然保留）：
        * 每个副本先按**版本权重**加权（第二趟算好，缺投稿版本计 0），再按**关卡权重**
-       * 跨副本加权，分母是**全部副本**的权重和（缺副本按 0 计，不是「有数据的那些」
-       * —— 同一个反向激励根治点，见 `strengthTotal` 的注释）。
+       * 跨副本加权。
+       *
+       * ⚠️ **2026-10-17 修复：分母改成「这个整包有数据的那些副本」的权重和**，
+       *    不再是全部副本的权重和（`strengthWeight`）。改前那句话写的是「同一个反向
+       *    激励根治点」，可那是**强度**那一侧的论据（强度量成绩：没成绩就是差），
+       *    照抄到泛用性上就变成了「没人投稿 ⇒ 不百搭」。实测这份污染很大 ——
+       *    原始量中位随「有数据副本数」单调爬升：
+       *    **1 个副本 0.169 / 2 个 0.385 / 3 个 0.463 / 4 个 0.703 / 5 个 1.044**。
+       *    也就是说「投稿覆盖了几个副本」直接决定了分数被除几（只投 1 个副本的角色
+       *    天生只能拿到 1/9 的上限），而泛用性量的是关系网广度，不是投稿覆盖面。
+       *    改后每个整包的泛用性 = 它在**有证据的副本**上的加权平均（缺副本不再按 0 罚），
+       *    与「关卡权重各自贡献」那条用户要求不冲突：权重仍在分子里起作用，
+       *    「在低权重关卡百搭」依旧只按那 1 分算。
        *
        * ⚠️ **关卡权重这一层是用户的明确要求**（2026-10-16 第 4 条：「泛用性也需要根据
        *    关卡加权，**不能因为某角色在低权重关卡泛用就能当成高权重关卡也泛用**」）：
        *    所以「在虚构叙事很百搭」只会按虚构那 1 分权重计入，不会平移到权重 5 的绝境。
        *
-       * ⚠️ 它只是**中间量**：下面 `versatilityByChar` 会把该角色 E0/E1/E2 三档的它取平均，
-       *    再把平均值固定给该角色的**所有**档位（含 E6）—— 见那一段注释。
+       * ⚠️ 它只是**中间量**：下面「泛用性的**分组归一**」会把该角色 E0/E1/E2 三档的它
+       *    取平均（低档组）、E6 单独取自己那一档（用户 2026-10-17 第 1 条的两把尺子）。
        */
-      const versatilityPerTier = strengthWeight > 0
+      const versaWeight = unit.envs.reduce((n, e) => n + e.weight, 0);
+      const versatilityPerTier = versaWeight > 0
         ? unit.envs.reduce((n, e) => n + e.weight * (Number(e.envVersatility) || 0), 0)
-          / strengthWeight
+          / versaWeight
         : 0;
       const best = unit.envs[0];
       all.push({
@@ -6436,21 +6517,31 @@ const buildConclusionInner = (envs, options = {}) => {
      * ⚠️ **取样时跳过「不用抽就有」的角色**（用户第 5 条：「分子分母都不应当考虑常驻角色」）：
      *    它们的原始量恒为 0（收集阶段就没攒），留在样本里只会把尺子往 0 那端拉长，
      *    连带把真正要比较的限定角色全部挤到高分那一头。**两组都要跳**。
+     * ⚠️ **2026-10-17 起端点不再是组内极值，而是 p5 / p95**（`versatilityExtentOf`）：
+     *    原始量是长尾的计数，裸 min-max 会被单个离群值撑满 —— 实测低档组榜面
+     *    180 条里 126 条 ≤10 分、中位 3.8，90 分以上只有 3 条（知更鸟独占 100）。
+     *    裁剪后中位 7.2、p90 79.1。两端裁多少、为什么是 0.05 见 `SCORING` 那两条注释。
      * ⚠️ 某一组**一个样本都没有**时给 `{lo: 0, hi: 0}`：`spanOf` 对退化区间返回 1，
      *    该组全体同分（排序不受影响，只影响绝对值）—— 与另两个分项同一条约定。
      */
     const versatilityGroupOf = (unit) => (eidolonTierOf(unit.eidolon) === 6 ? 'e6' : 'low');
     const versatilityExtentOfGroup = (group) => {
-      let lo = Number.POSITIVE_INFINITY;
-      let hi = Number.NEGATIVE_INFINITY;
+      const samples = [];
+      // ⚠️ **按角色去重**（2026-10-17 加分位尺子时一起修）：`versatilityRaw` 是
+      //    「角色 + 组」级的，同一个角色在同一组里的**每条整包都带同一个值**
+      //    （低档组：E0/E1/E2 三档平均后固定给所有档；E6 组：自己那一档的平均），
+      //    所以照 `all` 直接收集等于给「配装多的角色」重复计票 —— 分位端点会被
+      //    那些角色拽过去（极端值本身不受影响，分位受影响）。
+      //    实测样本规模：低档组 109 条整包去重后 **36 个角色**、E6 组 50 条 → **50 个角色**。
+      const seen = new Set();
       for (const unit of all) {
         if (versatilityGroupOf(unit) !== group) continue;
         if (isVersatilityIgnored(unit.name, availability)) continue;
-        const v = Number(unit.versatilityRaw) || 0;
-        if (v < lo) lo = v;
-        if (v > hi) hi = v;
+        if (seen.has(unit.name)) continue;
+        seen.add(unit.name);
+        samples.push(Number(unit.versatilityRaw) || 0);
       }
-      return Number.isFinite(lo) ? { lo, hi } : { lo: 0, hi: 0 };
+      return versatilityExtentOf(samples);
     };
     /** 低档组（E0/E1/E2）的尺子 —— 同时是载荷 `versatility.lo/hi` 的默认值（低档组条数最多）。 */
     const versatilityExtent = versatilityExtentOfGroup('low');
@@ -6504,6 +6595,11 @@ const buildConclusionInner = (envs, options = {}) => {
       //    `lo` / `hi` 取**低档组**那把（E0/E1/E2 一起归一）；`byTier[6]` 取 **E6 组**那把，
       //    `byTier[0..2]` 仍指回低档组那把。`byTier` 这个形状保留只为载荷兼容
       //    （详情窗口的验算公式按 `byTier[档] ?? 整榜` 取，天然就分对了组）。
+      // ⚠️ **2026-10-17 修复起这两个端点不再是组内极值，而是 p5 / p95**
+      //    （`versatilityExtentOf`）：原始量是长尾计数，裸 min-max 会被一个离群值撑满，
+      //    实测榜面 180 条里 126 条 ≤10 分。所以界面上的措辞是「组内 5%~95% 分位」，
+      //    而**不是**「榜内最小 ~ 最大」—— 超出这个区间的会夹到 0 / 100。
+      //    裁剪比例与最少样本数见 `SCORING.versatilityExtentTrim`。
       // ⚠️ `byTier` **嵌在 `versatility` 里**而不是与它平级：`herta-test.mjs` 有一条通用
       //    断言遍历 `frontierExtents` 的每个值检查 `{lo, hi}` 合法 —— 平级会多出一个
       //    「不是 {lo,hi}」的键，把那条与本改动无关的判据判红。

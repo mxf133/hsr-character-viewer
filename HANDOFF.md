@@ -3992,6 +3992,36 @@ min-max 对离群值敏感。这是**已知特性**，要换成分位 / 秩次�
   **开拓者 = 毁灭·物理属性**、**三月七 = 存护·冰属性**。
   1500px 视口下三列权重各 **461px**、行数 **3 / 2 / 3**、无标签被 ellipsis 吃掉。
 
+### 4.2AT v4.6.119（2026-10-17）：角色泛用性的算法修复 —— 尺子换分位夹逼 + 缺副本不再按 0
+
+用户 2026-10-17：「你负责分析并修复角色泛用性的算法，先检查目前的情况」。
+分支 `fix/versatility-algorithm`（worktree `.worktrees/fix-versatility-algorithm`）。
+诊断探针 `tools/_probe-vers-diagnose.mjs`（入库，可复跑）。
+
+**诊断出的三个问题**（数据见 `docs/功能要求.md` §10 与 `src/version.js` 的 v4.6.119 条）：
+
+| # | 问题 | 定性 | 本轮处理 |
+| --- | --- | --- | --- |
+| ① | 尺子是裸 min-max，被单个离群值撑满（榜面 180 条里 126 条 ≤10 分、中位 3.8、90 分以上 3 条） | 算法缺陷 | **修**：端点改 p5 / p95（用户拍板） |
+| ② | 跨副本分母是「全部副本权重和」，原始量中位随「有数据副本数」从 0.169 爬到 1.044（6.2 倍） | 口径错误照抄（强度那侧的论据不适用于泛用性） | **修**：只在有证据的副本上加权（用户拍板） |
+| ③ | 低档组「三档平均」把 E1/E2 的稀疏惩罚摊进来（`raw ÷ E0 本档值` 中位 0.59） | 用户 2026-10-16 第 3 条定的口径 | **不动**（用户明确保留），已留作下一轮决策 |
+
+| 文件 | 改了什么 |
+| --- | --- |
+| `public/scripts/advice.js` | `SCORING` 新增 `versatilityExtentTrim`（0.05）与 `versatilityExtentTrimMinSamples`（20）；新增导出 `versatilityExtentOf()`（p5/p95，样本少退回 min/max）；`versatilityExtentOfGroup` 改为收集样本并**按角色去重**；`versatilityPerTier` 的分母从 `strengthWeight` 改成 `versaWeight`（该整包有数据的副本权重和）；`teamPlan` 的 `groupExtents` 兜底改走同一个 `versatilityExtentOf` 并跳过「不用抽就有」的角色；`envVersatility` / `extents.versatility` 的注释同步新口径 |
+| `public/scripts/advice-view.js` | 分项表原始量列：泛用性写「组内 5%~95% 分位 x ~ y」（不再写「榜内」）；分项脚注改成「尺子取所在组的 5%~95% 分位，超出按 0 / 100 夹逼」；来源块脚注同义改写；「为什么」那一格补「只算有投稿的副本」 |
+| `tools/herta-test.mjs` | 导入 `versatilityExtentOf`；新增 2 条 ⭐ 回归（尺子对离群值免疫 / 只投一个副本不被除小）→ **116 项** |
+| `tools/_probe-vers-diagnose.mjs` | **新增**（只读）：原始量分布、0 值成因、逐副本贡献、星魂档覆盖、四种尺子对比、三档平均失真、副本覆盖数 vs 原始量 |
+| `docs/功能要求.md` | §5 泛用性整节补 ✅ 修复段（尺子 / 缺副本 / 三档平均的已知特性）、§6.3 表格泛用性行重写、§8 第 26 项、§9 取舍表第 16 项 + 新增第 18 项、新增 §10 本轮清单（原 §10/§11 顺延为 §11/§12） |
+| `src/version.js` / `package.json` | changelog 加 v4.6.119 / version 4.6.119 |
+
+**实测**（`node tools/_probe-vers-diagnose.mjs`）：低档组原始量中位 0.51 → **1.67**、榜面中位分
+3.8 → **4.1**、p90 30.8 → **60.3**、90 分以上 3 → **9** 条；E6 组原始量中位 0.79 → **1.76**、
+中位分 2.0 → **7.7**、p90 30.4 → **56.1**；副本覆盖爬升 6.2 倍 → **3.0 倍**。
+
+**测试**：`herta-test` 116 / `team-plan-test` 40 / `e2e` 193 全绿。CDP 套件本机未开 9222 →
+按惯例跳过并做 `node --check`（该套件没有钉泛用性区间那行文案）。
+
 ---
 
 ## 9. Git 约定
