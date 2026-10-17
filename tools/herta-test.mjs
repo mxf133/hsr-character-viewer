@@ -1006,6 +1006,30 @@ check('金数判空必须走 hasNumber() —— Number(null) === 0 会印出「0
   assert.equal(hasNumber(Infinity), false);
 });
 
+check('抽卡方案卡片：「全队金数」不许印两遍（用户 2026-10-18）', () => {
+  /**
+   * 源码级护栏（与上面那条 `hasNumber` 同一个路数）。
+   *
+   * 用户原话：「抽卡方案给的配队有些会再显示一次全队金数，不要重复显示」。
+   * 卡片第一行印的是 `账面 N 金｜补金 M 金`，紧接着那句 `最佳证据：… · 0T · 8 金 · 4.1 版本`
+   * 里又印一次 —— 而「账面的金数」与「证据那支队的金数」**本来就是同一个数**
+   * （方案的目标档位就是拿那条证据的档位算出来的），所以绝大多数卡片一行里出现两个
+   * 一模一样的「8 金」。
+   *
+   * 修法：证据金数只在**与账面不同**时才补印（目标档位比投稿档位高时才会不同）。
+   * 这条护栏钉住那个判据还在 —— 只看「有没有拿 displayGold 去比」，
+   * 不钉具体写法（改写措辞不该判红）。
+   */
+  const src = readFileSync(resolve('public/scripts/advice-view.js'), 'utf8');
+  const from = src.indexOf('const b = row.bestEnv;');
+  const to = src.indexOf('const video = videoLink(b.video)', from);
+  assert.ok(from > 0 && to > from, '找不到抽卡方案卡片的「最佳证据」那一段');
+  const block = src.slice(from, to);
+  assert.ok(/displayGold/.test(block),
+    '「最佳证据」里的金数必须先与卡片的账面金数（displayGold）比对，相等时不再印第二遍');
+  assert.ok(/bestTeamGold/.test(block), '证据金数本身仍要在「与账面不同」时印出来');
+});
+
 check('强度详情窗口：投入项与单调包络的文案都不许回来（用户 2026-10-17 第 2 条）', () => {
   /**
    * 源码级护栏（与上面那条「不许写满分 / 达标 / 及格」同一个路数）。

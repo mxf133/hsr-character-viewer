@@ -3098,6 +3098,51 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
         avByRoster.set(key, { rosterKey: key, members, hits, allTeamsSource: true });
       }
     }
+    // 各副本的**版本权重表**（`{版本: 权重}`，服务端 `seasonWeights` 现算）：
+    // 下面「旧版本成绩折价」按它取权重。
+    const seasonWeightsOf = new Map((conclusion?.frontierEnvs || [])
+      .map((env) => [env.id, env.seasonWeights || null]));
+    /**
+     * **旧版本成绩的折价因子**（用户 2026-10-18：「有些老队伍的队伍得分异常」）。
+     *
+     * 这一池（行动值前沿 ∪ 全队伍表）的强度一直是「只看本队自己的行动值」，**不进版本
+     * 加权** —— v4.6.125 只把逐档榜那条链接回了 `Σ(版本权重 × 该版本强度) ÷ Σ(版本权重)`，
+     * 这一池漏在外面。实测后果（`tools/_probe-plan-audit.mjs`，中配账号）：
+     * 一支只有 **4.4** 版本成绩的队（飞霄/不死途/缇宝/千冶•刃）在这里拿 **92.7**，
+     * 而同一支队在逐档榜那条路上只有 **48.7** —— 同一个「强度」在两张卡上差 44 分，
+     * 而且等于「越老越不吃亏」：`avTeams` 只留每关「权重最高的有数据版本」那一行，
+     * 那一行当年是 0 行动值就照样算 100。
+     *
+     * 因子 = **该版本权重 ÷ 该副本窗口里权重最大的那一版**（默认表 6:5:4:3:2:1）：
+     *   * 当前版本 → 1.00（这一池里**当前版本**的 0 行动值仍然是 100，「登顶」这条口径
+     *     本身没变，见 `docs/功能要求.md` §4.5）；
+     *   * 4.1（moc 窗口 `4.5:6 … 4.0:1`）→ 2/6 = 0.33。
+     * 也就是「旧成绩按用户设的版本权重**打折**」，而**不是**照抄逐档榜的「缺版本按 0」——
+     * 后者会把这一池整条链压到 ≤29 分（它本来就是用来捞 0 行动值队伍的），等于取消 §4.5。
+     * ⚠️ 副作用（实测）：`avTeams` 每关 8 支**多数是旧版本**（moc 4.1~4.3、绝境全是 4.5），
+     * 所以折价之后这一池整体落在 ~75 分以下、方案前排由逐档榜那条链承接。这是口径的
+     * 必然结果（「有版本权重在，满分应当非常难」），**不是**回归；要让 0 行动值队伍重新
+     * 登顶，该改的是 `avTeams` 的**选行**（按版本优先），不是把折价删掉。
+     *
+     * 取不到 `seasonWeights`（老载荷 / 合成夹具）→ 因子 1，不出现 NaN；
+     * 版本不在表里（窗口外）→ 按**表里最小的那档**折（它比窗口内任何一版都老）。
+     */
+    const versionFactorOf = (h) => {
+      const table = seasonWeightsOf.get(h.id);
+      if (!table) return 1;
+      let top = 0;
+      let low = Infinity;
+      for (const raw of Object.values(table)) {
+        const n = Number(raw);
+        if (!Number.isFinite(n) || n < 0) continue;
+        if (n > top) top = n;
+        if (n < low) low = n;
+      }
+      if (!(top > 0)) return 1;
+      const own = Number(table[String(h.season ?? '')]);
+      const effective = Number.isFinite(own) && own >= 0 ? own : (Number.isFinite(low) ? low : 0);
+      return Math.max(0, Math.min(1, effective / top));
+    };
     for (const av of avByRoster.values()) {
       const hitEnvs = av.hits.filter((h) => Number.isFinite(h.av));
       if (!hitEnvs.length) continue;
@@ -3136,7 +3181,7 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
           // 什么都没有（合成夹具）：0 行动值仍是顶格，其余按第二档天花板记 —— 确定的退路。
           envStrength = h.av === 0 ? 100 - pinch : SCORING.strengthSecondBandCap;
         }
-        return { ...h, envStrength };
+        return { ...h, envStrength: envStrength * versionFactorOf(h) };
       });
       const ownWeight = withStrength.reduce((n, h) => n + h.weight, 0);
       if (!(ownWeight > 0)) continue;

@@ -4276,9 +4276,15 @@ const teamPlanTip = (row, plan) => {
       //    否则读者会拿总榜那一列的数字来对，对不上还以为是算错了。
       //    ⚠️ 刻度那一格必须写出**「跳过的更重关卡按 0 计」**（v4.6.112）：少了它，
       //    读者会以为「只在轻关卡 0 行动值」也能拿高分（实测那正是用户报的 bug）。
+      //    ⚠️ **v4.6.128 起还要写出「旧版本按版本权重折价」**（用户 2026-10-18：
+      //    「有些老队伍的队伍得分异常」）：这两池原来完全不进版本加权，只有 4.1 期
+      //    0 行动值的老队也能印 100。折价因子 = 该版本权重 ÷ 本副本最新那一版，
+      //    所以「0 行动值 = 100」这句只对**当前版本**成立 —— 不写出来，读者拿
+      //    4.1 期的 0 行动值来对账就会以为算错了（§4.5）。
       r.avSource
         ? ['队伍强度', `本队行动值强度 ${num(r.strengthPct)}`,
-          '0 ~ 100（本队各关行动值，0 行动值 = 100；跳过的更重关卡按 0 计）',
+          '0 ~ 100（本队各关行动值，0 行动值 = 100；跳过的更重关卡按 0 计；'
+          + '旧版本成绩按版本权重折价）',
           `${num(r.strengthPct)} × ${ws}`]
         : ['队伍强度', `强度分 ${num(r.strengthPct)}`,
           '0 ~ 100（绝对刻度）',
@@ -4923,8 +4929,19 @@ const renderTeamPlan = (conclusion) => {
       const scoreText = scoreTextOf(meta?.mode, meta?.stage, b.actionValue, tierLabelOf(meta, b.tier));
       if (scoreText) best.appendChild(text('span', '', ` · ${scoreText}`));
       if (hasNumber(b.bestTeamGold)) {
-        best.appendChild(text('span', '', ' '));
-        best.appendChild(goldText(b.bestTeamGold));
+        // ⚠️ **同一个金数只印一次**（用户 2026-10-18：「抽卡方案给的配队有些会再显示一次
+        //    全队金数，不要重复显示」）。证据金数与上面那句「账面 N 金」量的本来就是同一个
+        //    东西（账面 = 这套配置的金数），而方案里的目标档位通常**就是**投稿那一档，
+        //    所以绝大多数卡片两个数完全相等 —— 一行里印两遍「8 金」。
+        //    只在**两者不同**时才补在后面（目标档位比投稿档位高时才会不同，那种情况
+        //    「证据 8 金 / 账面 11 金」是有信息量的）。
+        //    ⚠️ 比较对象是**印出来的那个账面数**（`displayGold`，隐金后），不是 `gold`。
+        const shownGold = Number(row.displayGold ?? row.gold);
+        const evidenceGold = Number(b.bestTeamGold);
+        if (!(Number.isFinite(shownGold) && shownGold === evidenceGold)) {
+          best.appendChild(text('span', '', ' '));
+          best.appendChild(goldText(b.bestTeamGold));
+        }
       }
       if (b.season) best.appendChild(text('span', '', ` · ${b.season} 版本`));
       facts.appendChild(best);
