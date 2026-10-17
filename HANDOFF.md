@@ -1893,6 +1893,41 @@ $env:DSH_HSR_DATA_FILE='accounts-virtual.json'; node bin/serve.mjs --port 8372 -
 
 ---
 
+### 4.2DD 本轮（v4.6.119，分支 `fix/cost-effectiveness`）—— 角色性价比**第二轮**：让成本真正进得去、让刻度能读
+
+**起因**：用户「新建分支，你负责分析并修复角色性价比的算法，先检查目前的情况」。
+v4.6.118 刚把口径改成配装，但**没兑现** —— 先审计，再按用户选的方向（bug + 指数 + 抗离群刻度）改。
+
+| 改的文件 | 改了什么 |
+| --- | --- |
+| `public/scripts/advice.js` | `SCORING.ownGoldFactorPower` 0.5 → **1**；新增 `SCORING.costScorePower = 0.5`（性价比得分先开平方再榜内归一）；`costScaled()` / `costExtent` / `costScore` 走变换；`extents.cost` 多一个 `power` 字段；整包多一个 **`ownGold`**（隐金前金数，是要下发的那个）；`byTier` 的过滤改过 `eidolonTierOf`（幂等，防上游改存原始级数）|
+| `src/server/conclusion.js` | `slimFrontierUnit` 与 `archiveCharacterPacks` **两条投影**都加 `ownGold`；后者补上 v4.6.118 漏掉的 `ownGoldFactor` / `ownGoldRef` |
+| `public/scripts/advice-view.js` | 标题行的除数改用 `ownGold`；分项表「原始量」格与标题句按 `extents.cost.power` **现算**「开平方」文案；脚注「不进公式」改成事实；星魂档兜底筛选过 `eidolonTierOf` |
+| `tools/herta-test.mjs` | +3 条：逐整包复算 `100 ×(√total − lo)/(hi − lo)`、`ownGold` 能还原系数、E3 落在 E2 页 |
+| `tools/e2e-test.mjs` | +2 条：`/conclusion` 每个整包带 `ownGold`（≥ 隐金后的 `gold`）、`/api/archive/packs` 带「系数三件套」 |
+| `tools/check-advice-layout.mjs` | 脚注正则同步到新文案（那条在 CDP 套件里，没浏览器时只跑 `node --check`）|
+| `src/version.js` / `package.json` | 4.6.118 → **4.6.119** + 本轮 changelog |
+| `docs/功能要求.md` | 术语「得分」、§6.3 性价比那行、脚注说明、§8 新增 41~43 条、§9 取舍表 21/22 条、新增 §10 本轮清单（原 §10 降为 §10.1）|
+| `docs/评分模型设计.md` | 新增 **v63**（审计数字 + 两个旋钮的扫码表 + 两个 bug 的成因）|
+
+**量出来的结果**（261 个整包）：同成绩违反率 **14.3% → 10.3%**；`Spearman(性价比, 强度)`
+**0.866 → 0.741**；性价比得分 p50 **7.6 → 20.0**、<10 分的占比 **57.5% → 28.4%**；
+E6 档中位 **4.1 → 11.7**；开满隐金时「系数与除数对不上」**67 → 0** 条。
+
+⚠️ **三个别再踩的坑**：
+1. **两个旋钮必须一起读**。只看 q=1.0 会得出「E6 掉到 1.6」的结论，但开平方把它抬回 11.7。
+2. **`p5/p95` 裁剪不能用**：它把性价比的实际影响力顶到 **54%**（名义 40），等于偷偷加权。
+3. **隐金设置不能通过 `setHiddenCosts()` 传给 `buildConclusion`**（它会用 `options.hiddenCosts`
+   重置模块级状态）—— 探针要写 `buildConclusion(..., { hiddenCosts })`，否则量出来的 `hiddenCut` 恒为 0，
+   会误判成「这个 bug 不存在」（本轮第一次就是这么被骗的）。
+
+**本轮新增探针**（都已入库，按仓库约定）：`_probe-cost-scale` / `_probe-cost-decomp` /
+`_probe-cost-gaps` / `_probe-cost-invariant` / `_probe-cost-q` / `_probe-cost-transform` /
+`_probe-cost-clip` / `_probe-cost-final` / `_probe-cost-drift` / `_probe-cost-board` /
+`_probe-own-gold-print`。
+
+---
+
 ## 5. 测试命令 / 如何验证
 
 > 📄 **CDP 布局套件有一份专门的上手/排障文档：[`docs/CDP布局套件.md`](docs/CDP布局套件.md)**

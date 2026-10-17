@@ -1213,6 +1213,56 @@ check('角色性价比是**配装口径**：同一个角色，更贵的整包性
   const ext = out.frontierExtents?.cost;
   assert.ok(ext && Number.isFinite(ext.lo) && Number.isFinite(ext.hi),
     '性价比的归一上下限必须仍然下发');
+  // ---- v4.6.119：刻度指数（开平方）必须下发，且「得分」能按它复算出来 ------------
+  // 原始量跨 1623 倍，线性 min-max 会把 57.5% 的整包压到 10 分以下，所以算分时先开平方
+  // 再归一。界面那句验算式要跟着 `power` 走，所以它必须进载荷。
+  assert.equal(Number(ext.power), SCORING.costScorePower,
+    `性价比刻度指数必须下发（期望 ${SCORING.costScorePower}，实际 ${ext.power}）`);
+  for (const u of packs) {
+    const scaled = Math.pow(Math.max(0, Number(u.total) || 0), Number(ext.power));
+    const want = 100 * (scaled - ext.lo) / (ext.hi - ext.lo);
+    assert.ok(Math.abs((Number(u.costScore) || 0) - want) < 1e-3,
+      `${u.name} E${u.eidolon}：性价比得分必须 = 100 ×(√原始量 − lo)/(hi − lo)，`
+      + `期望 ${want.toFixed(4)}，实际 ${u.costScore}`);
+  }
+  // ---- v4.6.119：整包系数必须能按「下发出去的两个金数」复算出来 -------------------
+  // 界面印的是「最便宜 X 金 ÷ 本整包 Y 金」。`gold` 是隐金后的，系数算的是隐金前的，
+  // 所以必须另发 `ownGold`；否则一开隐金这条除法就还原不出系数（实测 67/261 条对不上）。
+  for (const u of packs) {
+    assert.ok(Number.isFinite(Number(u.ownGold)) && Number(u.ownGold) >= Number(u.gold),
+      `${u.name} E${u.eidolon}：必须下发隐金前的原始金数 ownGold（实际 ${u.ownGold}）`);
+    const want = Math.pow(
+      Math.max(1, Number(u.ownGoldRef) || 1) / Math.max(1, Number(u.ownGold) || 1),
+      SCORING.ownGoldFactorPower,
+    );
+    assert.ok(Math.abs((Number(u.ownGoldFactor) || 0) - want) < 1e-3,
+      `${u.name} E${u.eidolon}：界面印的「最便宜 ÷ 本整包」必须还原出系数 `
+      + `（期望 ${want.toFixed(6)}，实际 ${u.ownGoldFactor}）`);
+  }
+});
+
+check('星魂档视图按桶收：E3 的整包必须出现在 E2 页里（四个视图不漏、也不错桶）', () => {
+  // `EIDOLON_TIERS` 只有 0/1/2/6，E3~E5 折进 E2 —— 整包在构造时就折过（`packKeyOf` 与
+  // 整包行都过 `eidolonTierOf`），这条钉的是**用户看到的那个结果**：抽到 E3 的人切到
+  // E2 页能看见自己的整包。2026-10-17 把 `byTier` 的过滤从原始级数改成 `eidolonTierOf`，
+  // 让「只收本桶」写成代码（今天幂等，防的是上游哪天改存原始级数）。
+  const availability = { characters: { Lim: { limited: true } }, lightCones: {} };
+  const e3 = teamFixture(['A', 'B', 'C', 'Lim'], { perfect: 10, target: 0, pass: 0, below: 0 }, 0,
+    [{ char: 'A', eidolon: 0 }, { char: 'Lim', eidolon: 3 }]);
+  e3.cost = 5;
+  const out = buildConclusion([envFixture('moc', [e3])], { availability, account: undefined });
+  const inTier = (tier) => (out.frontierTiers?.[String(tier)] || [])
+    .filter((u) => u.name === 'Lim');
+  const e2 = inTier(2);
+  assert.ok(e2.length >= 1, 'E3 的整包必须出现在 E2 桶里');
+  assert.equal(Number(e2[0].eidolon), 2, `E3 折档后 unit.eidolon 应当是 2，实际 ${e2[0].eidolon}`);
+  assert.ok(!inTier(6).some((u) => Number(u.eidolon) === 3), 'E3 的整包不该出现在 E6 桶里');
+  for (const tier of EIDOLON_TIERS) {
+    for (const u of out.frontierTiers?.[String(tier)] || []) {
+      assert.equal(eidolonTierOf(u.eidolon), tier,
+        `档位视图 ${tier} 里混进了 E${u.eidolon}（折档后应为 ${eidolonTierOf(u.eidolon)}）`);
+    }
+  }
 });
 
 check('buildConclusion：星魂的分子是「期望出分」——分布往满分挪就加分，没挪就是 0', () => {

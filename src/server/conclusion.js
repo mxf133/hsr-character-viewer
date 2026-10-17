@@ -414,6 +414,11 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null, withVideo = false) =>
   superimp: Number(unit.superimp) || 1,
   // 整包自己的金数：**2026-10-17 起进公式了**（配装口径的 `ownGoldFactor`，见下面那个字段）。
   gold: Number(unit.gold ?? unit.pulls) || 0,
+  // ⚠️ **系数的分母是「隐金前」的金数**（`rawGold`），而 `gold` 是隐金后的。
+  //    2026-10-17 第二轮修：界面原来拿 `gold` 去写「最便宜 X 金 ÷ 本整包 Y 金」，
+  //    一开隐金就对不上（开满隐金实测 67/261 条还原不出印出的系数，还出现「1 ÷ 0」）。
+  //    所以原始金数必须**单独下发** —— 这一格就是教读者验算的那个分母。
+  ownGold: Number(unit.ownGold ?? unit.rawGold ?? unit.gold ?? unit.pulls) || 0,
   total: unit.total,
   // 配装口径的「整包自身金数」系数（用户 2026-10-17「走 A + D」）：
   //   `total` 已经乘过它，界面要在性价比来源表的标题行把它印出来，
@@ -564,6 +569,12 @@ const slimCharacterPack = (unit, i18n, maps) => ({
   lcIcon: unit.lc ? resolveIcon(maps, 'cone', unit.lc) : null,
   superimp: Number(unit.superimp) || 1,
   gold: Number(unit.gold ?? unit.pulls) || 0,
+  // ⚠️ 与 `slimFrontierUnit` 逐字段等价（见那边注释）：这个面板的浮层要自己验算
+  //    「Σ逐关卡贡献 × 整包系数 = 合计」，缺 `ownGoldFactor` 就静默当成 1、
+  //    缺 `ownGold` 就印出与系数对不上的除法。v4.6.118 只补了总榜那一路，面板漏了。
+  ownGold: Number(unit.ownGold ?? unit.rawGold ?? unit.gold ?? unit.pulls) || 0,
+  ownGoldFactor: unit.ownGoldFactor ?? 1,
+  ownGoldRef: unit.ownGoldRef ?? null,
   total: unit.total,
   // 三个分项 + 合成后的「角色得分」——与 `slimFrontierUnit` **必须逐字段等价**：
   // 逐档榜的浮层会拿面板这份数据整份替换 `unit.envs` 再重画，少一个字段就会静默显示

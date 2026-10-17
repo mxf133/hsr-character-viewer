@@ -1039,15 +1039,71 @@ export const SCORING = {
    *   ownGoldFactor = (该角色榜上最便宜的整包金数 ÷ 本整包金数) ^ ownGoldFactorPower
    * ```
    *
-   * `0` = 关掉这一项（退回「只看队伍金数」的旧口径）；`1` = 完全按金数比例线性折算。
-   * **0.5** 是实测拍的：0.3 太松（E6 均值 11.5）、1.0 太狠（E6 中位只剩 1.6）。
-   * 完整对照见 `frontierBoard` 里 `ownGoldFactor` 那一段注释。
+   * `0` = 关掉这一项（退回「只看队伍金数」的旧口径）；`1` = 按金数比例线性折算。
+   *
+   * ## 为什么从 0.5 提到 1.0（2026-10-17 第二轮）
+   *
+   * 0.5 是上一轮为了「别把 E6 打到 0」拍的，但它**没能真正兑现配装口径** ——
+   * 审计（261 个整包，`tools/_probe-cost-q.mjs` / `_probe-cost-decomp.mjs`）：
+   *
+   *   * 成本项只解释了性价比方差的 **5.0%**（强度单独 R²=0.558、两者合计 0.769）
+   *     —— 一个叫「角色性价比」的分项，方差里九成还是**强度**；
+   *   * `Spearman(性价比, 强度) = 0.866`，两个分项在秩上几乎是同一件事；
+   *   * 同角色「|Δ强度| ≤ 1」的 42 组里 **6 组（14.3%）**更贵的整包性价比反而更高
+   *     —— `docs/功能要求.md` §8 第 39 条那条不变式等于没成立。
+   *
+   * 提到 1.0 之后（同一批数据）：
+   *
+   *   * 同成绩违反率 14.3% → **9.5%**（1.5 时 2.4%，但 E6 只剩 0.6 分，太狠，不用）；
+   *   * `Spearman(性价比, 强度)` 0.866 → **0.741**，两个分项开始分得开。
+   *
+   * ⚠️ **它必须与 `costScorePower` 一起看**：1.0 让贵档掉得更快（E6 中位 4.1 → 1.6，
+   *    线性刻度下），而 `costScorePower = 0.5` 又把低分那头抬回来（E6 中位 18.3 → 11.7）。
+   *    只看这一个旋钮会得出「E6 全变 0 分」的错误结论。
    *
    * ⚠️ 改它会同时改「角色性价比」的排序、min-max 区间与**抽卡方案里每一步补金的
    *    性价比值**（`teamPlan` 的 `charScoreOf` 读的是同一个 `unit.total`）。改之前先跑
-   *    `tools/_probe-own-gold-factor.mjs` 看分布。
+   *    `tools/_probe-cost-q.mjs` 看分布。
    */
-  ownGoldFactorPower: 0.5,
+  ownGoldFactorPower: 1,
+  /**
+   * **性价比得分**的刻度指数：原始量先开平方，再做榜内 min-max。
+   *
+   * ```
+   *   costScore = 100 × (total^costScorePower − 榜内最小) / (榜内最大 − 榜内最小)
+   * ```
+   *
+   * `1` = 不退让（2026-10-17 之前的线性 min-max）。
+   *
+   * ## 为什么必须压缩
+   *
+   * `total` = Σ(关卡权重 × 100 × 表现 × 金数项) × 整包系数，实测跨度 **1623 倍**
+   * （最小 0.40、最大 644.2，`tools/_probe-cost-audit.mjs`）。线性 min-max 把中位数压到
+   * **7.6 / 100**：**57.5%（150/261）的整包不到 10 分**，那一列读起来像没算。
+   * 而且 100 分锚点由**单个**离群整包（不死途 E0S5 644.2）决定 —— 换一版数据整列就跳。
+   *
+   * ## 为什么是 0.5（三个候选都实测过）
+   *
+   * 判据是「分布可读」+「实际影响力仍接近名义权重」。下表在 `ownGoldFactorPower = 1`
+   * 下量（`tools/_probe-cost-transform.mjs` / `_probe-cost-clip.mjs` /
+   * `_probe-cost-final.mjs`）：
+   *
+   * | 刻度 | p10 | p50 | σ | 强度 / 性价比 / 泛用性（实际影响力，名义 40/40/20）|
+   * | --- | --- | --- | --- | --- |
+   * | 线性 | 0.3 | 4.7 | 16.2 | 41.5 / 38.7 / 19.8 |
+   * | x^0.6 | 2.5 | 15.6 | 19.6 | 38.3 / 43.3 / 18.3 |
+   * | **x^0.5** | **4.1** | **20.7** | **20.5** | **37.6 / 44.4 / 18.0** |
+   * | p5/p95 裁剪 + x^0.5 | 2.7 | 29.9 | 30.2 | 31.1 / 54.0 / 14.9 |
+   *
+   * 裁剪那一档把性价比顶到 **54%** —— 那就变成「偷偷给性价比加权」，不能用。
+   * 0.5 是唯一「中位能读（20.7）、p10 不再是 0（4.1）、权重还认得出」的一档：
+   * 性价比的实际影响力 41.1% → 44.4%，**+3.3pp 的偏移是已知并接受的**。
+   * 要抹平它只能连强度一起做 σ 对齐，那会推翻「强度是绝对刻度」（用户 2026-10-14），不动。
+   *
+   * ⚠️ 换算链因此多了一步，界面那句验算公式必须写成「先开平方」——
+   *    `advice-view.js` 的 `scoreBreakdownTable()` 与 `docs/功能要求.md` §5 已同步。
+   */
+  costScorePower: 0.5,
   /**
    * 抽卡方案（`budgetPlan`）最多列多少个单位。
    *
@@ -6082,7 +6138,9 @@ const buildConclusionInner = (envs, options = {}) => {
   //   score(整包, env) = max over 含它的配置 r 的 [ 100 × 档位权重 × 行动值项
   //                                             × (该副本最便宜金数 ÷ r 的金数) ]
   //
-  //   * 整包**自己的金数不进公式**，只用于展示与「0 金不进榜」的判断（见 A 段注释）。
+  //   * 整包**自己的金数**：2026-10-17 之前不进公式（只用于展示与「0 金不进榜」的判断）；
+  //     v4.6.118 起作为**整包系数**进公式（见 `ownGoldFactor` 那一段），v4.6.119 把指数
+  //     从 0.5 提到 1.0。所以「不进公式」这句老话已经作废，别再照它推。
   //   * 权重只看用户在界面上定下的**关卡权重**（`'frontier'` 口径），与「抽卡方案」
   //     那一行互不影响（用户 2026-10 要求），换账号结果完全一致。
   //   * 并列**保持**（用户 2026-10 明确要求）：同一支队伍的成员必然同分，不再用
@@ -6332,6 +6390,17 @@ const buildConclusionInner = (envs, options = {}) => {
         //    改前这里写着「不进公式、不参与排序」，那句话已经作废。
         gold: unit.gold,
         rawGold: unit.rawGold ?? unit.gold,
+        /**
+         * **整包系数用的那个金数**（隐金前），单独给一个语义明确的字段名。
+         *
+         * 与 `rawGold` 同值，但**它是要下发的**（`slimFrontierUnit` 投影它），
+         * 因为界面那句验算「最便宜 X 金 ÷ 本整包 Y 金」的分母必须是系数实际用的那个数。
+         * 2026-10-17 第二轮之前界面拿 `gold`（隐金后）当分母，一开隐金就对不上
+         * —— 实测开满隐金 67/261 条还原不出印出的系数，还出现「1 ÷ 0」。
+         *
+         * ⚠️ `rawGold` / `hiddenCut` 仍然不下发（见上一条注释）；只有这一个公开。
+         */
+        ownGold: Number(unit.rawGold ?? unit.gold) || 0,
         hiddenCut: unit.hiddenCut ?? 0,
         pulls: unit.gold,
         total: Number(total.toFixed(4)),
@@ -6401,19 +6470,23 @@ const buildConclusionInner = (envs, options = {}) => {
      * 与强度用 `storedCost` 同一条理由：性价比量的是「这个配装本身的成本结构」，与「我手上
      * 有没有」无关 —— 否则同一个整包换个账号就算出另一个性价比。隐金只改展示。
      *
-     * ## 指数 0.5 是量出来的
+     * ## 指数为什么是 1.0（改前 0.5，2026-10-17 第二轮）
      *
-     * 实测（261 个整包，`tools/_probe-own-gold-factor.mjs`），各星魂档的得分均值：
+     * 0.5 那一版只解释了性价比方差的 5%（见 `SCORING.ownGoldFactorPower` 的注释与
+     * `tools/_probe-cost-q.mjs`），同角色同成绩下仍有 14.3% 的组「更贵反而更高」。
+     * 提到 1.0 后违反率降到 9.5%、与强度的 Spearman 从 0.866 降到 0.741。
      *
-     * | q | E0 | E1 | E6 |
-     * | --- | --- | --- | --- |
-     * | 0.3 | 23.1 | 16.8 | 11.5 |
-     * | **0.5** | **23.1** | **14.6** | **8.6** |
-     * | 0.7 | 23.1 | 12.8 | 6.6 |
-     * | 1.0 | 23.1 | 10.6 | 4.7 |
+     * 各档得分**中位**（`tools/_probe-cost-final.mjs`，分别在线性刻度与 x^0.5 刻度下）：
      *
-     * 0.5 给出干净的单调梯度（越贵越低），又不会把 E6 整档打到 0（q=1 时 E6 中位数只剩 1.6）。
-     * E0 那一档不动是构造使然：它的系数恒为 1（分母就是它自己）。
+     * | q | 刻度 | E0 | E1 | E2 | E6 |
+     * | --- | --- | --- | --- | --- | --- |
+     * | 0.5 | 线性 | 14.8 | 9.4 | 9.4 | 4.1 |
+     * | **1.0** | **x^0.5（现行）** | **37.7** | **23.2** | **21.2** | **11.7** |
+     * | 1.0 | 线性 | 14.8 | 5.9 | 4.9 | 1.6 |
+     *
+     * ⚠️ 只看 q 会以为「1.0 把 E6 打到 1.6」，但 `costScorePower = 0.5` 会把低分那头抬回来，
+     *    实测 E6 中位是 **11.7** —— 两个旋钮必须一起读。
+     *    E0 那一档的系数恒为 1（分母就是它自己），所以它只随刻度变、不随 q 变。
      *
      * ⚠️ 它**只乘在整包层面**（一个整包一个常数），所以：
      *   * 不影响「同一个整包内部按版本挑证据行」（乘常数不改变排序）；
@@ -6551,7 +6624,15 @@ const buildConclusionInner = (envs, options = {}) => {
       }
       return all.length ? { lo, hi } : { lo: 0, hi: 0 };
     };
-    const costExtent = extentOf((u) => u.total);
+    /**
+     * 性价比的**刻度变换**（`SCORING.costScorePower`，见那个常量的注释）。
+     *
+     * ⚠️ 变换必须在取极值**之前**做：`costExtent` 的 lo/hi 与逐条得分必须建立在同一个
+     *    函数上，否则详情窗口那条验算式（`100 × (f(原始量) − lo)/(hi − lo)`）就对不上。
+     */
+    const costPower = Math.max(0.1, Number(SCORING.costScorePower) || 1);
+    const costScaled = (value) => Math.pow(Math.max(0, Number(value) || 0), costPower);
+    const costExtent = extentOf((u) => costScaled(u.total));
     /**
      * 泛用性的**两把尺子**（用户 2026-10-17 第 1 条：E6 只与 E6 比，E0/1/2 与 E0/1/2 比）。
      *
@@ -6633,7 +6714,10 @@ const buildConclusionInner = (envs, options = {}) => {
       //    改前它是 `{lo: 16.67, hi: 900}`：底部被一个几乎没数据的整包拉长、顶部被 8 个
       //    整包顶满，于是「普遍偏高、还一堆并列 100」——正是用户报的那个观感。
       strength: { lo: 0, hi: 100 },
-      cost: { lo: costExtent.lo, hi: costExtent.hi },
+      // ⚠️ 性价比的 lo/hi 是**变换之后**的刻度（`costScorePower`，现在是开平方），
+      //    所以详情窗口那句验算必须写成 `得分 = 100 × (√原始量 − lo) ÷ (hi − lo)` ——
+      //    `power` 随载荷下发，界面按它选那一步的写法（写死会在换指数时悄悄说谎）。
+      cost: { lo: costExtent.lo, hi: costExtent.hi, power: costPower },
       // ⚠️ 泛用性的区间 2026-10-17 第 1 条起**两把**（用户原话：「E6 角色应当仅与 E6 做
       //    比较，E0/1/2 与 E0/1/2 之间做比较」—— 避免不同量级之间的比较）：
       //    `lo` / `hi` 取**低档组**那把（E0/E1/E2 一起归一）；`byTier[6]` 取 **E6 组**那把，
@@ -6727,10 +6811,11 @@ const buildConclusionInner = (envs, options = {}) => {
         }
         return allEnvWeight > 0 ? acc / allEnvWeight : 0;
       })().toFixed(4));
-      // 性价比分项就是老口径的 `total`（含金数项）归一后的值 —— 口径一字未改，
-      // 只是**进了加权**、并且界面上那个数改叫「角色得分」。
+      // 性价比分项就是老口径的 `total`（含金数项）**开平方后**归一的值 —— 口径本身没改，
+      // 只是加了 `SCORING.costScorePower` 那一步压缩（原始量跨 1623 倍，线性归一会把
+      // 57.5% 的整包压到 10 分以下，见那个常量的注释）。
       unit.costScore = Number((100 * spanOf(
-        costExtent.lo, costExtent.hi, unit.total,
+        costExtent.lo, costExtent.hi, costScaled(unit.total),
       )).toFixed(4));
       // 泛用性：**按组取尺子**（用户 2026-10-17 第 1 条：E6 只与 E6 比、E0/1/2 与 E0/1/2 比）。
       // ⚠️ 夹到 0：第 5 条把「不用抽就有」的角色排除在刻度样本之外，而它们的原始量是 0，
@@ -6818,7 +6903,12 @@ const buildConclusionInner = (envs, options = {}) => {
     for (const tier of EIDOLON_TIERS) {
       const seenTier = new Set();
       byTier.set(tier, sorted.filter((unit) => {
-        if ((Number(unit.eidolon) || 0) !== tier) return false;
+        // ⚠️ 用 `eidolonTierOf` 折档，**不是** `Number(unit.eidolon) !== tier`（2026-10-17 收紧）。
+        //    `unit.eidolon` 在整包构造时就折过（`packKeyOf` / 整包行都过 `eidolonTierOf`），
+        //    所以这一句今天是**幂等的**、行为不变 —— 它的作用是让「本表只收本桶」这件事
+        //    写成代码而不是靠上游的约定。`EIDOLON_TIERS` 只有 0/1/2/6，若哪天上游改成
+        //    存原始级数，E3~E5 的整包就会在这里**四个视图一个都不进**（凭空消失）。
+        if (eidolonTierOf(unit.eidolon) !== tier) return false;
         if (seenTier.has(unit.name)) return false;
         seenTier.add(unit.name);
         return true;
