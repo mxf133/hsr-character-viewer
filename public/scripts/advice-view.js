@@ -1937,7 +1937,10 @@ const unitListOf = (conclusion, tier) => {
   if (tier === 'all') return all;
   const rows = conclusion?.frontierTiers?.[String(tier)];
   if (Array.isArray(rows)) return rows;
-  return all.filter((u) => (Number(u.eidolon) || 0) === Number(tier));
+  // ⚠️ 折档与 `advice.js` 的 `byTier` 用**同一个** `eidolonTierOf`（E3~E5 进 E2 桶）：
+  //    两处判据不一致时，E3~E5 的整包会在「新服务端」与「旧服务端」两种形态下
+  //    一个出现、一个消失。
+  return all.filter((u) => eidolonTierOf(u.eidolon) === Number(tier));
 };
 
 /**
@@ -3270,6 +3273,29 @@ const scoreBreakdownTable = (unit) => {
   /** 泛用性的原始量 2026-10-15 起是「加权队友数」（小数），另两个是 0~100 的分数（一位小数）。 */
   const rawText = (v, integer) => (integer ? num(v).toFixed(0) : num(v).toFixed(1));
   /**
+   * 性价比那一格与标题句里的**刻度变换**（2026-10-17 第二轮加：`SCORING.costScorePower`）。
+   *
+   * 原始量跨 1623 倍，线性 min-max 会把 57.5% 的整包压到 10 分以下，所以算分时先开平方
+   * 再归一（见 `advice.js` 里那个常量的注释）。**文案必须跟着 `power` 现算**：
+   * 写死「开平方」的话，哪天把指数调回 1，这一句就变成假话，而读者会照着它验算。
+   *
+   * `power` 缺省（老服务端 / 合成夹具）当作 1 = 线性，与算分那边的兜底同一条。
+   */
+  const costPower = (() => {
+    const p = Number(extents?.cost?.power);
+    return Number.isFinite(p) && p > 0 ? p : 1;
+  })();
+  const costScaleText = () => {
+    if (Math.abs(costPower - 1) <= 1e-9) return '';
+    if (Math.abs(costPower - 0.5) <= 1e-9) return '原始量开平方后，';
+    return `原始量取 ${costPower.toFixed(2)} 次方后，`;
+  };
+  const costValueText = () => {
+    if (Math.abs(costPower - 1) <= 1e-9) return '原始量';
+    if (Math.abs(costPower - 0.5) <= 1e-9) return '√原始量';
+    return `原始量^${costPower.toFixed(2)}`;
+  };
+  /**
    * 三个分项各自的**来源块**（用户 2026-10-13 第 8 条）。
    *
    * ⚠️ 三个块都是**先建好、再决定要不要挂**：`strengthSourceBlock()` 与
@@ -3340,7 +3366,7 @@ const scoreBreakdownTable = (unit) => {
       // 原始量那一格带出榜内区间（见上面 `extents` 的注释）；强度那行写绝对刻度。
       tipFactor(rawText(raw, integer),
         isAbsolute ? '（绝对刻度 0~100）'
-          : (e ? `（榜内 ${rawText(e.lo, integer)} ~ ${rawText(e.hi, integer)}）` : '')),
+          : (e ? `（${key === 'cost' ? costScaleText() : ''}榜内 ${rawText(e.lo, integer)} ~ ${rawText(e.hi, integer)}）` : '')),
       one(score),
       pct(weight),
       one(num(weight) * num(score)),
@@ -3360,7 +3386,8 @@ const scoreBreakdownTable = (unit) => {
     '角色得分 = 角色强度 × 权重 + 角色性价比 × 权重 + 角色泛用性 × 权重'
     // ⚠️ 强度**不再榜内归一**（用户 2026-10-14 的口径）：它本来就是 0~100 的绝对刻度。
     //    这里必须分开说，否则读者会拿 min-max 那条式子去验算强度，永远对不上。
-    + '（角色强度 = 绝对刻度 0~100；角色性价比：得分 = 100 ×（原始量 − 榜内最小）/（榜内最大 − 榜内最小）；'
+    + '（角色强度 = 绝对刻度 0~100；角色性价比：得分 = 100 ×（' + costValueText()
+    + ' − 榜内最小）/（榜内最大 − 榜内最小）；'
     + '角色泛用性同式，但**最小 / 最大取本星魂档自己那一把尺子**）'));
   const table = tipTable(
     ['分项', '原始量', '得分', '权重', '贡献'],
@@ -3715,9 +3742,14 @@ const costSourceBlock = (unit) => {
   //    系数 = 1（这个整包就是该角色最便宜的那套）时不印，避免满屏「×1.00」。
   const ownFactor = Number(unit.ownGoldFactor ?? 1);
   const ownRef = Number(unit.ownGoldRef);
+  // ⚠️ 分母必须是**隐金前**的金数：系数算的是 `(ownGoldRef ÷ rawGold)^q`，而 `gold`
+  //    是隐金后的。2026-10-17 第二轮修 —— 改前这里写的是 `unit.gold`，一开隐金就
+  //    「1 ÷ 0」「1 ÷ 1 = 1.000 但系数 0.577」（开满隐金实测 67/261 条对不上）。
+  //    旧服务端没有 `ownGold` 时退回 `gold`（会重新不一致，但不至于印出 undefined）。
+  const ownGold = Number(unit.ownGold ?? unit.gold) || 0;
   const ownPart = (Number.isFinite(ownFactor) && Math.abs(ownFactor - 1) > 1e-4)
     ? ` × 整包系数 ${factorText(ownFactor)}`
-      + (Number.isFinite(ownRef) ? `（最便宜 ${ownRef} 金 ÷ 本整包 ${Number(unit.gold) || 0} 金）` : '')
+      + (Number.isFinite(ownRef) ? `（最便宜 ${ownRef} 金 ÷ 本整包 ${ownGold} 金）` : '')
     : '';
   box.appendChild(text('span', 'advice-score-split-title',
     '角色性价比来源：逐关卡「权重 × 100 × 表现 ×（该副本最便宜金数 / 这支队金数）× 跨版本发挥」'
@@ -3793,7 +3825,11 @@ const frontierTip = (unit) => {
   // 脚注一律**单行**（用户要求「更简略」）：一条只说一件事，能省的定语全省。
   // ⚠️ 每条 ≤60 字有 CDP 断言钉着（`check-advice-layout.mjs` 的 notesShortOk）。
   const notes = [
-    `整包 = 角色 + 星魂档 + 光锥（含叠影）；整包自身 ${Math.max(0, Math.round(Number(unit.gold) || 0))} 金不进公式。`,
+    // ⚠️ 2026-10-17 第二轮改：这条原来写的是「整包自身 N 金**不进公式**」——v4.6.118
+    //    加了整包系数之后那句话就成了假话（整包自己的金数正是系数的分母）。
+    //    现在如实写「折成系数」，与标题行那句「× 整包系数 N（最便宜 X 金 ÷ 本整包 Y 金）」对齐。
+    //    数字用 `ownGold`（隐金前）：标题行那个除法用的就是它，两处必须同一个数。
+    `整包 = 角色 + 星魂档 + 光锥（含叠影）；整包自身 ${Math.max(0, Math.round(Number(unit.ownGold ?? unit.gold) || 0))} 金按「该角色最便宜 ÷ 本整包」折成系数。`,
     // ⚠️ 用户 2026-10-11 第二轮：**表现列现在只写实测成绩**（`285` / `0T` / `3852`），
     // 量纲由副本决定，所以脚注要把「列里那个数是什么」和「系数怎么来的」一起说清。
     // 曲线默认全程单调不增（v4.6.72 起满分线以内也有梯度）：

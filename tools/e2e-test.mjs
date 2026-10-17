@@ -363,10 +363,17 @@ const main = async () => {
       check('conclusion 每个整包带三个分项 + 角色得分（v4.6.95 新增）',
         (hiddenOn.body?.frontierUnits || []).length > 0
         && (hiddenOn.body.frontierUnits).every((u) => ['strengthScore', 'costScore',
-          'versatilityScore', 'characterScore', 'strengthTotal', 'versatilityRaw']
+          'versatilityScore', 'characterScore', 'strengthTotal', 'versatilityRaw', 'ownGold']
           .every((k) => Number.isFinite(Number(u[k])))
           && Number(u.characterScore) >= 0 && Number(u.characterScore) <= 100),
         '有整包缺分项 / 角色得分，或角色得分不在 0~100');
+      // 整包系数那条验算链：界面印「最便宜 X 金 ÷ 本整包 Y 金」，分母必须是**隐金前**的
+      // `ownGold`（系数就是按它算的），而不是隐金后的 `gold` —— v4.6.119 修。
+      check('conclusion 每个整包带 ownGold（系数分母，≥ 隐金后的 gold）',
+        (hiddenOn.body?.frontierUnits || []).length > 0
+        && (hiddenOn.body.frontierUnits).every((u) => Number.isFinite(Number(u.ownGoldFactor))
+          && Number(u.ownGold) >= Number(u.gold)),
+        '有整包缺 ownGold / ownGoldFactor，或 ownGold 小于隐金后的金数');
       check('conclusion 逐 env 带 envStrength / envStrengthValue（强度分项的来源）',
         (hiddenOn.body?.frontierUnits || []).every((u) => (u.envs || []).every(
           (e) => Number.isFinite(Number(e.envStrength)) && Number.isFinite(Number(e.envStrengthValue)),
@@ -559,6 +566,15 @@ const main = async () => {
       check('每条配装都有自己的性价比分与整包标识',
         (packs.body?.packs || []).every((p) => Number.isFinite(p.total) && p.key),
         '有配装缺 total/key');
+      // ⚠️ 面板这条投影**必须是 `slimFrontierUnit` 的逐字段等价物**（v4.6.119 补的漏）：
+      //    v4.6.118 加了整包系数却只补了总榜那一路，从面板打开的性价比来源表会把系数
+      //    静默当成 1，「Σ逐关卡贡献 × 系数 = 合计」在那里对不上。
+      check('packs 每条配装都带整包系数三件套（ownGold / ownGoldFactor / ownGoldRef）',
+        (packs.body?.packs || []).length > 0
+        && (packs.body.packs).every((p) => Number.isFinite(Number(p.ownGold))
+          && Number.isFinite(Number(p.ownGoldFactor))
+          && Number.isFinite(Number(p.ownGoldRef))),
+        '面板那一路缺整包系数，来源表在面板里验算不出来');
       check('每条配装逐副本给出最佳证据队伍（含中文名）',
         (packs.body?.packs || []).every((p) => (p.envs || []).every((e) => (e.members || [])
           .every((m) => m.nameCn))),
