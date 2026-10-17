@@ -117,6 +117,19 @@ export const conclusionEnvs = async (index, options = {}) => {
       withEidoPerf: true,
       // 绝境行动值必须与实际投稿的配装绑定，不能把 roster 的 bestAv 配到另一条 sample 上。
       withFrontier: true,
+      /**
+       * 版本权重（用户 2026-10-16 第 3 条 / v4.6.117 修的缺陷）。
+       *
+       * ⚠️ **必须透传**：聚合层用它算两样东西 ——
+       *   * `teams[]` 的跨版本加权（满分率 / 平均行动值 → 抽卡方案的强度与候选池）；
+       *   * `avTeams`（行动值前沿池）的选行：`avRowFor` 取「**权重最高的有数据版本**
+       *     的那一次成绩」，权重 0 的版本不进窗口（见 `buildAvTeams`）。
+       * 漏了这一层，用户改版本权重时抽卡方案完全不动 —— 因为这条链从
+       * `archiveTeams` 起就拿不到用户表（`resolveScope` 只认 `options.versionWeights`）。
+       * 与 `archiveFrontierAll`（总榜那条链）用的必须是同一份表，否则同一个界面里
+       * 「总榜按用户表、方案按默认表」，两个口径分叉。
+       */
+      versionWeights: options.versionWeights,
     });
     if (!data.ok) {
       skipped.push({ env: env.id, reason: data.error || '读取失败' });
@@ -675,7 +688,12 @@ export const archiveCharacterPacks = async (name, options = {}) => {
   // ⚠️ `conclusionEnvs` 返回 `{ envs, skipped, window }` —— 解构取 `envs`，
   // 直接把整个对象传下去会让 `archiveFrontierAll` 拿到非数组而抛
   // 「(envs || []) is not iterable」。
-  const { envs } = await conclusionEnvs(index, { window: options.window });
+  // 版本权重（用户 2026-10-16）：聚合层同样要吃它 —— 面板的 `envs[]` 与总榜同源，
+  // 否则「跨版本发挥」那一列背后的阵容聚合会按默认表算（v4.6.117）。
+  const { envs } = await conclusionEnvs(index, {
+    window: options.window,
+    versionWeights: options.versionWeights,
+  });
   const frontierAll = await archiveFrontierAll(envs, {
     window: VERSION_WINDOW,
     ...(options.frontierWeights ? { weights: options.frontierWeights } : {}),
@@ -991,7 +1009,12 @@ export const archiveConclusion = async (account = {}, options = {}) => {
   const index = await archiveIndex();
   const i18n = await loadI18n();
   // 环境（版本选取 + 阵容表）由 `conclusionEnvs` 统一提供，探针与生产共用同一份。
-  const { envs, skipped, window } = await conclusionEnvs(index, { window: options.window });
+  // ⚠️ `versionWeights` 必须一起传（v4.6.117 修的缺陷）：聚合层的跨版本加权与
+  // `avTeams` 的选行都按这张表算，漏了它 = 抽卡方案永远按默认 3:2.5:2:1.5:1:0.5。
+  const { envs, skipped, window } = await conclusionEnvs(index, {
+    window: options.window,
+    versionWeights: options.versionWeights,
+  });
 
   // 账号状态在浏览器里是一组中英混合的键，客户端已经过滤成数据集英文键，
   // 这里只做「Map / 普通对象都收」的兼容，不再猜名字。

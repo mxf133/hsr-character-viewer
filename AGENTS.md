@@ -14,6 +14,7 @@ Keep each task focused. This repository has extensive historical documentation; 
 | Change area | Main files | Focused checks |
 | --- | --- | --- |
 | Recommendation data, scoring, or conclusion algorithms | `public/scripts/advice.js`, `src/server/conclusion.js` | `herta-test.mjs`, `team-plan-test.mjs`; add `e2e-test.mjs` for API payload changes |
+| Version weights reaching both weighted chains (`archiveFrontier` and `resolveScope`/`conclusionEnvs`) | `src/server/archive.js`, `src/server/conclusion.js` | `version-weight-plan-test.mjs` (any change to `resolveScope`, `conclusionEnvs`, `avRowFor`, or `buildAvTeams`) |
 | Recommendation rendering or styles | `public/scripts/advice-view.js`, `public/scripts/battle-record.js`, `public/index.html`, `public/styles/` | `herta-test.mjs`, `e2e-test.mjs`; `check-advice-layout.mjs` for browser geometry |
 | Server routes, records, cache, or persistence | `src/server/` | `e2e-test.mjs` plus the matching focused test (`cache-policy-test.mjs`, `request-throttle-test.mjs`, or `team-plan-test.mjs`) |
 | Login, signing, or Star Rail payload parsing | `src/mihoyo/` | `qr-poll-regression.mjs`, `api-wiring-test.mjs`, `hsr-parse-test.mjs`, or `devicefp-test.mjs` as applicable |
