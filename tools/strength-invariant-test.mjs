@@ -4,14 +4,15 @@
 // 低难副本普遍能拿满分）」）：
 //
 //   ① 成本账：限定角色 E0S0 = 1 金 … E6S5 = **12 金**（不算隐金）—— 它只服务**性价比**。
-//   ② **强度只看行动值**：
+//   ② **强度按版本权重加权，顶格档按金数小幅区分**（2026-10-18 晚）：
 //        ```
-//        0 行动值 → 100
-//        否则     → 90 × 强度曲线(行动值)
+//        0 行动值 → 100 − strengthGoldPinch × max(0, 本队金数 − 该期最省金)
+//        否则     → 95 × 强度曲线(行动值)
+//        整包强度 = Σ(版本权重 × 该版本强度) ÷ Σ(版本权重)
 //        ```
-//      金数**完全退出**：改前顶格档是 `100 × 该期最省金 ÷ 本队金数`、第二档封顶是
-//      `min(90, 100 × 最省 ÷ 最贵)`，两处都在按成本折分，于是 18 金的队在「1 金就能
-//      0 行动值」的副本里只拿个位数。用户当轮明确接受「低难副本普遍拿满分」。
+//      用户原话：「每期的强度最高分都有且仅有一个队伍（0 行动值的同时金数最低）」+「由于
+//      存在版本权重，强度要完全拿满分应当是非常难的」。所以最省金的 0 行动值队 = 100、
+//      其余按每多 1 金扣 0.1 分（小幅，不像 v4.6.110 那样把贵队折到个位数）。
 //   ③ **继承**：已登场却缺证据的版本，若同角色有「成本更低**且**那一期有成绩」的整包，
 //      取其**最高分**（用户：「人们一般不会上传低难度关卡用超高成本通关的记录」）。
 //      继承不到（同角色所有更便宜版本也没成绩）→ 仍是**算 0 分**，权重进分母。
@@ -137,50 +138,50 @@ const envOf = (out, name) => unitOf(out, name)?.envs?.[0];
 const unitOfE = (out, name, eidolon) => allUnits(out)
   .find((u) => u.name === name && Number(u.eidolon) === eidolon);
 
-// ---- ②-A 单版本：强度只由行动值决定，金数不参与 ------------------------------
+// ---- ②-A 单版本：0 行动值按金数小幅区分，非 0 行动值仍是 95 × 曲线 ----------
 {
   const rows = [
-    // 两个 0 行动值的配置，成本差 4 倍 —— 新口径下**必须同分**
+    // 两个 0 行动值的配置，成本差 4 倍：最省金（10）那支 = 100，贵的那支（40）小幅降。
     { cost: 10, actionValue: 0, tier: 'perfect', newestSeason: '4.5', members: member('Cheap') },
     { cost: 40, actionValue: 0, tier: 'perfect', newestSeason: '4.5', members: member('Pricey') },
     // 打不出 0 行动值的两个配置（400 在满分线与达标线之间、299 在满分线内侧）
     { cost: 20, actionValue: 400, tier: 'perfect', newestSeason: '4.5', members: member('NoZero') },
     { cost: 20, actionValue: 299, tier: 'perfect', newestSeason: '4.5', members: member('Inside') },
   ];
-  // 刻意给一个「最省 10 金 / 最贵 40 金」的基准：旧口径会拿它把 40 金那档折成 25 分。
+  // 该期 0 行动值金数区间：最省 10 金、最贵 40 金。
   const zero = { '4.5': { min: 10, max: 40 } };
   const out = runPlight(rows, ['4.5'], { '4.5': 1 }, zero);
 
-  check('⭐ 顶格档：0 行动值 → 100（不再按金数折）', () => {
-    for (const name of ['Cheap', 'Pricey']) {
-      const env = envOf(out, name);
-      assert.ok(env, `${name} 应进榜`);
-      assert.ok(Math.abs(Number(env.envStrength) - 100) < 1e-6,
-        `${name}（0 行动值）应为 100，实际 ${env.envStrength}`);
-      assert.equal(unitOf(out, name).strengthTopBand, true, `${name} 的顶格标记要跟着亮`);
-    }
+  check('⭐ 顶格档唯一满分：最省金的 0 行动值队 = 100，其余按金数小幅降', () => {
+    const cheap = envOf(out, 'Cheap');
+    const pricey = envOf(out, 'Pricey');
+    assert.ok(cheap && pricey, 'Cheap / Pricey 都应进榜');
+    assert.ok(Math.abs(Number(cheap.envStrength) - 100) < 1e-6,
+      `最省金（10 金）的 0 行动值队应为 100，实际 ${cheap.envStrength}`);
+    const wantPricey = 100 - SCORING.strengthGoldPinch * (40 - 10);
+    assert.ok(Math.abs(Number(pricey.envStrength) - wantPricey) < 1e-6,
+      `贵 30 金的 0 行动值队应降 ${(SCORING.strengthGoldPinch * 30).toFixed(2)} 分 = ${wantPricey.toFixed(2)}，实际 ${pricey.envStrength}`);
+    // 满分唯一：最省金 100、贵队 < 100（可排序，不再并列）。
+    assert.ok(Number(pricey.envStrength) < 100, '贵队不该拿到满分（满分唯一）');
+    assert.equal(unitOf(out, 'Cheap').strengthTopBand, true, '最省金队的顶格标记要亮');
   });
-  check('⭐ 金数不参与强度：10 金与 40 金、同样 0 行动值 → 同分', () => {
-    assert.equal(Number(envOf(out, 'Cheap').envStrength), Number(envOf(out, 'Pricey').envStrength),
-      '同一个行动值换成本差 4 倍，分数必须一样（用户 2026-10-17 晚）');
+
+  check('⭐ 金数区分是**小幅**的：贵 4 倍仍 ≥ 97（不像 v4.6.110 折到个位数）', () => {
+    const pricey = Number(envOf(out, 'Pricey').envStrength);
+    assert.ok(pricey >= 97 - 1e-9,
+      `贵 40 金（4 倍）的队应仍 ≥ 97，实际 ${pricey}（小幅区分，别折狠）`);
   });
-  check('⭐ 该期「0 行动值金数区间」不再影响强度（换一份极端基准，分数不变）', () => {
-    const a = runPlight(rows, ['4.5'], { '4.5': 1 }, { '4.5': { min: 1, max: 1 } });
-    const b = runPlight(rows, ['4.5'], { '4.5': 1 }, { '4.5': { min: 40, max: 40 } });
-    for (const name of ['Pricey', 'NoZero', 'Inside']) {
-      assert.equal(Number(envOf(a, name).envStrength), Number(envOf(b, name).envStrength),
-        `${name}：基准换成 1/1 与 40/40，强度必须一致（金数已退出强度）`);
-    }
-  });
-  check('非 0 行动值 → 90 × 强度曲线（不看金数）', () => {
+
+  check('非 0 行动值 → 95 × 强度曲线（**不碰金数**）', () => {
     for (const [name, av] of [['NoZero', 400], ['Inside', 299]]) {
       const want = SCORING.strengthSecondBandCap * strengthPerf(av);
       const got = Number(envOf(out, name).envStrength);
       assert.ok(Math.abs(got - want) < 1e-3,
-        `${name}（av=${av}）应为 90 × ${strengthPerf(av).toFixed(4)} = ${want.toFixed(4)}，实际 ${got}`);
+        `${name}（av=${av}）应为 ${SCORING.strengthSecondBandCap} × ${strengthPerf(av).toFixed(4)} = ${want.toFixed(4)}，实际 ${got}`);
     }
   });
-  check('强度分 = 本档自身合计（包络与整维天花板都已删，2026-10-18）', () => {
+
+  check('强度分 = 本档自身合计（包络与整维天花板都已删）', () => {
     for (const name of ['Cheap', 'Pricey', 'NoZero', 'Inside']) {
       const u = unitOf(out, name);
       assert.ok(Math.abs(Number(u.strengthFloor) - Number(u.strengthTotal)) < 1e-6,
@@ -189,22 +190,14 @@ const unitOfE = (out, name, eidolon) => allUnits(out)
         `${name}: 强度分应等于自身合计，实际 ${u.strengthScore} vs ${u.strengthTotal}`);
     }
   });
-  check('逐关卡的第二档上限仍是 90（整维不再夹第二刀）', () => {
-    for (const name of ['NoZero', 'Inside']) {
-      const u = unitOf(out, name);
-      assert.equal(u.strengthTopBand, false, `${name} 不该是顶格档`);
-      // 整包可以 > 90（某一关 100 + 另一关第二档），但必须 < 100。
-      assert.ok(Number(u.strengthScore) < 100 - 1e-9,
-        `${name}: 有非 0 行动值的关卡时不该到 100（实际 ${u.strengthScore}）`);
-    }
-  });
+
   check('投入项已整条删除（`SCORING.investWeight` 恒 0）', () => {
     assert.equal(Number(SCORING.investWeight), 0,
       '强度与成本无相关性 —— 这一项不许再调回非 0');
   });
 }
 
-// ---- ②-B 两个版本：强度只看最快的，版本权重不再影响强度 ----------------------
+// ---- ②-B 两个版本：强度重新按版本权重加权平均（满分要跨版本都 0 行动值）-----
 {
   const rows = [
     // Half：4.5 期 0 行动值（100）；4.4 期行动值 500（第二档）
@@ -213,32 +206,39 @@ const unitOfE = (out, name, eidolon) => allUnits(out)
   ];
   const seasons = ['4.4', '4.5'];
   const zero = { '4.5': { min: 10, max: 10 }, '4.4': { min: 20, max: 20 } };
+  const v45 = 100; // 4.5 期 0 行动值且正好最省金（10 金 = min）→ 100
+  const v44 = SCORING.strengthSecondBandCap * strengthPerf(500);
 
-  check('⭐ 强度只看最快的：有一期 0 行动值 → 100，不被另一期稀释', () => {
+  check('⭐ 强度按版本权重加权：不是「只看最快」，满分要跨版本都 0 行动值', () => {
     const a = runPlight(rows, seasons, { '4.5': 3, '4.4': 1 }, zero);
     const half = envOf(a, 'Half');
     assert.ok(half, 'Half 应进榜');
-    assert.ok(Math.abs(Number(half.envStrength) - 100) < 1e-6,
-      `最快那次是 0 行动值 → 本关 100（不再按版本权重平均），实际 ${half.envStrength}`);
-    assert.equal(unitOf(a, 'Half').strengthTopBand, true,
-      '有一期打出 0 行动值就是顶格档（2026-10-18 用户「强度只看最快的」）');
+    const want = (v45 * 3 + v44 * 1) / 4;
+    assert.ok(Math.abs(Number(half.envStrength) - want) < 1e-3,
+      `权重 3:1 时应为 (${v45}×3 + ${v44.toFixed(2)}×1)/4 = ${want.toFixed(4)}，实际 ${half.envStrength}`);
+    // 有一期不是 0 行动值 → 加权后必然 < 100（满分要每一期都 0 行动值）。
+    assert.ok(Number(half.envStrength) < 100,
+      '只要有一期没打出 0 行动值，本关就不该 100（版本权重让满分变难）');
   });
 
-  check('⭐ 版本权重不再影响强度（只影响性价比 / 泛用性）', () => {
+  check('⭐ 版本权重**确实**影响强度（换权重就换分）', () => {
     const a = runPlight(rows, seasons, { '4.5': 3, '4.4': 1 }, zero);
     const b = runPlight(rows, seasons, { '4.5': 1, '4.4': 3 }, zero);
-    assert.equal(Number(envOf(a, 'Half').envStrength), Number(envOf(b, 'Half').envStrength),
-      '换版本权重，强度必须一分不变（2026-10-18 第 1 条）');
-    // 但性价比那一侧仍按版本加权 —— 换权重必须换分，否则说明「权重没接上」。
-    assert.notEqual(Number(unitOf(a, 'Half').total), Number(unitOf(b, 'Half').total),
-      '版本权重应当仍然影响性价比（那一侧没有改口径）');
+    const wantA = (v45 * 3 + v44 * 1) / 4;
+    const wantB = (v45 * 1 + v44 * 3) / 4;
+    assert.ok(Math.abs(Number(envOf(a, 'Half').envStrength) - wantA) < 1e-3,
+      `权重 3:1 → ${wantA.toFixed(4)}`);
+    assert.ok(Math.abs(Number(envOf(b, 'Half').envStrength) - wantB) < 1e-3,
+      `权重 1:3 → ${wantB.toFixed(4)}`);
+    assert.ok(Number(envOf(a, 'Half').envStrength) > Number(envOf(b, 'Half').envStrength),
+      '新版本权重更高时，4.5 期拿满分的那一档必须更高');
   });
 }
 
-// ---- ②-C 继承：高成本整包从更便宜的同角色整包借分 ----------------------------
+// ---- ②-C 继承：高成本整包从更便宜的同角色整包借分（继承分也进加权）-----------
 {
   const rows = [
-    // Low E0：4.4 打出 0 行动值（满分），4.5 只有 300
+    // Low E0：4.4 打出 0 行动值（100），4.5 只有 300
     { cost: 4, actionValue: 0, tier: 'perfect', newestSeason: '4.4', members: member('Low', 0) },
     { cost: 4, actionValue: 300, tier: 'perfect', newestSeason: '4.5', members: member('Low', 0) },
     // Low E6：**只有 4.5 有成绩**（谁会上传 8 金的队去打已经能 0 行动值的关？）
@@ -253,31 +253,39 @@ const unitOfE = (out, name, eidolon) => allUnits(out)
   const out = runPlight(rows, seasons, { '4.5': 1, '4.4': 1 }, {}, { firstSeen });
 
   const own45E6 = SCORING.strengthSecondBandCap * strengthPerf(400);
+  const lowE0At44 = 100; // Low E0 自己 4.4 的 0 行动值（zero 空 → pinch=0 → 100）
+  const lowE0At45 = SCORING.strengthSecondBandCap * strengthPerf(300);
 
-  check('⭐ 缺证据的版本从更便宜且有成绩的整包继承（参与「最快」比较）', () => {
+  check('⭐ 缺证据的版本从更便宜且有成绩的整包继承（继承分**进加权**）', () => {
     const e6 = unitOfE(out, 'Low', 6);
     assert.ok(e6, 'Low E6 应进榜');
-    // 自己 4.5 是 400（≈42.75），4.4 继承 E0 的 0 行动值 → 100 → 取最快 = 100。
-    assert.ok(Math.abs(Number(e6.envs[0].envStrength) - 100) < 1e-6,
-      `E6 的 4.4 应从 E0 继承 100，取最快后本关 100，实际 ${e6.envs[0].envStrength}`);
+    // 自己 4.5 是 400，4.4 继承 E0 的 100；等权 1:1 → (own45E6 + 100) / 2。
+    const want = (own45E6 + lowE0At44) / 2;
+    assert.ok(Math.abs(Number(e6.envs[0].envStrength) - want) < 1e-3,
+      `E6 的 4.4 应从 E0 继承 100，加权后 = (${own45E6.toFixed(2)} + 100)/2 = ${want.toFixed(4)}，实际 ${e6.envs[0].envStrength}`);
     assert.ok(Number(e6.inheritedSeasons) >= 1, '要标出「这一关的分是继承来的」');
   });
   check('继承是**单向**的：低成本整包不会从更贵的整包借分', () => {
     const e0 = unitOfE(out, 'Low', 0);
-    assert.equal(Number(e0.envs[0].envStrength), 100, 'E0 自己的 4.4 就是 0 行动值 → 100');
+    const want = (lowE0At45 + lowE0At44) / 2;
+    assert.ok(Math.abs(Number(e0.envs[0].envStrength) - want) < 1e-3,
+      `E0 两版都有自己的成绩，加权后 = ${want.toFixed(4)}，实际 ${e0.envs[0].envStrength}`);
     assert.equal(Number(e0.inheritedSeasons || 0), 0, 'E0 不该有任何继承');
   });
-  check('同角色没有更便宜的整包 → 用自己的最快成绩（不再被「缺版本」除小）', () => {
+  check('同角色没有更便宜的整包 → 缺的版本算 0 分（权重进分母）', () => {
     const e6 = unitOfE(out, 'Solo', 6);
     const got = Number(e6.envs[0].envStrength);
-    assert.ok(Math.abs(got - own45E6) < 1e-3,
-      `Solo 只有 4.5 一条 400 → 本关 = ${own45E6.toFixed(4)}，实际 ${got}`);
+    // 只有 4.5 一条 400，4.4 缺证据算 0 → (own45E6 + 0) / 2。
+    const want = own45E6 / 2;
+    assert.ok(Math.abs(got - want) < 1e-3,
+      `Solo 只有 4.5 一条 400，4.4 算 0 → 本关 = ${want.toFixed(4)}，实际 ${got}`);
     assert.equal(Number(e6.inheritedSeasons || 0), 0, '继承不到就不该记继承数');
   });
   check('继承来的分不会让「更贵的整包」超过「更便宜的」在同一关的成绩上限', () => {
     const e0 = unitOfE(out, 'Low', 0);
     const e6 = unitOfE(out, 'Low', 6);
-    // 2026-10-18 起强度取「最快」：两边都会拿到 E0 的那个 0 行动值 → 都是 100。
+    // E6 借的是 E0 的 4.4（100），但自己 4.5 是 400（< E0 的 300 那一版），
+    // 所以加权后仍 ≤ E0。继承只借「更低成本版本的成绩」，不该把高成本档抬到超过低成本档。
     assert.ok(Number(e6.envs[0].envStrength) <= Number(e0.envs[0].envStrength) + 1e-6,
       '继承只借「更低成本版本的成绩」，不该把高成本档抬到超过低成本档');
   });
