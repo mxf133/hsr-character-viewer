@@ -947,6 +947,81 @@ const slimAvailability = (availability) => {
   };
 };
 
+/**
+ * 从「收敛前全部整包」里收集**全部有通关记录的队伍**（按阵容去重）。
+ *
+ * 用户 2026-10-18：「抽卡推荐没有推荐我抽取同时包含长夜月E2、昔涟E2、风堇E2，但不包含
+ * 遐蝶的队伍，这是我账号上最强的配队」—— 根因是候选池（逐档榜 ∪ 总榜）对每个整包只留
+ * 「性价比最优」那一条代表证据，导致「强但非性价比最优」的组队被收敛丢掉了。
+ * 这里把全部整包在所有副本里的队伍名单展开、按阵容去重，作为候选池的**第四个来源**。
+ *
+ * ⚠️ 极简字段 + HTTP gzip 传输（实测 4113 支队伍 826 KB → gzip 70 KB，见 `json()`）：
+ *   每支队伍只带「成员（角色/星魂/光锥/叠影）」+「它在哪些副本有成绩（行动值）」。
+ *   补金数、强度、差额等由前端 `teamPlan` 现算，不在这里重复。
+ */
+export const collectAllTeams = (packsByChar) => {
+  const rosterKeyOf = (members) => (members || [])
+    .map((m) => `${m.char}|${Number(m.eidolon) || 0}|${m.lc || '-'}|${Number(m.superimp) || 1}`)
+    .sort().join('~');
+  const teams = new Map();
+  /** 视频地址字典：避免 4000+ 条重复 URL 把 gzip 前体积顶爆。 */
+  const videos = [];
+  const videoIndex = new Map();
+  for (const packs of Object.values(packsByChar || {})) {
+    for (const pack of packs || []) {
+      for (const env of pack.envs || []) {
+        const members = env.members || [];
+        if (!members.length) continue;
+        const key = rosterKeyOf(members);
+        let team = teams.get(key);
+        if (!team) {
+          team = {
+            members: members.map((m) => ({
+              char: m.char, eidolon: Number(m.eidolon) || 0,
+              lc: m.lc || null, superimp: Number(m.superimp) || 1,
+            })),
+            avs: new Map(),
+          };
+          teams.set(key, team);
+        }
+        // 同一支队伍在同一个副本只留一次（取行动值最小的那次成绩）。
+        // ⚠️ 必须用 `actionValue`（与 `members` **同一条投稿**的行动值），不能用
+        //   `strengthAv`（那是「整包自己打得最快的一行」，可能来自**另一支队伍**）——
+        //   实测踩过：某支绝境 428 行动值的队被安上了「别的队打出的 0 行动值」，
+        //   强度① 直接拿 100（用户截图报的「这个队伍怎么拿 100 队伍强度分」）。
+        // ⚠️ 一起带上 `evidenceSeason` 与 `tier`：卡片要写「（4.6 版本）· 行动值 297」，
+        //   缺了它们行动值/版本号就空着（用户报「不显示具体行动值和版本号」）。
+        // ⚠️ 同时带上 `video` 索引：用户报「很多队伍没显示视频图标」。视频 URL 经
+        //   字典去重，体积增长很小（实测从 826 KB 到 ~880 KB，gzip 后差别更小）。
+        const av = Number(env.actionValue);
+        if (Number.isFinite(av)) {
+          const cur = team.avs.get(env.id);
+          const video = env.video || null;
+          let videoIdx = null;
+          if (video) {
+            let idx = videoIndex.get(video);
+            if (idx === undefined) {
+              idx = videos.length;
+              videos.push(video);
+              videoIndex.set(video, idx);
+            }
+            videoIdx = idx;
+          }
+          const rec = [av, env.evidenceSeason ?? null, env.tier ?? null, videoIdx];
+          if (cur === undefined || av < cur[0]) team.avs.set(env.id, rec);
+        }
+      }
+    }
+  }
+  // ⚠️ 成员压成数组 [角色, 星魂, 光锥, 叠影]（去掉字段名）—— 4113 支 × 4 人 × 4 字段，
+  //   字段名会白占一半体积（实测 1342 KB → 826 KB），gzip 前越瘦越好。
+  const teamList = [...teams.values()].map((t) => ({
+    m: t.members.map((m) => [m.char, m.eidolon, m.lc, m.superimp]),
+    a: [...t.avs.entries()].map(([id, rec]) => [id, rec[0], rec[1], rec[2], rec[3]]),
+  }));
+  return { teams: teamList, videos };
+};
+
 /** @param {any} result buildConclusion 的返回 */
 const projectConclusion = (result) => ({
   envs: result.envs.map((env) => ({
@@ -1190,6 +1265,16 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     // 成本口径表：`charCostOf` / `coneCostOf` 的输入（见 `slimAvailability`）。
     availability: slimAvailability(index.refs?.availability),
     ...projectConclusion(result),
+    // 全部有通关记录的队伍（用户 2026-10-18 候选池放宽）。默认**不带**（/conclusion 的
+    // 660 KB 硬上限装不下 800 KB）；只有 /api/archive/teams 路由传 includeAllTeams 才带上。
+    // 成员保持**英文键**（localizeConclusion 不碰 frontierPacksByChar 的 members），
+    // 前端补金计算直接拿它查 availability。
+    ...(options.includeAllTeams
+      ? (() => {
+        const { teams, videos } = collectAllTeams(result.frontierPacksByChar);
+        return { allTeams: teams, allTeamVideos: videos };
+      })()
+      : {}),
     skipped,
   };
 };

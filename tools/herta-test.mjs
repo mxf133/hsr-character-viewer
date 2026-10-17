@@ -21,7 +21,7 @@ import {
   isEasyMode,
   paretoFrontier, paretoLayers,
   lightConeRanksOf, majorityTierOf, marginalCostOf, metricDeltaText, metricShortText, metricTextOf,
-  metricValueText, ownedCharacters, ownedLightCones, perfAnchorsOf, perfFactorOf, perfLineWeightsOf,
+  metricValueText, metricValueTextOf, ownedCharacters, ownedLightCones, perfAnchorsOf, perfFactorOf, perfLineWeightsOf,
   pullCostOf,
   recommendPlan, scoreOf,
   teamPullsOf, TIER_PLACEHOLDER, tierLabelsOf, tierMoveText, tierScoreOf, tierTextOf,
@@ -884,6 +884,12 @@ check('成绩只写游戏内实际的量：0T / 积分 / 行动值，不用及�
   assert.equal(metricTextOf('aa', 'plight', 289), '平均行动值 289');
   assert.equal(metricValueText('moc', '', 0), '0T');
   assert.equal(metricValueText('as', '', 4000), '积分 4000');
+  // metricValueTextOf 吃内部 av（统一「越小越好」），自动按副本翻成带单位的游戏内数值。
+  assert.equal(metricValueTextOf('moc', '', 0), '0T');
+  assert.equal(metricValueTextOf('as', '', 60), '积分 3940');
+  assert.equal(metricValueTextOf('as', '', 0), '积分 4000');
+  assert.equal(metricValueTextOf('aa', 'plight', 289), '行动值 289');
+  assert.equal(metricValueTextOf('aa', 'plight', 0), '行动值 0');
   assert.equal(metricDeltaText('moc', '', 1), '−1T');
   assert.equal(metricDeltaText('moc', '', -1), '+1T');
   assert.equal(metricDeltaText('as', '', 42), '积分 +42');
@@ -951,6 +957,53 @@ check('界面源码里不许再出现「满分 / 达标 / 及格」这类自造�
   }
   assert.deepEqual(offenders, [],
     `这些行还在往界面上写模糊用语（应改走 tierTextOf()）：\n${offenders.join('\n')}`);
+});
+
+check('金数判空必须走 hasNumber() —— Number(null) === 0 会印出「0 金」', () => {
+  /**
+   * 源码级护栏（与上面两条同一个路数）。
+   *
+   * 2026-10-18 用户截图报「很多队伍会再写个 0 金」。根因有两层，缺一不可：
+   *   1. `advice.js` 的 allTeams 解析把 `cost` 写成了 `0`（它其实没有金数数据）；
+   *   2. `advice-view.js` 用 `Number.isFinite(Number(b.bestTeamGold))` 判空 ——
+   *      `Number(null) === 0` 是有限数，于是「没有金数」被当成「0 金」照印。
+   *
+   * 修法是两边都收：allTeams 侧写 `null`，视图侧统一走 `hasNumber()`。
+   *
+   * ⚠️ **判据只圈「金数」**：权重、档位系数、分位区间那些地方用
+   *    `Number.isFinite(Number(x))` 是**对的** —— 那里「缺失 = 0」本来就是口径
+   *    （权重 0 = 这一关不进分母、系数缺失按 0 折）。全仓一刀切会误伤十几处正确写法。
+   *    真正有害的只有金数：`0 金` 是一个**合法且显眼**的值，
+   *    而「这条证据没有金数」才是事实，两者混在一起读者会被误导。
+   */
+  const src = readFileSync(resolve('public/scripts/advice-view.js'), 'utf8');
+  // 剥掉行注释与块注释行（注释里提到这个写法是为了解释为什么不能用它）。
+  const strip = (line) => line
+    .replace(/\/\/.*$/, '')
+    .replace(/^\s*\*.*$/, '');
+  const offenders = src.split('\n')
+    .map((line, i) => ({ no: i + 1, code: strip(line) }))
+    // 只圈「金数」：其它字段的 Number(null) === 0 是期望行为（见上面注释）。
+    .filter(({ code }) => /Number\.isFinite\(Number\([^)]*[Gg]old/.test(code))
+    .map(({ no, code }) => `advice-view.js:${no} ${code.trim()}`);
+  const msg = [
+    '这些行用 Number.isFinite(Number(…Gold…)) 判空，null 会被当成 0 金印出来（应改走 hasNumber()）：',
+    ...offenders,
+  ].join('\n');
+  assert.deepEqual(offenders, [], msg);
+
+  // hasNumber 定义在 advice-view.js（DOM 侧，没导出）；这里复刻一份等价实现钉住行为。
+  const hasNumber = (v) => (typeof v === 'number' ? Number.isFinite(v)
+    : (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))));
+  assert.equal(hasNumber(null), false, 'hasNumber(null) 必须为 false');
+  assert.equal(hasNumber(undefined), false, 'hasNumber(undefined) 必须为 false');
+  assert.equal(hasNumber(''), false, 'hasNumber(空串) 必须为 false');
+  assert.equal(hasNumber('  '), false, 'hasNumber(空白串) 必须为 false');
+  assert.equal(hasNumber(0), true, 'hasNumber(0) 必须为 true —— 0 金是合法成绩');
+  assert.equal(hasNumber(12), true);
+  assert.equal(hasNumber('12'), true);
+  assert.equal(hasNumber(NaN), false);
+  assert.equal(hasNumber(Infinity), false);
 });
 
 check('强度详情窗口：投入项与单调包络的文案都不许回来（用户 2026-10-17 第 2 条）', () => {

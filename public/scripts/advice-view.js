@@ -49,7 +49,7 @@ import {
   // `advice.js` 那一份（服务端 `archive.js` 读的也是它，两边必须同源）。
   versionWeightRows, versionWeightDefaultAt, VERSION_WEIGHT_MAX,
   versionWeightDefaults, versionWeightValues, normalizeVersionWeights,
-  formatRate, frontierFactorsOf, avLinesOf, metricShortText, metricValueText, ownedCharacters,
+  formatRate, frontierFactorsOf, avLinesOf, metricShortText, metricValueText, metricValueTextOf, ownedCharacters,
   ownedLightCones, perfAnchorsOf, perfLineWeightsOf, scorePercent,
   eidolonsOf, lightConeRanksOf, TIER_PLACEHOLDER, tierLabelsOf, tierMoveText, tierTextOf,
   // ⚠️ `eidolonTierOf`：泛用性的**归一区间是按星魂档分组**的（用户 2026-10-14 第 1 条），
@@ -391,6 +391,17 @@ const text = (tag, className, content) => {
   }
   return node;
 };
+
+/**
+ * 「这个数真的有值吗」——**不能写 `Number.isFinite(Number(x))`**。
+ *
+ * `Number(null) === 0`、`Number('') === 0`，两者都是有限数，于是「数据集里没有这一项」
+ * 会被当成「0」印出来。实测踩过：allTeams 那条路径把 `cost` 留成 null，卡片上就在
+ * 「行动值 440」后面多印一个「0 金」（用户 2026-10-18 截图报）。
+ */
+const hasNumber = (v) => (typeof v === 'number' ? Number.isFinite(v)
+  : (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))));
+
 
 const showEmpty = (message, hint = '') => {
   el.empty.innerHTML = '';
@@ -1889,16 +1900,17 @@ const envChip = (env, { withWeight = false } = {}) => {
   const meta = frontierEnvMeta(env.id);
   const chip = text('span', 'advice-unit-env');
   chip.appendChild(text('span', 'advice-unit-env-name', meta?.label || env.id));
-  const gold = Number(env.bestTeamGold);
+  // ⚠️ 没有金数时 gold 必须是 NaN（不是 0），否则 chip 上会多印「0 金」。
+  const gold = hasNumber(env.bestTeamGold) ? Number(env.bestTeamGold) : Number.NaN;
   if (Number.isFinite(gold)) chip.appendChild(text('b', '', ` ${gold} 金`));
   if (withWeight && Number.isFinite(Number(meta?.weight))) {
     chip.appendChild(text('span', 'muted small', ` ×${formatWeight(meta.weight)}`));
   }
   const bits = [];
   if (Number.isFinite(Number(meta?.weight))) bits.push(`权重 ×${formatWeight(meta.weight)}`);
-  bits.push(`最佳配置 ${tierLabelOf(meta, env.tier)}`
+  const scoreText = scoreTextOf(meta?.mode, meta?.stage, env.actionValue, tierLabelOf(meta, env.tier)) || '—';
+  bits.push(`最佳配置 ${scoreText}`
     + `${Number.isFinite(gold) ? ` · ${gold} 金` : ''}`
-    + `${Number.isFinite(Number(env.actionValue)) ? ` · 行动值 ${env.actionValue}` : ' · 行动值缺失'}`
     // 用户 2026-10 要求④：界面上把「赛季」改成「版本」（游戏里的叫法就是版本）。
     // ⚠️ 只改**用户可见文案**：字段名 `evidenceSeason`、变量 `season` / `seasonSort`
     // 一律不动（服务端与 advice.js 都按这些键读）。
@@ -1930,6 +1942,13 @@ const envChip = (env, { withWeight = false } = {}) => {
  * 有一条禁词断言（`0T / 积分 / 行动值，不用及格-达标-满分这类词`）钉着这件事。
  */
 const tierLabelOf = (meta, tier) => tierTextOf(meta, tier);
+
+/** 单条证据的「成绩」文案：优先写具体值，缺失时退回档位判据线。 */
+const scoreTextOf = (mode, stage, av, tierLabel = '') => {
+  const n = Number.isFinite(Number(av)) ? Number(av) : null;
+  if (n !== null) return metricValueTextOf(mode, stage, n);
+  return tierLabel || '';
+};
 
 /**
  * 「表现」列的主值（用户 2026-10-11 第二轮：「表现直接写具体成绩更好，例如行动值直接
@@ -1989,7 +2008,7 @@ const perfCurveText = (meta) => {
     // ⚠️ 绝境用 `metricValueText`（带「行动值」前缀）而不是 `metricShortText`（裸数字）：
     //    脚注是**脱离表格**独立读的，裸 `0` 没有量纲（表里那一列有表头与同行档位兜着，
     //    脚注没有）。实测就这么写出过 `0 得 1.00`，读起来不知道在说什么。
-    const label = tier ? tierLabelOf(meta, tier) : metricValueText(meta?.mode, meta?.stage, av);
+    const label = tier ? tierLabelOf(meta, tier) : metricValueTextOf(meta?.mode, meta?.stage, av);
     // ⚠️ **脚注总长有 60 字硬上限**（`check-advice-layout.mjs` 的 `notesShortOk`）。
     // 只写「档位 → 系数」对，省掉「得」字与顶点那一段 —— 顶点是 1.00 的常识，
     // 而三条线各自的系数才是读者真正要查的表。实测从 73 字压到 ~40 字。
@@ -2911,12 +2930,18 @@ const fillPackList = async (slot) => {
  * `tools/_probe-tier-text.mjs` 按 `.advice-packs-env-tier` 取数。
  */
 const envFactsInto = (line, env, meta, cls) => {
-  line.appendChild(text('span', `${cls}-tier`, tierTextOf(meta, env.tier)));
-  if (Number.isFinite(Number(env.bestTeamGold))) {
+  const tierText = tierTextOf(meta, env.tier);
+  line.appendChild(text('span', `${cls}-tier`, tierText));
+  if (hasNumber(env.bestTeamGold)) {
     line.appendChild(text('span', `${cls}-gold`, `${env.bestTeamGold} 金`));
   }
-  if (Number.isFinite(Number(env.actionValue))) {
-    line.appendChild(text('span', `${cls}-av`, `行动值 ${env.actionValue}`));
+  const av = Number(env.actionValue);
+  if (Number.isFinite(av)) {
+    const scoreText = metricValueTextOf(meta?.mode, meta?.stage, av);
+    // 末日幻影 perfect 等场景下「档位 = 具体成绩」，避免同一行里写两遍
+    if (scoreText && scoreText !== tierText) {
+      line.appendChild(text('span', `${cls}-av`, scoreText));
+    }
   }
   if (env.evidenceSeason) {
     line.appendChild(text('span', `${cls}-season`, `${env.evidenceSeason} 版本`));
@@ -4872,16 +4897,12 @@ const renderTeamPlan = (conclusion) => {
       //       改前写 `${b.bestTeamGold ?? '—'} 金`，缺数据会印出「— 金」（破折号吊个单位）。
       const best = text('span', 'advice-plan-team-best muted small');
       best.appendChild(text('span', '', `最佳证据：${b.label}`));
-      const tierText = tierLabelOf(frontierEnvMeta(b.id), b.tier);
-      if (tierText) best.appendChild(text('span', '', ` · ${tierText}`));
-      if (Number.isFinite(Number(b.bestTeamGold))) {
+      const meta = frontierEnvMeta(b.id);
+      const scoreText = scoreTextOf(meta?.mode, meta?.stage, b.actionValue, tierLabelOf(meta, b.tier));
+      if (scoreText) best.appendChild(text('span', '', ` · ${scoreText}`));
+      if (hasNumber(b.bestTeamGold)) {
         best.appendChild(text('span', '', ' '));
         best.appendChild(goldText(b.bestTeamGold));
-      }
-      if (Number.isFinite(Number(b.actionValue))) {
-        const av = Number(b.actionValue);
-        best.appendChild(text('span', '',
-          ` · 行动值 ${Number.isInteger(av) ? av : av.toFixed(1)}`));
       }
       if (b.season) best.appendChild(text('span', '', ` · ${b.season} 版本`));
       facts.appendChild(best);
@@ -5164,15 +5185,12 @@ const renderUnits = () => {
     const bestMeta = bestEnv ? frontierEnvMeta(bestEnv.id) : null;
     if (bestEnv) {
       best.appendChild(text('span', 'advice-unit-best-label', '最佳证据：'));
-      best.appendChild(text('span', '', `${bestMeta?.label || bestEnv.id} · `
-        + `${tierLabelOf(bestMeta, bestEnv.tier)} · `));
+      const scoreText = scoreTextOf(bestMeta?.mode, bestMeta?.stage, bestEnv.actionValue, tierLabelOf(bestMeta, bestEnv.tier)) || '—';
+      best.appendChild(text('span', '', `${bestMeta?.label || bestEnv.id} · ${scoreText} · `));
       // ⚠️ 2026-10-17：金数走 `goldText()`（白色加粗）—— 与同一行上面的「花费」、
       //    与抽卡方案卡片上的「账面 / 补金」同一套强调；改前这里是纯文本，
       //    同一块界面上有的金数白加粗、有的随正文色。
-      best.appendChild(goldText(bestEnv.bestTeamGold));
-      if (Number.isFinite(Number(bestEnv.actionValue))) {
-        best.appendChild(text('span', '', ` · 行动值 ${bestEnv.actionValue}`));
-      }
+      if (hasNumber(bestEnv.bestTeamGold)) best.appendChild(goldText(bestEnv.bestTeamGold));
       if (bestEnv.evidenceSeason) {
         best.appendChild(text('span', '', ` · ${bestEnv.evidenceSeason} 版本`));
       }
@@ -5289,6 +5307,27 @@ const renderConclusion = () => {
   renderTeamPlan(conclusion);
 };
 
+/**
+ * 拉取「全部有通关记录的队伍」（独立接口 /api/archive/teams）。
+ * 失败不阻塞主流程：返回 null，候选池退回「逐档榜 ∪ 总榜 ∪ 行动值前沿」三池。
+ */
+const loadAllTeams = async (conclusionKey) => {
+  try {
+    const qs = new URLSearchParams({ versionWeights: JSON.stringify(state.versionWeights || []) });
+    const res = await fetch(`/api/archive/teams?${qs}`, {
+      headers: accessHeaders(),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.ok) return null;
+    return {
+      allTeams: data.allTeams || [],
+      videos: data.videos || [],
+    };
+  } catch {
+    return null;
+  }
+};
+
 const loadConclusion = async () => {
   if (!state.index) return;
   const payload = accountPayload();
@@ -5333,6 +5372,21 @@ const loadConclusion = async () => {
     if (state.conclusionKey !== key) return;
     state.conclusion = data.available === false ? null : data;
     if (data.available === false) state.conclusionError = data.hint || '本地还没有数据集';
+    // 「全部有通关记录的队伍」（用户 2026-10-18 候选池放宽）：独立接口、异步拉，
+    // 拉回来之后补进 conclusion.allTeams，抽卡方案的候选池才算完整。
+    // ⚠️ 与 conclusion 同一套竞态防护：conclusionKey 变了就丢弃这次的 allTeams。
+    if (data.available !== false) {
+      loadAllTeams(key).then(({ allTeams, videos }) => {
+        if (state.conclusionKey !== key || !state.conclusion) return;
+        if (Array.isArray(allTeams)) {
+          state.conclusion.allTeams = allTeams;
+          state.conclusion.allTeamVideos = videos;
+          // allTeams 变了 → 候选池变 → 抽卡方案要重算（缓存签名里要带上它）。
+          state.teamPlanCache = null;
+          renderTeamPlan(state.conclusion);
+        }
+      });
+    }
   } catch (err) {
     if (state.conclusionKey === key) {
       state.conclusion = null;
