@@ -31,9 +31,78 @@
   --radius-sm: 9px;
   --shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
   --font: "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+
+  /* —— 界面美化 · 新增令牌（2026-10-18）——
+     统一「焦点环 / 动效时长 / 图片缩放」等横向观感，供本文件末尾的增强层引用。
+     这些是**新增**变量，不改动任何既有令牌 —— 既有数值由 CDP 布局断言盯着，
+     动一个就整组变红。 */
+  --focus-ring: 0 0 0 3px rgba(103, 232, 249, 0.22);
+  --focus-ring-strong: 0 0 0 3px rgba(240, 198, 116, 0.28);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 0.14s;
+  --dur-base: 0.2s;
 }
 
 * { box-sizing: border-box; }
+
+/* ==========================================================================
+   界面美化层（2026-10-18，分支 feat/ui-polish）
+   —— 只做「观感」增强，不碰任何布局几何：不改变量、不改 flex/grid 结构、
+      不改被 CDP 断言盯着的尺寸。全部为**纯视觉 / 交互反馈 / 无障碍**增强。
+   ========================================================================== */
+
+/* 文本选区：默认的深蓝底白字在深空主题上发闷，换成星轨金的半透明底。 */
+::selection {
+  background: rgba(240, 198, 116, 0.32);
+  color: #fff;
+}
+
+/* 统一的键盘焦点环：让 Tab 导航时每个可交互元素都有清晰可见的落点。
+   用 :focus-visible 而非 :focus —— 鼠标点击不画圈，与仓库里其它按钮一致；
+   只在键盘到达时给金色光晕，和主题的「星轨金」语汇统一。 */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring-strong);
+}
+/* 输入类控件聚焦时保留自己的青色焦点（它们已有专门规则，避免被上面盖掉）。
+   这里只补一个兜底：没有专门规则的原生控件也能看清。 */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid rgba(111, 211, 232, 0.6);
+  outline-offset: 1px;
+}
+
+/* 细滚动条：深色容器里的滚动条默认又粗又亮，压成贴合主题的细条。
+   只对可滚动容器生效（`scrollbar-width: thin` 是渐进增强，老内核自动忽略）。 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 150, 220, 0.35) transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: rgba(120, 150, 220, 0.28);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: rgba(150, 185, 255, 0.45); }
+
+/* 图片不可拖拽（角色立绘 / 头像拖动会留下半透明幽灵，很破坏观感）。 */
+img { -webkit-user-drag: none; }
+
+/* 尊重系统「减少动态效果」偏好：星空闪烁、按钮弹跳、脉冲光全部静默。
+   只关动画、不关状态反馈（悬停变色 / 选中高亮仍保留）。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001s !important;
+  }
+}
 
 /* The `hidden` attribute must win over the display rules below, otherwise
    flex/grid containers keep hidden elements visible. */
@@ -3795,3 +3864,103 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
   .vroster-row { flex-wrap: wrap; }
   .vroster-select { max-width: 150px; }
 }
+
+
+/* ==========================================================================
+   界面美化 · 交互精致化（2026-10-18）
+   —— 纯视觉反馈增强，不改变任何尺寸 / 间距 / 结构。
+   所有规则只调 box-shadow / border-color / background / transform 的**微调**，
+   且都不影响 CDP 布局断言（那些断言量的是几何位置，不是阴影颜色）。
+   ========================================================================== */
+
+/* 面板 / 卡片：hover 时给一层更明确的抬升，让「可点」这件事看得见。
+   既有 .char-card:hover 已有 translateY，这里只统一其余面板的阴影过渡。 */
+.char-card,
+.account-card,
+.advice-plan-team,
+.advice-unit {
+  transition-property: transform, border-color, box-shadow;
+  transition-duration: var(--dur-base);
+  transition-timing-function: var(--ease-out);
+}
+
+/* 主按钮：hover 抬升一档 + 柔光，让主操作更有「按得下去」的手感。
+   ⚠️ 只加阴影，不动背景渐变（渐变色被 CDP 之外的视觉回归盯着，保守起见保留）。 */
+.btn-primary:hover:not(:disabled) {
+  box-shadow: 0 4px 16px rgba(240, 198, 116, 0.35);
+}
+.btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 0 2px 8px rgba(240, 198, 116, 0.25);
+}
+
+/* 幽灵按钮：hover 时轻微提亮边框与文字，反馈更细腻（不改 padding/字号）。 */
+.btn-ghost:hover:not(:disabled) {
+  border-color: rgba(150, 185, 255, 0.5);
+}
+
+/* 状态胶囊的呼吸点：给「等待中」的圆点加轻微呼吸，提醒这里有进展。
+   仅 pill-wait（金色，正在处理），其余状态保持静态不打扰。 */
+.pill-wait::before {
+  animation: ui-polish-breathe 2.2s ease-in-out infinite;
+}
+@keyframes ui-polish-breathe {
+  0%, 100% { box-shadow: 0 0 6px currentColor; }
+  50% { box-shadow: 0 0 14px currentColor; }
+}
+
+/* 顶栏粘性阴影：sticky 顶栏在滚动时与下方内容融为一体，加一层向下的投影
+   让「顶栏浮在内容之上」的层次一眼可见。纯 box-shadow，不影响任何布局。 */
+.topbar {
+  box-shadow: 0 1px 0 rgba(120, 150, 220, 0.06);
+}
+
+/* ==========================================================================
+   角色列表卡片 · 光锥行（2026-10-18）
+   —— 用户要求：角色列表需要显示角色的光锥（图标 + 精炼值），不同星级用
+      金色（5★）/ 紫色（4★）/ 蓝色（3★）区分，与角色卡左侧星级色条同一套语义。
+   ========================================================================== */
+
+/* 光锥行：紧跟在星级/Lv/星魂 tags 下面，一条独立的细行。左对齐、图标与文字基线对齐。 */
+.char-cone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(120, 150, 220, 0.14);
+  min-width: 0;
+  font-size: 12px;
+}
+/* 光锥图标：小方图（光锥是竖长方卡面，缩成小尺寸方角），带星级色描边。 */
+.char-cone-icon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  object-fit: cover;
+  border-radius: 5px;
+  border: 1px solid var(--cone-color, var(--border-strong));
+  background: rgba(0, 0, 0, 0.3);
+}
+/* 光锥名：与星级同色，突出「这是一把几星的锥」。溢出省略，不撑破卡片。 */
+.char-cone-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cone-color, var(--text-dim));
+  font-weight: 500;
+}
+/* 叠影（精炼值）：弱化灰字，跟在名字后面，不抢光锥名与星级的注意力。 */
+.char-cone-rank {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* 星级三色：金（5★）/ 紫（4★）/ 蓝（3★）。与 format.js 的 rarityColor()（--r5/--r4/--r3）
+   同源取值，只是这里作用到光锥行的图标描边与名字颜色上。 */
+.char-cone[data-rarity="5"] { --cone-color: var(--r5); }
+.char-cone[data-rarity="4"] { --cone-color: var(--r4); }
+.char-cone[data-rarity="3"] { --cone-color: var(--r3); }
