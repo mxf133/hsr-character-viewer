@@ -9,6 +9,20 @@ Keep each task focused. This repository has extensive historical documentation; 
 - Read only the relevant parts of `HANDOFF.md`: §4.4 for invariants, §5 for verification, and the matching feature entry for recent decisions. `README.md` documents product behavior; do not read it all for a code change.
 - Keep production changes local to the owning module. Do not bump the app version for documentation-only or agent-workflow changes.
 
+## Version Control Conventions
+
+These are hard rules for every session (human and agent alike). This directory hosts concurrent sessions working on the same repo, so discipline matters more than any branch model.
+
+- **Model**: trunk-based development — `main` is always shippable; every task gets a short-lived `feat/*` or `fix/*` branch that is merged back and deleted. Do **not** introduce `develop`/`release` branches (Git Flow) — it is overkill here and conflicts with the game-aligned versioning.
+- **Never work directly on `main`**. Each concurrent session (WorkBuddy, codex, human) uses its own branch or worktree. Do not resolve another session's conflicts, do not commit on its behalf, and do not check out a new branch on top of someone else's half-finished merge. Check `git status --short --branch` first; if you see `UU`/`AA` or a `MERGE_HEAD`, stop and look before acting.
+- **Branch naming**: `feat/<what>`, `fix/<what>`, or `<tool>/<what>` for agent sessions. Keep them short-lived (days, not weeks).
+- **Worktrees live in `.worktrees/`**, named `branch name with `/` → `-``. After a branch is merged, remove its worktree with `git worktree remove` and prune with `git worktree prune` — do not leave prunable worktrees around.
+- **Commit message format**: `type(scope): summary` with `type` ∈ {feat, fix, docs, chore, test, style, refactor}. A `!` after `type` marks a breaking change. Message files must be **UTF-8 with no BOM** (verify the first three bytes are not `ef bb bf` before `git commit -F`).
+- **`git add <specific files>`, never `git add -A`** — `-A` drags in `.workbuddy/`, `data/`, `.worktrees/`, and other sessions' files.
+- **Version ↔ tag binding**: every time `PROGRAM_VERSION` in `src/version.js` is bumped (and `package.json` `version` is kept in sync) and the change lands on `main`, tag the commit `v<version>` immediately (e.g. `git tag v4.6.121`). A version number without a matching tag is a liability — tags are the only reliable way to map "which code shipped as vX". Never tag a commit whose `src/version.js` still shows the previous version.
+- **Author identity**: keep one `user.name`/`user.email` for the repo. Distinguish agent sessions via branch prefix or `Co-authored-by`, not by changing author identity.
+- After merging a branch, delete it (`git branch -d`, or `-D` only after confirming its commits are reachable from `main`). Do not accumulate `backup/main-before-*` branches — use tags for snapshots instead.
+
 ## Code And Test Map
 
 | Change area | Main files | Focused checks |
