@@ -5,7 +5,7 @@
 
 import {
   cardStats, challengeSummary, charactersOf, displayName, elementName, formatDateTime,
-  integer, num, pathName, playerInfoOf, percent, rarityColor,
+  integer, lightConeOf, num, pathName, playerInfoOf, percent, rarityColor,
   rogueSummary,
 } from './format.js';
 import { mountAdviceView } from './advice-view.js';
@@ -1628,6 +1628,44 @@ const characterCard = (character) => {
     ));
   }
   card.appendChild(tags);
+
+  // 光锥（用户 2026-10-18）：角色列表卡片上直接显示当前装备的光锥——图标 + 名字
+  // + 叠影（精炼值），星级用金（5★）/ 紫（4★）/ 蓝（3★）三色区分，与角色卡左边那条
+  // 星级色条同一套语义。没有光锥（或未公开）时不渲染这一行，别留空框。
+  const cone = lightConeOf(character);
+  if (cone) {
+    const coneLine = document.createElement('div');
+    coneLine.className = 'char-cone';
+    const coneRarity = num(cone.rarity) ?? 4;
+    coneLine.dataset.rarity = String(coneRarity);
+    // 光锥图标：快照自带 equip.icon（米游社 CDN / /icons/... 同源）。与角色头像同一条
+    // 判断（同源 /icons 也要认，见上面头像那段注释）。
+    const coneIconUrl = cone.icon;
+    if (coneIconUrl && (/^https?:\/\//.test(coneIconUrl) || String(coneIconUrl).startsWith('/icons/'))) {
+      const coneImg = document.createElement('img');
+      coneImg.className = 'char-cone-icon';
+      coneImg.src = coneIconUrl;
+      coneImg.alt = cone.name;
+      coneImg.loading = 'lazy';
+      coneImg.referrerPolicy = 'no-referrer';
+      // 图挂了（网络 / 缺图）就撤掉图标、留名字——绝不画破图。
+      coneImg.addEventListener('error', () => coneImg.remove(), { once: true });
+      coneLine.appendChild(coneImg);
+    }
+    const coneName = document.createElement('span');
+    coneName.className = 'char-cone-name';
+    coneName.textContent = cone.name;
+    coneLine.appendChild(coneName);
+    // 叠影（精炼值）：只在有值且 > 0 时显示，避免「叠影 0」这种噪声。
+    const coneRank = num(cone.rank);
+    if (coneRank !== null && coneRank > 0) {
+      const coneRankSpan = document.createElement('span');
+      coneRankSpan.className = 'char-cone-rank';
+      coneRankSpan.textContent = `叠影 ${coneRank}`;
+      coneLine.appendChild(coneRankSpan);
+    }
+    card.appendChild(coneLine);
+  }
 
   // 点角色卡 → 弹出角色面板浮层（用户 2026-10 要求：与抽卡推荐页**同一个浮层**，
   // 含角色立绘与光锥卡面）。**不再在本页原地展开** —— 展开会把整张网格重排，

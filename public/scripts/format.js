@@ -230,6 +230,9 @@ export const lightConeOf = (character) => {
     rank: cone.rank ?? cone.rank_level ?? null,
     level: cone.level ?? null,
     promotion: cone.promotion ?? cone.ascension ?? null,
+    // 光锥图标：快照自带 equip.icon（米游社 CDN 或 /icons/... 同源地址）。
+    // 角色列表卡片与角色面板浮层都用它；拿不到就退回 null（调用方画占位）。
+    icon: cone.icon ?? null,
   };
 };
 

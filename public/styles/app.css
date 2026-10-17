@@ -3914,3 +3914,53 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
 .topbar {
   box-shadow: 0 1px 0 rgba(120, 150, 220, 0.06);
 }
+
+/* ==========================================================================
+   角色列表卡片 · 光锥行（2026-10-18）
+   —— 用户要求：角色列表需要显示角色的光锥（图标 + 精炼值），不同星级用
+      金色（5★）/ 紫色（4★）/ 蓝色（3★）区分，与角色卡左侧星级色条同一套语义。
+   ========================================================================== */
+
+/* 光锥行：紧跟在星级/Lv/星魂 tags 下面，一条独立的细行。左对齐、图标与文字基线对齐。 */
+.char-cone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(120, 150, 220, 0.14);
+  min-width: 0;
+  font-size: 12px;
+}
+/* 光锥图标：小方图（光锥是竖长方卡面，缩成小尺寸方角），带星级色描边。 */
+.char-cone-icon {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  object-fit: cover;
+  border-radius: 5px;
+  border: 1px solid var(--cone-color, var(--border-strong));
+  background: rgba(0, 0, 0, 0.3);
+}
+/* 光锥名：与星级同色，突出「这是一把几星的锥」。溢出省略，不撑破卡片。 */
+.char-cone-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--cone-color, var(--text-dim));
+  font-weight: 500;
+}
+/* 叠影（精炼值）：弱化灰字，跟在名字后面，不抢光锥名与星级的注意力。 */
+.char-cone-rank {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* 星级三色：金（5★）/ 紫（4★）/ 蓝（3★）。与 format.js 的 rarityColor()（--r5/--r4/--r3）
+   同源取值，只是这里作用到光锥行的图标描边与名字颜色上。 */
+.char-cone[data-rarity="5"] { --cone-color: var(--r5); }
+.char-cone[data-rarity="4"] { --cone-color: var(--r4); }
+.char-cone[data-rarity="3"] { --cone-color: var(--r3); }
