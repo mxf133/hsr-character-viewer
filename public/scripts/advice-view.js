@@ -27,9 +27,10 @@
 // 服务端的 `buildConclusion` 里 —— 只在浏览器里加权会让收敛选错代表整包。
 // 所以改它要重算结论（与关卡权重、隐金设置同一条路），见输入框的接线。
 //
-// ⚠️ **版本权重（当前版本 / 前1个版本 … 前5个版本）是第三类权重**（用户 2026-10-16 第 3 条；
-// 槽位名 2026-10-16 第 2 条改过：原「最新版 / −1 版 …」不再使用）：
-// 每个副本窗口里「从当前版本往回 6 个版本」各占多少（默认 `3:2.5:2:1.5:1:0.5`）。
+// ⚠️ **版本权重（当前版本 / 前1个版本 …）是第三类权重**（用户 2026-10-16 第 3 条；
+// 槽位名 2026-10-16 第 2 条改过：原「最新版 / −1 版 …」不再使用；2026-10-17 起档位可增删）：
+// 每个副本窗口里「从当前版本往回 N 个版本」各占多少（默认 6 版 `3:2.5:2:1.5:1:0.5`，
+// 用「加一版 / 删一版」把窗口改成 1~12 档）。
 //   * 它决定服务端现算的 `seasonWeights`，客户端再拿那一份做跨版本加权 ——
 //     所以同样**必须进服务端请求**（与抽卡权重同一条路，漏传就是「界面静默显示旧结果」）；
 //   * 槽位**按下标**、不绑定版本号：黑塔网加一版就整体前移，所以界面只能写
@@ -43,9 +44,11 @@ import {
   // 抽卡权重（用户 2026-10-12 第 2、3 条）：旋钮清单与默认值都只有 advice.js 那一份。
   DRAW_WEIGHT_ROWS, drawWeightDefaults, normalizeDrawWeights,
   // 版本权重（用户 2026-10-16 第 3 条）：**第三类**权重 —— 每个副本窗口里「从最新往前
-  // 6 个版本」各占多少。旋钮清单（`VERSION_WEIGHT_ROWS`）、默认表与读数规则同样只有
+  // N 个版本」各占多少（默认 6 版；用户 2026-10-17 起界面上能「加一版 / 删一版」）。
+  // 旋钮清单（`versionWeightRows()`）、默认表与读数规则同样只有
   // `advice.js` 那一份（服务端 `archive.js` 读的也是它，两边必须同源）。
-  VERSION_WEIGHT_ROWS, versionWeightDefaults, versionWeightValues, normalizeVersionWeights,
+  versionWeightRows, versionWeightDefaultAt, VERSION_WEIGHT_MAX,
+  versionWeightDefaults, versionWeightValues, normalizeVersionWeights,
   formatRate, frontierFactorsOf, avLinesOf, metricShortText, metricValueText, ownedCharacters,
   ownedLightCones, perfAnchorsOf, perfLineWeightsOf, scorePercent,
   eidolonsOf, lightConeRanksOf, TIER_PLACEHOLDER, tierLabelsOf, tierMoveText, tierTextOf,
@@ -105,9 +108,13 @@ const el = {
   /** 抽卡权重那一行（强度 / 性价比 / 泛用性；用户 2026-10-12 第 2、3 条 + 2026-10-13 第 1 条）。 */
   drawWeightRow: $('adviceDrawWeightRow'),
   drawWeightsMeta: $('adviceDrawWeightsMeta'),
-  /** 版本权重那一行（6 个版本槽位；用户 2026-10-16 第 3 条）。 */
+  /** 版本权重那一行（默认 6 个版本槽位；用户 2026-10-16 第 3 条 + 2026-10-17 可增删）。 */
   versionWeightRow: $('adviceVersionWeightRow'),
   versionWeightsMeta: $('adviceVersionWeightsMeta'),
+  /** 版本权重槽位的两个按钮（用户 2026-10-17：加一版 / 删掉最后一版）。 */
+  versionWeightAdd: $('adviceVersionWeightAdd'),
+  versionWeightRemove: $('adviceVersionWeightRemove'),
+  versionWeightCount: $('adviceVersionWeightCount'),
   /** 隐金设置（权重块下方的按钮 + 它旁边的状态行）。 */
   hiddenCostsOpen: $('adviceHiddenCostsOpen'),
   hiddenCostsMeta: $('adviceHiddenCostsMeta'),
@@ -1367,27 +1374,32 @@ const renderDrawWeightRow = () => {
   renderDrawWeightsMeta();
 };
 
-// ------------------------------------- 版本权重（当前版本 / 前1个版本 … 前5个版本）
+// ------------------------------------- 版本权重（当前版本 / 前1个版本 … 前N个版本，可增删档位）
 
 /**
- * 读版本权重的 6 个输入框 → **长度 6 的数组**（原值，不归一化）。
+ * 读版本权重的**当前档位**输入框 → 数组（原值，不归一化）。
+ *
+ * ⚠️ 档位数是**动态的**（用户 2026-10-17 起能点「加一版 / 删一版」）：数组长度 = 网格里
+ * 输入框的个数，每个输入框的 `dataset.key` 就是它的下标。所以这里**不再**按
+ * `VERSION_WEIGHT_ROWS`（那份恒 6 档）去对 —— 拿 6 档去读 8 个框会把多出来的两档丢掉。
  *
  * ⚠️ 边界规则与 `weightInputOf` / `versionWeightValues` **同一套**：空串 = 0
  * （用户把某一版清空 = 那一版不进窗口）、非法值忽略并保留默认。默认值直接取
- * `advice.js` 的 `versionWeightDefaults()`（与另外两组同一个形状），界面**不抄第二份表**。
+ * `advice.js` 的 `versionWeightDefaults(档位数)`（与另外两组同一个形状），界面**不抄第二份表**。
  *
  * 返回数组而不是对象：`state.versionWeights` 与请求体、服务端的
  * `normalizeVersionWeights()` 都是数组形状（下标即槽位）。
  */
 const readVersionWeights = (grid) => {
-  const out = versionWeightDefaults();
-  if (!grid) return out;
-  for (const input of grid.querySelectorAll('input.advice-version-weight')) {
-    const row = VERSION_WEIGHT_ROWS.find((r) => r.key === input.dataset.key);
-    if (!row) continue;
+  if (!grid) return versionWeightDefaults();
+  const inputs = [...grid.querySelectorAll('input.advice-version-weight')];
+  const out = versionWeightDefaults(Math.max(1, inputs.length));
+  for (const input of inputs) {
+    const index = Number(input.dataset.key);
+    if (!Number.isInteger(index) || index < 0 || index >= out.length) continue;
     // 空串 = 用户清空了输入框 → 0（与 `weightInputOf` 同一条约定）。
     const n = weightInputOf(input.value);
-    if (n !== null) out[row.index] = n;
+    if (n !== null) out[index] = n;
   }
   return out;
 };
@@ -1396,8 +1408,9 @@ const readVersionWeights = (grid) => {
  * 从 localStorage 恢复版本权重（没有存档 / 字段不合法 → 默认表）。
  *
  * ⚠️ 存档形状是数组，但**老存档可能是别的形状**（对象 `{'0':3}`、只有 3 个槽位的短
- * 数组、甚至一个数字）—— 一律交给 `versionWeightValues()` 判：它两种形状都收、
- * 缺的按默认补、非法的忽略。所以这里不做任何自己的校验，避免与算分那一份分叉。
+ * 数组、甚至一个数字）—— 一律交给 `versionWeightValues()` 判：它两种形状都收、缺的按
+ * 默认补、非法的忽略，**档位数跟着存档长度走**（用户 2026-10-17 起档位可增删，短数组
+ * 就是「他自己删到 3 档」）。所以这里不做任何自己的校验，避免与算分那一份分叉。
  */
 const loadVersionWeights = () => {
   let parsed = null;
@@ -1420,8 +1433,11 @@ const saveVersionWeights = () => {
  *
  * ⚠️ 与另外两组不同，这里不印百分比而印 `当前版本 3 : 前1个版本 2.5 : …` 这种**比值串**
  * —— 因为它**不做归一到 1**（`normalizeVersionWeights` 明确不做），百分比会误导用户
- * 以为总和是 100。标签逐槽位印（来自 `VERSION_WEIGHT_ROWS`，不抄第二份），
+ * 以为总和是 100。标签逐槽位印（来自 `versionWeightRows(档位数)`，不抄第二份），
  * 这样「哪一版是 0」一眼可见。
+ *
+ * ⚠️ 档位数要**印出来**（用户 2026-10-17 加了加删档位的按钮）：只看比值串数不出「现在是
+ * 6 版还是 8 版」，而窗口长度直接决定哪些版本参与加权。
  *
  * ⚠️ 措辞必须点明「**每个副本算各自的**」：`4.5` 在混沌与异相仲裁里不是同一期，
  * 所以「当前版本」是逐副本的（槽位按下标、不绑定版本号）。
@@ -1430,32 +1446,58 @@ const renderVersionWeightsMeta = () => {
   const meta = el.versionWeightsMeta;
   if (!meta) return;
   const value = normalizeVersionWeights(state.versionWeights || []);
-  const defaults = versionWeightDefaults();
+  const defaults = versionWeightDefaults(value.length);
   const changed = value.some((v, i) => Math.abs(v - (defaults[i] ?? 0)) > 1e-9);
   // 逐个槽位印「标签 原值」（与另外两组同一个形状：**印生效的那个数**，不让用户拿输入框
-  // 里的原值自己脑补）。旋钮清单来自 `VERSION_WEIGHT_ROWS`，所以标签也**不抄第二份**。
-  const parts = VERSION_WEIGHT_ROWS
+  // 里的原值自己脑补）。旋钮清单来自 `versionWeightRows(档位数)`，所以标签也**不抄第二份**。
+  const parts = versionWeightRows(value.length)
     .map((row) => `${row.label} ${formatWeight(value[row.index])}`)
     .join(' : ');
-  meta.textContent = `每个副本各自算：${parts}`
+  meta.textContent = `每个副本各自算（${value.length} 版）：${parts}`
     + (changed ? '' : '（默认）')
     + '；某版设 0 = 那一版不进窗口。改它会重算总榜。';
 };
 
 /**
- * 画版本权重的**六个**输入框（用户 2026-10-16 第 3 条：第三类权重）。
+ * 加删档位按钮的状态：`N 版` 标签 + 两个按钮的 `disabled` / `title`。
  *
- * 旋钮清单来自 `advice.js` 的 `VERSION_WEIGHT_ROWS`（**只有那一份**）—— 它同时被服务端
- * `archive.js` 读，所以标签与槽位在这里绝不会与生效的那张表分叉。输入框的值是用户敲的
- * 原值（不做归一），比例由 `renderVersionWeightsMeta()` 印。
+ * ⚠️ 上限用 `VERSION_WEIGHT_MAX`（advice.js 唯一那份，12）：再多本地数据集里也没有对应
+ * 的版本，给权重也拿不到成绩；下限 1：整条链至少要有一档。
+ */
+const renderVersionWeightButtons = (count) => {
+  const add = el.versionWeightAdd;
+  const remove = el.versionWeightRemove;
+  if (add) {
+    add.disabled = count >= VERSION_WEIGHT_MAX;
+    add.title = count >= VERSION_WEIGHT_MAX
+      ? `最多 ${VERSION_WEIGHT_MAX} 版`
+      : '窗口里再加一版（默认权重沿用最后一档 0.5）';
+  }
+  if (remove) {
+    remove.disabled = count <= 1;
+    remove.title = count <= 1 ? '至少保留一版' : '删掉最后一版（最旧的那一档）';
+  }
+  const label = el.versionWeightCount;
+  if (label) label.textContent = `${count} 版`;
+};
+
+/**
+ * 画版本权重的输入框（默认 6 个，用户 2026-10-17 起可增删到 1~12 个）。
+ *
+ * 旋钮清单来自 `advice.js` 的 `versionWeightRows(档位数)`（**只有那一份**）—— 它同时被
+ * 服务端 `archive.js` 读，所以标签与槽位在这里绝不会与生效的那张表分叉。输入框的值是
+ * 用户敲的原值（不做归一），比例由 `renderVersionWeightsMeta()` 印。
  */
 const renderVersionWeightRow = () => {
   const grid = el.versionWeightRow;
   if (!grid) return;
-  const defaults = versionWeightDefaults();
-  const current = state.versionWeights || [];
+  // ⚠️ 用 `versionWeightValues()`（原值、保留 0）而不是 `normalizeVersionWeights()`：
+  //    后者在「全 0」时会退回默认表，那会把用户刚清空的框又填回去。
+  const current = versionWeightValues(state.versionWeights || []);
+  const count = current.length;
+  const defaults = versionWeightDefaults(count);
   grid.innerHTML = '';
-  for (const row of VERSION_WEIGHT_ROWS) {
+  for (const row of versionWeightRows(count)) {
     const label = document.createElement('label');
     label.className = 'field field-inline advice-weight-field';
     label.appendChild(text('span', '', row.label));
@@ -1476,6 +1518,7 @@ const renderVersionWeightRow = () => {
     label.appendChild(input);
     grid.appendChild(label);
   }
+  renderVersionWeightButtons(count);
   renderVersionWeightsMeta();
 };
 
@@ -5310,14 +5353,34 @@ export const mountAdviceView = (options = {}) => {
       });
     }
   }
-  // 权重三大类之三：**版本权重**输入（用户 2026-10-16 第 3 条）。
+  // 权重三大类之三：**版本权重**输入（用户 2026-10-16 第 3 条；2026-10-17 起档位可增删）。
   //
-  // ⚠️ 它与抽卡权重一样**进服务端请求**：它决定每个副本窗口里「最新往前 6 个版本」
+  // ⚠️ 它与抽卡权重一样**进服务端请求**：它决定每个副本窗口里「最新往前 N 个版本」
   // 各占多少，而服务端在当前请求里现算 `seasonWeights`，客户端再拿那一份做跨版本加权
   // （总榜的整包分、详情窗口的「跨版本发挥」都是这条链的下游）。
   // 所以走的还是同一条路：防抖 → `packsCache.clear()` → `loadConclusion()` 重算。
   {
     const grid = el.versionWeightRow;
+    /**
+     * 版本权重改完（改数 / 加档 / 删档）后统一走的收尾。
+     *
+     * ⚠️ 按钮那条路**不防抖**（与输入框不同）：点一次就该生效，没有连续输入的场景，
+     * 压 300ms 只会让人以为没点到。收尾动作与三处旋钮逐字一致 ——
+     * `packsCache.clear()` → `loadConclusion()`，否则同一个角色会一直吃旧权重算出来的分
+     * （v4.6.69 / v4.6.93 修的就是这一类）。
+     */
+    const applyVersionWeights = async (next) => {
+      state.versionWeights = next;
+      saveVersionWeights();
+      renderVersionWeightRow();
+      const meta = el.versionWeightsMeta;
+      if (meta) meta.classList.add('is-pending');
+      clearTimeout(state.versionWeightsTimer);
+      packsCache.clear();
+      if (state.index) await loadConclusion();
+      else if (state.conclusion) renderTeamPlan(state.conclusion);
+      if (meta) meta.classList.remove('is-pending');
+    };
     if (grid) {
       grid.addEventListener('input', () => {
         state.versionWeights = readVersionWeights(grid);
@@ -5337,6 +5400,25 @@ export const mountAdviceView = (options = {}) => {
         }, WEIGHTS_DEBOUNCE);
       });
     }
+    /**
+     * 加一版 / 删最后一版（用户 2026-10-17：「添加两个按钮，让用户可以点击按钮添加更多的
+     * 版本权重，或者点击删除最后一个版本」）。
+     *
+     * ⚠️ 加档**必须保住已有那几档的数值**（`[...current, 新档默认]`）—— 用
+     * `versionWeightDefaults(n+1)` 整张重置会把用户调过的权重全抹掉。
+     * 新档的默认值取 `versionWeightDefaultAt()`（第 7 档起沿用 0.5，不归零）。
+     * 上限 12 / 下限 1 的禁用状态由 `renderVersionWeightButtons()` 反映到按钮上。
+     */
+    el.versionWeightAdd?.addEventListener('click', () => {
+      const current = versionWeightValues(state.versionWeights || []);
+      if (current.length >= VERSION_WEIGHT_MAX) return;
+      void applyVersionWeights([...current, versionWeightDefaultAt(current.length)]);
+    });
+    el.versionWeightRemove?.addEventListener('click', () => {
+      const current = versionWeightValues(state.versionWeights || []);
+      if (current.length <= 1) return;
+      void applyVersionWeights(current.slice(0, -1));
+    });
   }
   /**
    * 「恢复默认」= 清掉**三大类**权重（关卡权重回到 `envWeightDefaults()`、抽卡权重回到

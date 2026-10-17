@@ -3094,6 +3094,37 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 .advice-weights .advice-weights-group:nth-child(3) .advice-weights-subtitle::before {
   background: var(--gold);
 }
+/* 版本权重的**档位按钮**（用户 2026-10-17：「添加两个按钮，点击添加更多的版本权重，
+   或者点击删除最后一个版本」）。
+   ⚠️ 样式只挂在 `.advice-version-actions` 上、**别动 `.advice-weights-subtitle` 那条公共
+   规则** —— 另外两组的小标题里没有按钮，改公共规则会连带改它们的行高。
+   ⚠️ 版数（`6 版`）放在两个按钮左边：加删之后用户要能一眼看出「窗口现在是几版」，
+   而比值串（下面那行摘要）数不出来。
+   ⚠️ `.btn-sm` 的默认内边距（6px 12px）在这条 12px 的小标题行里显得很重，压成药丸形；
+   两个按钮都允许 `disabled`（上限 12 版 / 下限 1 版），禁用态只降透明度、不换色。 */
+.advice-version-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.advice-version-actions .btn-sm {
+  padding: 2px 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  border-radius: 999px;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.advice-version-actions .btn-sm:hover:not(:disabled) { border-color: var(--gold); }
+.advice-version-actions .btn-sm:disabled { opacity: 0.4; }
+.advice-version-count {
+  font-size: 11.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
 /* 组内输入框：**两小列**（用户 2026-10-17 第 1 条：三个部分各占一列，列内再分两格）——
    5 / 3 / 6 个旋钮分别排成 3 / 2 / 3 行，比竖排时的一列五行 / 三行 / 六行省一半高度。
    ⚠️ 必须写三条选择器：`.advice-weights-grid`（基础 5 列）、`.is-draw`（2 列）、

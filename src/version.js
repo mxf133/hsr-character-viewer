@@ -2532,6 +2532,44 @@
 //            额外做一次 `node --check`，语法坏了就当成一次失败报出来 —— 这条护栏加完
 //            立刻又抓到同一个注释块里剩下的那个反引号。
 //
+//   v4.6.120 2026-10-17：**版本权重的档位可增删**（用户「添加两个按钮，让用户可以点击按钮
+//            添加更多的版本权重，或者点击删除最后一个版本，这样会有更多或者更少的版本权重」）。
+//
+//            改前的形状是「权重表恒 6 档」：`VERSION_WEIGHTS` 定长、`versionWeightValues()`
+//            恒按 6 个槽位读、服务端两条链的窗口长度钉在 `VERSION_WINDOW`（6）。于是
+//            「加一版」这件事在四个地方同时做不到 —— 界面没地方加、读数只认 6 档、
+//            请求体也只发 6 个数、服务端就算收到 8 个数也只取窗口内 6 版。
+//
+//            ① **表定义改成「档位数可传」**（`public/scripts/advice.js`）：
+//               新增 `versionWeightRows(count)` / `versionWeightDefaultAt(index)` /
+//               `versionWeightCountOf(input)`；`versionWeightDefaults(count)`、
+//               `versionWeightValues()`、`normalizeVersionWeights()` 全部**保住入参的档位数**。
+//               第 7 档起的默认权重**沿用最后一档 0.5**（归零 = 那版不进窗口，与「加一版让
+//               它参与」的意图正好相反）。`VERSION_WEIGHT_ROWS` 保留为「默认 6 档」那一份，
+//               老调用点（界面 / 服务端 / `herta-test` 的槽位名断言）逐字不变。
+//            ② **上下限 1~12**（`VERSION_WEIGHT_MIN` / `VERSION_WEIGHT_MAX`）：本地数据集
+//               里最长的副本（混沌回忆）15 版、其余 10~13 版，12 档已够；下限 1 保证整条链
+//               至少有一档。
+//            ③ **服务端窗口跟着档位数走**（`src/server/archive.js` 的 `archiveFrontier` /
+//               `resolveScope`、`src/server/conclusion.js` 的 `conclusionEnvs` 与两处
+//               `archiveFrontierAll` 的 `window`）：原来 `windowSize` 的上限是
+//               `Math.min(选项, VERSION_WINDOW, versions)` —— 加了档位也进不来，按钮等于
+//               没接线。实测 8 档时五个副本的 `versionWindow` / `seasons` 都从 6 变 8。
+//            ④ **界面**（`public/index.html` / `advice-view.js` / `styles/app.css`）：
+//               版本权重小标题右边两个按钮「加一版 / 删一版」+ 版数标签（`6 版`）；
+//               到 12 / 1 时 `disabled`。加档用 `[...current, 新档默认]` —— **不许**用
+//               `versionWeightDefaults(n+1)` 整张重置（那会把用户调过的权重全抹掉）。
+//               读数按**网格里的输入框个数**走（不再按恒 6 档的 `VERSION_WEIGHT_ROWS`）。
+//               按钮不防抖：点一次就重算（`packsCache.clear()` → `loadConclusion()`，
+//               与三处权重旋钮同一套收尾）。
+//
+//            ⚠️ **存档形状的口径分两种**：数组（现在这套界面自己写的）→ 长度**就是**档位数
+//               （「删一版」存下来的是短数组，补齐到 6 等于按钮没反应）；对象（`{'0':3}`
+//               这种老形状，界面从没写过它）→ 至少补到 6 档再按默认补齐（老口径不变）。
+//            回归：`version-weight-plan-test` 新增 D 段 6 项（档位默认值 / 槽位名 / 保档位 /
+//               上下限 / 8 档窗口 / 3 档窗口），`_probe-ui-version-weights` 新增 ⑥ 13 项
+//               （真 click 事件 → 7 个框 / 已有数值不动 / 请求体 7 档 / 上下限 / 短数组）。
+/
 //   v4.6.119 2026-10-17 晚：**强度只看行动值** + 「已登场却无证据」改成继承
 //            （用户原话：「强度得分应仅考虑强度（不考虑别的，因此低难副本普遍能拿满分）」、
 //            「如果已登场却无证据，一个高成本角色自动继承其低成本角色的得分，因为人们
@@ -2896,7 +2934,7 @@
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.119';
+export const PROGRAM_VERSION = '4.6.120';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';

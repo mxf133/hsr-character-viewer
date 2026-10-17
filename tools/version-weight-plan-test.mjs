@@ -26,6 +26,9 @@
 import { archiveIndex, archiveTeams } from '../src/server/archive.js';
 import { archiveConclusion, conclusionEnvs, listEnvs } from '../src/server/conclusion.js';
 import { VERSION_WEIGHTS, normalizeVersionWeights, teamPlan } from '../public/scripts/advice.js';
+import {
+  VERSION_WEIGHT_MAX, VERSION_WEIGHT_ROWS, versionWeightDefaults, versionWeightRows,
+} from '../public/scripts/advice.js';
 
 let passed = 0;
 const fails = [];
@@ -257,6 +260,97 @@ await check('载荷里两条版本加权链都只认一个版本（不退回默�
     const seasons = [...new Set((env.avTeams || []).map((row) => String(row.season)))];
     if (seasons.length > 1) {
       throw new Error(`${env.id}：前沿池的行来自 ${seasons.length} 个版本（${seasons.join('/')}），只该有一个`);
+    }
+  }
+});
+
+// ------------------------------------------- D. 档位可增删（用户 2026-10-17）
+//
+// 用户原话：「添加两个按钮，让用户可以点击按钮添加更多的版本权重，或者点击删除最后一个
+// 版本，这样会有更多或者更少的版本权重」。界面上那两个按钮只改**档位数**，真正决定
+// 「窗口里有几版」的是下面这两处：
+//   * `normalizeVersionWeights()` 必须**保住**入参的档位数（不再恒返 6 档）；
+//   * 服务端两条链的窗口长度必须**跟着档位数走**（原来钉死在 `VERSION_WINDOW`）。
+// 只改界面不改这两处的话，按钮点下去界面上多了一个框、榜单纹丝不动 —— 那就是假按钮。
+section('D. 档位可增删（「加一版 / 删一版」）');
+
+await check('档位默认值：第 7 档起沿用最后一档 0.5（不归零）', () => {
+  const got = JSON.stringify(versionWeightDefaults(8));
+  const want = JSON.stringify([3, 2.5, 2, 1.5, 1, 0.5, 0.5, 0.5]);
+  if (got !== want) throw new Error(`默认 8 档是 ${got}，期望 ${want}`);
+});
+
+await check('`versionWeightRows()` 的槽位名与键跟着档位数走', () => {
+  const rows = versionWeightRows(8);
+  if (rows.length !== 8) throw new Error(`8 档只出了 ${rows.length} 行`);
+  if (rows[7].label !== '前7个版本' || rows[7].key !== '7') {
+    throw new Error(`第 8 档是 ${rows[7].key} / ${rows[7].label}`);
+  }
+  // 默认清单（`VERSION_WEIGHT_ROWS`）仍是 6 档，老调用点不受影响。
+  if (VERSION_WEIGHT_ROWS.length !== VERSION_WEIGHTS.length) {
+    throw new Error('`VERSION_WEIGHT_ROWS` 不再等于默认表长度');
+  }
+});
+
+await check('`normalizeVersionWeights` 保住档位数（加档 / 删档都不塌回 6）', () => {
+  const eight = normalizeVersionWeights([1, 1, 1, 1, 1, 1, 1, 1]);
+  if (eight.length !== 8) throw new Error(`8 档进来、${eight.length} 档出去`);
+  const three = normalizeVersionWeights([2, 1, 0.5]);
+  if (three.length !== 3) throw new Error(`3 档进来、${three.length} 档出去`);
+  // 全 0 退回默认表，但档位数要保住（用户加了 8 档再全清空，界面不该塌回 6 档）。
+  const zeros = normalizeVersionWeights([0, 0, 0, 0, 0, 0, 0, 0]);
+  if (zeros.length !== 8) throw new Error(`全 0 的 8 档退回成 ${zeros.length} 档`);
+  // 存档里是对象形状（`{'0':3}`）时**至少补到默认窗口**：那不是现在这套界面写出来的形状
+  // （界面写数组），缺的档位按默认补齐，老口径不变。数组形状才「长度即档位数」。
+  const obj = normalizeVersionWeights({ 0: 3, 1: 2, 2: 1 });
+  if (obj.length !== VERSION_WEIGHTS.length) {
+    throw new Error(`对象形状的 3 档推成了 ${obj.length} 档（应补到默认窗口 ${VERSION_WEIGHTS.length}）`);
+  }
+  if (obj[0] !== 3 || obj[1] !== 2 || obj[2] !== 1 || obj[3] !== 1.5) {
+    throw new Error(`对象形状补默认补错了：${JSON.stringify(obj)}`);
+  }
+});
+
+await check('档位数收敛到 1~12 且空数组退回默认窗口', () => {
+  if (normalizeVersionWeights(Array(20).fill(1)).length !== VERSION_WEIGHT_MAX) {
+    throw new Error(`20 档没有被收敛到 ${VERSION_WEIGHT_MAX}`);
+  }
+  if (normalizeVersionWeights([]).length !== VERSION_WEIGHTS.length) {
+    throw new Error('空数组没有退回默认窗口');
+  }
+});
+
+await checkAsync('聚合层窗口跟着档位数走（8 档 → 窗口 8 个版本）', async () => {
+  for (const env of probeEnvs) {
+    const eight = versionWeightDefaults(8);
+    const data = await archiveTeams(env.mode, {
+      season: env.season, stage: env.stage, window: eight.length, withFrontier: true, versionWeights: eight,
+    });
+    const seasons = data.recentSeasons || [];
+    if (seasons.length !== 8) {
+      throw new Error(`${env.id}：8 档只拿到 ${seasons.length} 个版本（${seasons.join('/')}）—— 窗口仍被钳在默认值`);
+    }
+    if (data.versionWeights?.length !== 8) {
+      throw new Error(`${env.id}：回显的表是 ${data.versionWeights?.length} 档`);
+    }
+    // 最旧那一档（下标 7）按默认表应落到 0.5，而不是 0（0 = 那一版不进窗口）。
+    const oldest = seasons[0];
+    const w = Number(data.seasonWeights?.[oldest]);
+    if (Math.abs(w - 0.5) > 1e-9) {
+      throw new Error(`${env.id}：窗口最旧一版 ${oldest} 的权重是 ${w}，期望 0.5`);
+    }
+  }
+});
+
+await checkAsync('删到 3 档 → 窗口只留 3 个版本', async () => {
+  for (const env of probeEnvs) {
+    const three = versionWeightDefaults(3);
+    const data = await archiveTeams(env.mode, {
+      season: env.season, stage: env.stage, window: three.length, withFrontier: true, versionWeights: three,
+    });
+    const seasons = data.recentSeasons || [];
+    if (seasons.length !== 3) {
+      throw new Error(`${env.id}：3 档拿到 ${seasons.length} 个版本`);
     }
   }
 });
