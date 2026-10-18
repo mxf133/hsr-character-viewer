@@ -4094,7 +4094,10 @@ const rosterGoldOf = (members, availability) => members
  * 为什么要它：队伍抽卡方案那一行下面紧接着写「最佳证据：… 14 金」，那个 14 是**队伍**的
  * 账面金数（数据集口径）；用 `packGoldOf` 会印出 11（E3 被折成 E2），两个数对不上。
  */
-const datasetGoldOf = (member, availability) => {
+// ⚠️ 2026-10-18：加了 `export` —— v2 抽卡方案（`src/server/gacha-plan.js`）要用它与
+// 数据集那条 `c` 对齐队伍账面金数，仓库的规矩是「服务端直接复用这段纯函数」不要再抄一遍
+// （`src/server/app.js` 早就在 import `charCostOf/coneCostOf`，是同一套路）。
+export const datasetGoldOf = (member, availability) => {
   const body = charCostOf(member.char, availability);
   const cone = member.lc ? coneCostOf(member.lc, availability) : 0;
   // 本体 0 金（4★ / 常驻 / 开拓者）时星魂也不计金 —— 与 `packGoldOf` 同一条硬规则。

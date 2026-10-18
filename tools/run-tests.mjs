@@ -50,6 +50,11 @@ const suites = [
   // 离线，直接读 `theherta/archive.json` 复核真实 baseline（绝境 4.5 = 9 金之类），
   // 所以**数据集重建后这些数字会跟着变** —— 那是特性，不是抖动。
   ['v2 评分内核（判据 / baseline / 整包 / 上场率）', 'gacha-score-test.mjs'],
+  // v2 抽卡方案（用户 2026-10-18 重构）的 Δgold / 跨版本取最大值 / fill / mid / 次选。
+  // 离线；它的最后一组还是拿了 `theherta/archive.json` 真数据跑一遍，所以**数据集重建后
+  // 那几条结构断言会跟着变**。性能不在常规套件里盯，另有 `tools/_probe-plan-perf.mjs`
+  // （要现造 10 万条，平时没必要每次都跑）。
+  ['v2 抽卡方案（Δgold / fill / mid / 次选）', 'gacha-plan-test.mjs'],
   // 用户 2026-10-14 点名的两条不变式：强度对投入单调（E6S5 > E6S1 > E2S1 > E0S0）、
   // 以及成本账（限定 E6S5 不算隐金 = 12 金）。离线，样本角色，实测 638 组可比档位。
   ['强度口径不变式（新两档规则 / E6S5=12 金）', 'strength-invariant-test.mjs'],
