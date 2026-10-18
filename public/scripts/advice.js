@@ -1454,6 +1454,24 @@ export const SCORING = {
    *    要的是「0 行动值的同时金数最低」，分母必须是 0 行动值那一档的金数区间。
    */
   strengthGoldPinch: 0.1,
+  /**
+   * **顶格档（0 行动值）按「该副本该版达成率」折价的两个参数**（用户 2026-10-18
+   * 报「老队伍角色的队伍强度过高」）。
+   *
+   * 「0 行动值」在不同副本难度天差地别 —— moc/aa 九成队伍做得到，绝境只有 4.6%。
+   * 折价公式（完整背景见 `teamPlan` 里的 `topCapOf`）：
+   * ```
+   *   顶格上限 = 100 × max(strengthTopBandFloor,
+   *                         strengthTopBandRare + (1 − strengthTopBandRare) × (1 − rate))
+   *   rate = 该副本该版「打出 0 行动值」的比例
+   * ```
+   * - `strengthTopBandRare = 0.05`：达成率 ≤5% 视作满分档（绝境 4.5 的 4.6% → 95.6）
+   * - `strengthTopBandFloor = 0.35`：容易达标的顶格（moc/aa 的 92%+）保底 35 分
+   *   —— **不能取 0**：纯线性 `100 × (1 − rate)` 会把它们压到 8 分，那1089 支
+   *   「只打了 moc/aa 一关」的队均分从 15.4 塌到 3.4、整批沉底看不出梯度。
+   */
+  strengthTopBandRare: 0.05,
+  strengthTopBandFloor: 0.35,
 };
 
 /** 性价比的显示值：内部比值 × 100，四舍五入到整数（总榜与抽卡方案共用）。
@@ -2981,6 +2999,54 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
   //   * ② ③ 与证据池**逐字相同**（同一个循环里装配）：差额、账面金数、隐金减免、
   //     成本加权泛用性。所以「0 行动值但补金 0」的队同样被剔除（第 3 条：无抽卡必要）。
   const avCandidates = [];
+  /**
+   * 逐 (副本 × 版本) 的「0 行动值达成率」，来自服务端 `zeroAvRateByEnv`
+   * （由 `conclusion.js` 的 `collectAllTeams` 顺带统计，口径 = 多少支队伍在这一关
+   * 这一版打出过成绩、其中多少支打出 0）。
+   */
+  const zeroRateByEnvSeason = conclusion?.zeroAvRateByEnv || null;
+  /**
+   * 顶格档（0 行动值）的天花板，按「这个副本这一版的 0 行动值达成率」折价。
+   *
+   * **背景（用户 2026-10-18 报「老队伍角色的队伍强度过高」，丹恒•饮月那支队）**
+   * 顶格档一直是「行动值 = 0 → 100 分」，但**「0 行动值」在不同副本难度天差地别**。
+   * 实测达成率（`tools/_probe-zero-av-rate.mjs`，全部有通关记录的队伍为分母）：
+   * ```
+   *   混沌回忆 moc4.5      295/303 ≈ 97%   ← 九成队伍的日常
+   *   异相仲裁 aa    4.6   355/387 ≈ 92%   ← 同上
+   *   末日幻影 as    4.6    72/245 ≈ 29%
+   *   异相仲裁·绝境 4.5     6/131 ≈ 4.6%   ← 该期行动值中位数 296，0 是极端成绩
+   * ```
+   * 同一个 `100` 在 moc 上是「日常」、在绝境上是「131 条里仅 6 条」，量纲差一个数量级。
+   * 而绝境**权重 5**（其余四关各 1），且它是唯一有 0 行动值记录的副本
+   * ⇒ **4.5 期那10 支队只打了绝境 → 分母 = 分子 = 5 → 拿满 100 分**，
+   *   比当期（4.6）真打了绝境的队（94~97）还高。这就是「老队伍强度过高」。
+   *
+   * **折价公式**（`rare + (1 − rare) × (1 − rate)`，再夹在保底之上）：
+   * ```
+   *   顶格上限 = 100 × max(floor, rare + (1 − rare) × (1 − rate))
+   *   默认 rare = 0.05 · floor = 0.35
+   * ```
+   * 实测：绝境 4.5（rate 0.046）→ 95.6 · 末日幻影 4.6（0.294）→ 72.1 ·
+   *moc 4.1（0.917）/ aa 4.6（0.918）→ 35.0（保底）。
+   * ⚠️ **为什么要有 floor 0.35 而不是纯线性 `100 × (1 − rate)`**：纯线性会把
+   *    moc/aa 的顶格压到 8 分，实测那1089 支「只打了 moc/aa 一关」的队均分从
+   *    15.4 塌到 3.4（整批沉底，看不出梯度）。floor 0.35 保住「容易达标的顶格
+   *    仍然算好成绩、但不是满分」这层语义，同时难度差异完整保留。
+   * ⚠️ **高分区不受影响**：折价只作用于「0 行动值」那一行，而实测强度 85~95 区间
+   *    全是绝境队（有 av>0 的成绩）—— 折价前后该区间行数几乎不变（110 → 110）。
+   * ⚠️ 取不到达成率时**退回 100**（老载荷 / 合成夹具没有 `zeroAvRateByEnv`）：
+   *    宁可不做这个折价，也不要猜一个更低的顶格。
+   */
+  const topCapOf = (envId, season) => {
+    if (!zeroRateByEnvSeason) return 100;
+    const cell = zeroRateByEnvSeason[envId]?.[season];
+    const rate = Number(cell?.rate);
+    if (!Number.isFinite(rate)) return 100;
+    const { strengthTopBandRare, strengthTopBandFloor } = SCORING;
+    const raw = strengthTopBandRare + (1 - strengthTopBandRare) * (1 - Math.max(0, Math.min(1, rate)));
+    return 100 * Math.max(strengthTopBandFloor, raw);
+  };
   {
     const avUnitByKey = new Map();
     for (const u of units) avUnitByKey.set(packKeyOf(u.name, u.eidolon, u.lc, u.superimp), u);
@@ -3098,51 +3164,6 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
         avByRoster.set(key, { rosterKey: key, members, hits, allTeamsSource: true });
       }
     }
-    // 各副本的**版本权重表**（`{版本: 权重}`，服务端 `seasonWeights` 现算）：
-    // 下面「旧版本成绩折价」按它取权重。
-    const seasonWeightsOf = new Map((conclusion?.frontierEnvs || [])
-      .map((env) => [env.id, env.seasonWeights || null]));
-    /**
-     * **旧版本成绩的折价因子**（用户 2026-10-18：「有些老队伍的队伍得分异常」）。
-     *
-     * 这一池（行动值前沿 ∪ 全队伍表）的强度一直是「只看本队自己的行动值」，**不进版本
-     * 加权** —— v4.6.125 只把逐档榜那条链接回了 `Σ(版本权重 × 该版本强度) ÷ Σ(版本权重)`，
-     * 这一池漏在外面。实测后果（`tools/_probe-plan-audit.mjs`，中配账号）：
-     * 一支只有 **4.4** 版本成绩的队（飞霄/不死途/缇宝/千冶•刃）在这里拿 **92.7**，
-     * 而同一支队在逐档榜那条路上只有 **48.7** —— 同一个「强度」在两张卡上差 44 分，
-     * 而且等于「越老越不吃亏」：`avTeams` 只留每关「权重最高的有数据版本」那一行，
-     * 那一行当年是 0 行动值就照样算 100。
-     *
-     * 因子 = **该版本权重 ÷ 该副本窗口里权重最大的那一版**（默认表 6:5:4:3:2:1）：
-     *   * 当前版本 → 1.00（这一池里**当前版本**的 0 行动值仍然是 100，「登顶」这条口径
-     *     本身没变，见 `docs/功能要求.md` §4.5）；
-     *   * 4.1（moc 窗口 `4.5:6 … 4.0:1`）→ 2/6 = 0.33。
-     * 也就是「旧成绩按用户设的版本权重**打折**」，而**不是**照抄逐档榜的「缺版本按 0」——
-     * 后者会把这一池整条链压到 ≤29 分（它本来就是用来捞 0 行动值队伍的），等于取消 §4.5。
-     * ⚠️ 副作用（实测）：`avTeams` 每关 8 支**多数是旧版本**（moc 4.1~4.3、绝境全是 4.5），
-     * 所以折价之后这一池整体落在 ~75 分以下、方案前排由逐档榜那条链承接。这是口径的
-     * 必然结果（「有版本权重在，满分应当非常难」），**不是**回归；要让 0 行动值队伍重新
-     * 登顶，该改的是 `avTeams` 的**选行**（按版本优先），不是把折价删掉。
-     *
-     * 取不到 `seasonWeights`（老载荷 / 合成夹具）→ 因子 1，不出现 NaN；
-     * 版本不在表里（窗口外）→ 按**表里最小的那档**折（它比窗口内任何一版都老）。
-     */
-    const versionFactorOf = (h) => {
-      const table = seasonWeightsOf.get(h.id);
-      if (!table) return 1;
-      let top = 0;
-      let low = Infinity;
-      for (const raw of Object.values(table)) {
-        const n = Number(raw);
-        if (!Number.isFinite(n) || n < 0) continue;
-        if (n > top) top = n;
-        if (n < low) low = n;
-      }
-      if (!(top > 0)) return 1;
-      const own = Number(table[String(h.season ?? '')]);
-      const effective = Number.isFinite(own) && own >= 0 ? own : (Number.isFinite(low) ? low : 0);
-      return Math.max(0, Math.min(1, effective / top));
-    };
     for (const av of avByRoster.values()) {
       const hitEnvs = av.hits.filter((h) => Number.isFinite(h.av));
       if (!hitEnvs.length) continue;
@@ -3164,24 +3185,27 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
         const pinch = h.av === 0 && Number.isFinite(h.cost) && Number.isFinite(h.minCost)
           ? SCORING.strengthGoldPinch * Math.max(0, h.cost - h.minCost)
           : 0;
+        // 顶格档按「这个副本这一版的 0 行动值达成率」折价（v4.6.129）。
+        // 见下面 `topCapOf` 的完整口径说明。
+        const topCap = h.av === 0 ? topCapOf(h.id, h.season) : null;
         let envStrength;
         if (h.tierLines) {
           const perf = perfFactorOf(h.av, h.tierLines, h.lowerIsBetter, h.tier,
             SCORING.strengthLineWeights);
           envStrength = h.av === 0
-            ? 100 - pinch
+            ? topCap - pinch
             : SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
         } else if (Number.isFinite(h.avLo) && Number.isFinite(h.avHi) && h.avHi > h.avLo) {
           // 判据线取不到（老载荷）但有行动值区间：按区间线性折算，不猜满分线。
           const perf = 1 - (h.av - h.avLo) / (h.avHi - h.avLo);
           envStrength = h.av === 0
-            ? 100 - pinch
+            ? topCap - pinch
             : SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
         } else {
           // 什么都没有（合成夹具）：0 行动值仍是顶格，其余按第二档天花板记 —— 确定的退路。
-          envStrength = h.av === 0 ? 100 - pinch : SCORING.strengthSecondBandCap;
+          envStrength = h.av === 0 ? topCap - pinch : SCORING.strengthSecondBandCap;
         }
-        return { ...h, envStrength: envStrength * versionFactorOf(h) };
+        return { ...h, envStrength };
       });
       const ownWeight = withStrength.reduce((n, h) => n + h.weight, 0);
       if (!(ownWeight > 0)) continue;

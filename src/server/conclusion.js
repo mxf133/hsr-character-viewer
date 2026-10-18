@@ -964,6 +964,23 @@ export const collectAllTeams = (packsByChar) => {
     .map((m) => `${m.char}|${Number(m.eidolon) || 0}|${m.lc || '-'}|${Number(m.superimp) || 1}`)
     .sort().join('~');
   const teams = new Map();
+  /**
+   * 逐 (副本 × 版本) 的「0 行动值达成率」：`{ [副本]: { [版本]: { zero, total, rate } } }`。
+   *
+   * **为什么要有它**（用户 2026-10-18报「老队伍角色的队伍强度过高」，丹恒•饮月那支队）：
+   * 顶格档一直是「行动值 = 0 → 100 分」，但**「0 行动值」在不同副本的难度天差地别**：
+   * 实测（`tools/_probe-zero-av-rate.mjs`）
+   *   - 混沌回忆 / 异相仲裁：**九成**队伍都能打出 0 行动值（moc 4.5 = 295/303）
+   *   - 末日幻影4.6：72/245 ≈ 29%
+   *   - 异相仲裁·绝境 4.5：**6/131 ≈ 4.6%**（该期行动值中位数 296，0 是极端成绩）
+   * 同一个 `envStrength = 100` 在moc 上是「日常」、在绝境上是「131 条里仅 6 条」，
+   * 量纲差了一个数量级 —— 而绝境权重 5 且它是唯一有 0 行动值记录的副本，
+   * 于是**老版本的老队在绝境上白拿满分**。
+   * ⚠️ 分母只能是「**全部有通关记录的队伍**」，不能用 `zeroAvGoldBySeason`
+   *    那套前沿行（每关每版只留最好的几支，算出来的达成率会严重偏低）。
+   */
+  const zeroAvRate = new Map();
+
   /** 视频地址字典：避免 4000+ 条重复 URL 把 gzip 前体积顶爆。 */
   const videos = [];
   const videoIndex = new Map();
@@ -1008,7 +1025,21 @@ export const collectAllTeams = (packsByChar) => {
             videoIdx = idx;
           }
           const rec = [av, env.evidenceSeason ?? null, env.tier ?? null, videoIdx];
-          if (cur === undefined || av < cur[0]) team.avs.set(env.id, rec);
+          // 达成率按「一支队伍在一个副本上只算一次」计，所以只在**首次**见到这支队
+          // 时+1（同一支队可能出现在多个整包里，不能逐整包累加）。
+          const firstSight = cur === undefined;
+          if (firstSight || av < cur[0]) team.avs.set(env.id, rec);
+          // ⚠️ 必须去重到「队 × 副本」这一层：同一支队伍会出现在多个整包里，
+          //    而 `total` 的口径是「多少支队伍在这个副本打出过成绩」。
+          const season = env.evidenceSeason ?? null;
+          if (firstSight && season) {
+            let bySeason = zeroAvRate.get(env.id);
+            if (!bySeason) { bySeason = new Map(); zeroAvRate.set(env.id, bySeason); }
+            let cell = bySeason.get(season);
+            if (!cell) { cell = { zero: 0, total: 0 }; bySeason.set(season, cell); }
+            cell.total += 1;
+            if (av === 0) cell.zero += 1;
+          }
         }
       }
     }
@@ -1019,7 +1050,20 @@ export const collectAllTeams = (packsByChar) => {
     m: t.members.map((m) => [m.char, m.eidolon, m.lc, m.superimp]),
     a: [...t.avs.entries()].map(([id, rec]) => [id, rec[0], rec[1], rec[2], rec[3]]),
   }));
-  return { teams: teamList, videos };
+  return {
+    teams: teamList,
+    videos,
+    // 逐 (副本 × 版本) 的 0 行动值达成率（顶格档折价的唯一来源，见上面zeroAvRate 的注释）。
+    zeroAvRate: Object.fromEntries([...zeroAvRate.entries()].map(([envId, bySeason]) => [
+      envId,
+      Object.fromEntries([...bySeason.entries()].map(([season, cell]) => [season, {
+        zero: cell.zero,
+        total: cell.total,
+        // 四位小数足够还原（0.9183 这样的达成率），体积上比带更多位省。
+        rate: cell.total > 0 ? Math.round((cell.zero / cell.total) * 10000) / 10000 : 0,
+      }])),
+    ])),
+  };
 };
 
 /** @param {any} result buildConclusion 的返回 */
@@ -1271,8 +1315,8 @@ export const archiveConclusion = async (account = {}, options = {}) => {
     // 前端补金计算直接拿它查 availability。
     ...(options.includeAllTeams
       ? (() => {
-        const { teams, videos } = collectAllTeams(result.frontierPacksByChar);
-        return { allTeams: teams, allTeamVideos: videos };
+        const { teams, videos, zeroAvRate } = collectAllTeams(result.frontierPacksByChar);
+        return { allTeams: teams, allTeamVideos: videos, zeroAvRateByEnv: zeroAvRate };
       })()
       : {}),
     skipped,

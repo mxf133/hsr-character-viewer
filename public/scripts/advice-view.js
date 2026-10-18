@@ -4276,15 +4276,9 @@ const teamPlanTip = (row, plan) => {
       //    否则读者会拿总榜那一列的数字来对，对不上还以为是算错了。
       //    ⚠️ 刻度那一格必须写出**「跳过的更重关卡按 0 计」**（v4.6.112）：少了它，
       //    读者会以为「只在轻关卡 0 行动值」也能拿高分（实测那正是用户报的 bug）。
-      //    ⚠️ **v4.6.128 起还要写出「旧版本按版本权重折价」**（用户 2026-10-18：
-      //    「有些老队伍的队伍得分异常」）：这两池原来完全不进版本加权，只有 4.1 期
-      //    0 行动值的老队也能印 100。折价因子 = 该版本权重 ÷ 本副本最新那一版，
-      //    所以「0 行动值 = 100」这句只对**当前版本**成立 —— 不写出来，读者拿
-      //    4.1 期的 0 行动值来对账就会以为算错了（§4.5）。
       r.avSource
         ? ['队伍强度', `本队行动值强度 ${num(r.strengthPct)}`,
-          '0 ~ 100（本队各关行动值，0 行动值 = 100；跳过的更重关卡按 0 计；'
-          + '旧版本成绩按版本权重折价）',
+          '0 ~ 100（本队各关行动值，0 行动值 = 100；跳过的更重关卡按 0 计）',
           `${num(r.strengthPct)} × ${ws}`]
         : ['队伍强度', `强度分 ${num(r.strengthPct)}`,
           '0 ~ 100（绝对刻度）',
@@ -5361,6 +5355,9 @@ const loadAllTeams = async (conclusionKey) => {
     return {
       allTeams: data.allTeams || [],
       videos: data.videos || [],
+      // 顶格档折价的唯一来源（`advice.js` 的 `topCapOf`）。缺它时折价退回「不做」，
+      // 于是老版本队伍会重新在绝境上白拿 100 分 —— 所以这条不能当可选字段。
+      zeroAvRateByEnv: data.zeroAvRateByEnv || null,
     };
   } catch {
     return null;
@@ -5415,12 +5412,14 @@ const loadConclusion = async () => {
     // 拉回来之后补进 conclusion.allTeams，抽卡方案的候选池才算完整。
     // ⚠️ 与 conclusion 同一套竞态防护：conclusionKey 变了就丢弃这次的 allTeams。
     if (data.available !== false) {
-      loadAllTeams(key).then(({ allTeams, videos }) => {
+      loadAllTeams(key).then(({ allTeams, videos, zeroAvRateByEnv }) => {
         if (state.conclusionKey !== key || !state.conclusion) return;
         if (Array.isArray(allTeams)) {
           state.conclusion.allTeams = allTeams;
           state.conclusion.allTeamVideos = videos;
-          // allTeams 变了 → 候选池变 → 抽卡方案要重算（缓存签名里要带上它）。
+          state.conclusion.zeroAvRateByEnv = zeroAvRateByEnv;
+          // allTeams / 达成率变了 → 候选池与顶格档折价都变 → 抽卡方案要重算
+          //（缓存签名里要带上它们）。
           state.teamPlanCache = null;
           renderTeamPlan(state.conclusion);
         }

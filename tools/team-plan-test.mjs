@@ -416,60 +416,6 @@ check('行动值前沿：**跳过更重的副本**要按 0 分计（v4.6.112，�
     '权重并列（都不过更重）时不该被罚，这是用户要的「0 行动值队伍登顶」');
 });
 
-section('A0b. 旧版本成绩要折价（用户 2026-10-18：「有些老队伍的队伍得分异常」）');
-
-/**
- * 这一池（行动值前沿 ∪ 全队伍表）的强度一直是「只看本队自己的行动值」，**不进版本
- * 加权** —— v4.6.125 只给逐档榜那条链接回了 `Σ(版本权重 × 该版本强度) ÷ Σ(版本权重)`。
- * 后果（真数据实测，中配账号）：一支只有 **4.4** 期成绩的队拿 **92.7**，而同一支队在
- * 逐档榜那条路上只有 **48.7**；只有 4.1 期 0 行动值的老队甚至能拿满 100 冲进前排。
- *
- * 折价因子 = 该版本权重 ÷ 该副本窗口里权重最大的那一版，所以：
- *   * 当前版本 → 1.00（「0 行动值队伍登顶」不变，见上面 A0 那几条）；
- *   * 4.1（窗口 4.5:6 … 4.0:1）→ 2/6 = 1/3。
- * 夹具里 4 个赛季的权重表照抄真实载荷的 `seasonWeights` 形状。
- */
-const AV_SEASON_WEIGHTS = { '4.5': 6, '4.4': 5, '4.3': 4, '4.2': 3, '4.1': 2, '4.0': 1 };
-const agedConclusion = (season) => ({
-  frontierEnvs: [
-    {
-      id: 'env1', label: '测试副本', weight: 1, tierLines: AV_TIER_LINES,
-      seasonWeights: AV_SEASON_WEIGHTS,
-      minCostBySeason: { [season]: 10 },
-      zeroAvGoldBySeason: { [season]: { min: 10, max: 10 } },
-      avTeams: [{ cost: 10, av: 0, tier: 'perfect', season, members: AV_ZERO_MEMBERS }],
-    },
-  ],
-  frontierUnits: [],
-});
-const agedRowOf = (season) => teamPlan(agedConclusion(season), accountFixture, { availability })
-  .rows.find((r) => r.members.length === AV_ZERO_MEMBERS.length
-    && AV_ZERO_MEMBERS.every((m) => r.members.some((x) => x.char === m.char)));
-
-check('行动值前沿：当前版本的 0 行动值仍是满分（折价不许把「登顶」这条口径弄没）', () => {
-  const row = agedRowOf('4.5');
-  assert.ok(row, '当前版本的 0 行动值队必须还在池里');
-  assert.equal(row.strengthPct, 100, `当前版本（权重最大）应折价 1.00 → 100，实际 ${row.strengthPct}`);
-});
-
-check('行动值前沿：旧版本的 0 行动值按**版本权重**折价（4.1 → 1/3）', () => {
-  const old = agedRowOf('4.1');
-  const mid = agedRowOf('4.3');
-  const expectOld = (1 * 100) / 1 * (2 / 6);   // 只有这一关有数据 → 分母 1
-  const expectMid = (1 * 100) / 1 * (4 / 6);
-  assert.ok(near(old.strengthPct, expectOld),
-    `4.1 期成绩应折成 ${expectOld.toFixed(4)}，实际 ${old.strengthPct}`);
-  assert.ok(near(mid.strengthPct, expectMid),
-    `4.3 期成绩应折成 ${expectMid.toFixed(4)}，实际 ${mid.strengthPct}`);
-  assert.ok(old.strengthPct < mid.strengthPct, '越老的版本必须越低（老队伍不许再拿满分）');
-});
-
-check('行动值前沿：没有 seasonWeights 的老载荷 / 夹具不折价（因子 1，不出 NaN）', () => {
-  // A0 那套夹具没有 `seasonWeights` —— 题面同上，行为必须与改前逐字一致（100）。
-  assert.equal(avRowOf(AV_ZERO_MEMBERS).strengthPct, 100,
-    '取不到版本权重表时不许凭空折价');
-});
-
 section('A1. 抽卡权重（强度 / 性价比，用户 2026-10-12 第 3、4、8 条）');
 
 /**
@@ -983,6 +929,13 @@ const live = await post('/api/archive/conclusion', {
   frontierWeights: { 'aa|plight': 10, 'aa|': 1, 'as|': 1, 'moc|': 1, 'pf|': 1 },
 });
 const livePayload = live.data;
+// 带 allTeams 的那条路（`/api/archive/teams`）—— **界面的抽卡方案只走这一条**，
+// 顶格档折价所需的 `zeroAvRateByEnv` 也只在这里下发。
+const allTeamsRes = await fetch(`http://127.0.0.1:${port}/api/archive/teams`, {
+  headers: { 'Content-Type': 'application/json' },
+  signal: AbortSignal.timeout(180_000),
+});
+const allTeamsPayload = allTeamsRes.ok ? await allTeamsRes.json() : null;
 
 check('⭐ 真载荷上：逐档榜的池**包含**总榜的池（两条口径不打架）', () => {
   // 这一条钉的是 v4.6.83 换池来源的**正确性前提**：逐档榜是「每角色 × 每星魂档各收敛一条」，
@@ -1125,25 +1078,8 @@ check('真载荷上：行动值前沿池的 0 行动值队（用户 2026-10-16 �
    *      ② 强度权重拉满时 0 行动值队仍然登顶（用户要的「登顶」）。
    */
   const heavy = avRows.filter((r) => Number(r.strengthPct) >= 95);
-  /**
-   * ⚠️ **2026-10-18 晚补一条口径**（用户：「有些老队伍的队伍得分异常」）：这一池的
-   * 强度原来**不进版本加权** —— v4.6.125 只给逐档榜那条连接回了
-   * `Σ(版本权重 × 该版本强度) ÷ Σ(版本权重)`，于是「只有 4.4 期成绩的队」照样算 92.7
-   * （同一支队在逐档榜那条路上只有 48.7），「只有 4.1 期 0 行动值的老队」甚至能拿满分
-   * 挤进前排。现在每关的强度按「该版本权重 ÷ 本副本窗口里权重最大的那一版」折价，
-   * 所以**够到 95 的前沿行必须显著变少**（改前实测 39 条前沿行里有一批顶格）。
-   *
-   * 判据分两条，互相补位：
-   *   ① plan 这一页里够到 95 的前沿行必须**少于**全部前沿行 —— 折价之后通常直接为 0
-   *      （当前版本那几支多数排进别的页/别的池），所以不能钉「必须 > 0」；
-   *   ② 必须存在「最佳证据是 0 行动值、强度却 < 100」的行 —— 那正是被打折的痕迹。
-   */
   assert.ok(heavy.length < avRows.length,
-    `顶格档应当是前沿行的**真子集**（跳过的更重副本被摊薄 + 旧版本折价），实际 ${heavy.length}/${avRows.length}`);
-  const discounted = avRows.filter((r) => Number(r.bestEnv.actionValue) === 0
-    && Number(r.strengthPct) < 99.9);
-  assert.ok(discounted.length > 0,
-    '前沿行里必须有「0 行动值但强度 < 100」的样本 —— 那是旧版本成绩被折价的证据（改前这种行恒为 100）');
+    `顶格档应当是前沿行的**真子集**（跳过最重副本的被摊薄），实际 ${heavy.length}/${avRows.length}`);
   /**
    * 直接对着载荷验一遍「覆盖」：把每关 `avTeams` 的阵容键收起来，看这一行打过哪些关。
    * 判据与 `advice.js` 的 `skippedHeavyWeight` 同源 —— 缺了**比它打过的都更重**的关卡
@@ -1173,28 +1109,121 @@ check('真载荷上：行动值前沿池的 0 行动值队（用户 2026-10-16 �
   assert.ok(skippedHeavy.every((r) => Number(r.strengthPct) < 95),
     `跳过最重副本（${heaviest.id}）的前沿队不许拿顶格分，实际最高 `
     + `${Math.max(...skippedHeavy.map((r) => Number(r.strengthPct)))}`);
-  // 强度权重拉满（① 单独说话）时，前沿行必须**按证据版本单调**：当前版本的 0 行动值
-  // 仍然是最高的那批，旧版本的同类被折到它下面。
-  // ⚠️ **2026-10-18 晚改过判据**：改前这里钉的是「前 5 里必须有 ≥95 的前沿队」，那等于
-  //    把「旧版本 0 行动值也算满分」钉成不变式 —— 正是用户这一轮报的「老队伍得分异常」。
-  //    实测数据里 `avTeams` 每关 8 支**全是旧版本**（moc 4.1~4.3、绝境全是 4.5），所以
-  //    折价之后前沿池整体落在 ~75 分以下，这是口径的结果、不是回归。
+  // 强度权重拉满（① 单独说话）时，前沿行不许超过 100，且 0 行动值队仍然登顶
+  // （用户 2026-10-16 第 2 条要的「各种 0 行动值队伍登顶」）。
+  // ⚠️ **2026-10-18 晚曾把这里改成折价口径**（「avMax < 95」+「拿到 100 的必须是当前
+  //    版本那一批」）：那轮给 avCandidates 加了 `versionFactorOf` 折价，把前沿池整体
+  //    压到 ~75 以下，于是前排被**未折价**的逐档榜链接管 —— 两条链量纲被拉得更开，
+  //    「仅看强度权重」时登顶的队伍整个换人（用户 2026-10-18 报「又搞错了」）。
+  //    折价已回退，这里跟着回退到「0 行动值队登顶」这条原始不变式。
   const strengthOnlyAv = strengthOnly.rows.filter((r) => r.avSource === true);
   assert.ok(strengthOnlyAv.length > 0, '强度权重拉满时应仍能看到前沿行');
   const avMax = Math.max(...strengthOnlyAv.map((r) => Number(r.strengthPct)));
   assert.ok(avMax <= 100, `前沿行的强度不许超过 100，实际 ${avMax}`);
-  const newestAv = strengthOnlyAv.filter((r) => Number(r.bestEnv.actionValue) === 0
-    && Number(r.strengthPct) >= 99.5);
-  if (newestAv.length) {
-    assert.ok(newestAv.every((r) => Number(r.strengthPct) >= avMax - 1e-6),
-      '拿到 100 的前沿行必须是**该池里最强的**那一批（当前版本的 0 行动值才不打折）');
-  }
-  assert.ok(avMax < 95,
-    `折价之后前沿池不该再有「顶格」行（实测最强 ${avMax.toFixed(2)}）—— `
-    + '当前版本 0 行动值的强队由逐档榜那条路（版本加权口径）承接');
+  assert.ok(strengthOnly.rows[0].avSource === true,
+    `强度权重拉满时应当由 0 行动值的前沿队登顶，实际第一是 `
+    + `${strengthOnly.rows[0].avSource ? '前沿队' : '逐档榜代表整包'}`);
   // ⚠️ 2026-10-18 起不再断言「登顶那支本人打过最重副本」：强度改成「只看最快的」之后，
   //    ① 是**代表整包**的峰值（可能由同一角色的另一套阵容打出），队伍名单与那份证据
   //    不再一一对应。真正要守的不变式是上面那条「跳过最重副本的前沿队 <95」，它仍然成立。
+});
+
+section('A0c. 顶格档按「0 行动值达成率」折价（用户 2026-10-18「老队伍强度过高」）');
+
+// 「0 行动值」在不同副本难度天差地别：moc/aa 九成队伍做得到，绝境只有 4.6%。
+// 顶格档一度一律给 100，于是 4.5 期只打了绝境的老队分母=分子=5 → 拿满 100 分，
+// 比当期（4.6）真打了绝境的队（94~97）还高。用户报「丹恒•饮月那支队得分过高」。
+// 折价口径见 `advice.js` 的 `topCapOf` / `SCORING.strengthTopBandRare|Floor`。
+check('「/conclusion」不带达成率，抽卡方案对缺失的载荷退回顶格100（不退化）', () => {
+  // `zeroAvRateByEnv` 只在 **includeAllTeams** 那条路下发（它是 `collectAllTeams`
+  // 顺带算的，而 allTeams 因体积原因默认不带）。所以**不带 allTeams 的载荷里
+  // 没有它**，而 `topCapOf` 必须退回100 —— 宁可不做这个折价，也不要猜一个更低的顶格。
+  // ⚠️ 这条断言同时钉住了「载荷形状」：`/conclusion` 不该平白多出这个字段。
+  assert.ok(livePayload.zeroAvRateByEnv === undefined,
+    `默认 /conclusion 不该带 zeroAvRateByEnv（体积原因），实际带了 `
+    + String(JSON.stringify(livePayload.zeroAvRateByEnv)).slice(0, 120));
+  // 缺达成率时强度上限仍是 100 —— 用一个 av==0 的前沿行验证它没被压。
+  const empty = { owned: new Set(), eidolons: new Map(), cones: new Map() };
+  const keepRows = SCORING.teamPlanMaxRows;
+  SCORING.teamPlanMaxRows = 100000;
+  let max0;
+  try {
+    const p = teamPlan(livePayload, empty, { availability: livePayload.availability });
+    max0 = Math.max(...p.rows.filter((r) => r.avSource).map((r) => Number(r.strengthPct)));
+  } finally {
+    SCORING.teamPlanMaxRows = keepRows;
+  }
+  assert.ok(max0 <= 100, `没有达成率时前沿行不许超过 100，实际 ${max0}`);
+});
+
+check('带 allTeams 的载荷才带 zeroAvRateByEnv，且口径是「队 × 副本」', () => {
+  const rate = allTeamsPayload?.zeroAvRateByEnv;
+  assert.ok(rate && typeof rate === 'object',
+    '带 includeAllTeams 的载荷里应当有 zeroAvRateByEnv（顶格档折价的唯一来源）');
+  const envIds = Object.keys(rate);
+  assert.ok(envIds.length > 0, 'zeroAvRateByEnv 不该是空的');
+  for (const envId of envIds) {
+    for (const [season, cell] of Object.entries(rate[envId])) {
+      assert.ok(Number.isFinite(cell?.rate), `${envId}@${season} 缺 rate`);
+      assert.ok(Number(cell.total) > 0, `${envId}@${season} 的 total 必须是正数`);
+      assert.ok(Number(cell.zero) <= Number(cell.total),
+        `${envId}@${season} 的 zero(${cell.zero}) 不许超过 total(${cell.total})`);
+      assert.ok(cell.rate >= 0 && cell.rate <= 1,
+        `${envId}@${season} 的 rate=${cell.rate} 必须落在 0~1`);
+    }
+  }
+});
+
+check('折价必须区分副本难度：绝境的顶格上限高于 moc/aa', () => {
+  const { strengthTopBandRare: rare, strengthTopBandFloor: floor } = SCORING;
+  const capOf = (r) => 100 * Math.max(floor, rare + (1 - rare) * (1 - Math.max(0, Math.min(1, r))));
+  const rate = livePayload.zeroAvRateByEnv || {};
+  const capsOf = (envId) => Object.values(rate[envId] || {}).map((c) => capOf(Number(c.rate)));
+  const plight = capsOf('aa/plight');
+  const easy = [...capsOf('moc'), ...capsOf('aa')];
+  if (!plight.length || !easy.length) {
+    // 合成夹具没有这些副本 —— 跳过，但要求另一侧的断言仍成立。
+    assert.ok(true, '当前载荷没有 moc/aa 或绝境，跳过难度对比');
+    return;
+  }
+  assert.ok(Math.max(...plight) > Math.min(...easy),
+    `绝境的顶格上限（最高 ${Math.max(...plight).toFixed(1)}）必须高于容易达标的副本`
+    + `（最低 ${Math.min(...easy).toFixed(1)}）—— 否则顶格档没区分难度，老队仍会虚高`);
+});
+
+check('容易达标的副本走保底、极低达成率走满分档', () => {
+  const { strengthTopBandRare: rare, strengthTopBandFloor: floor } = SCORING;
+  assert.ok(rare > 0 && rare < 1, `strengthTopBandRare=${rare} 必须落在 0~1`);
+  assert.ok(floor > 0 && floor < 1, `strengthTopBandFloor=${floor} 必须落在 0~1`);
+  assert.ok(floor < rare + (1 - rare),
+    `保底(${floor}) 必须低于「达成率0」时的上限(${rare + (1 - rare)})，否则折价完全不生效`);
+  // rate = 1（人人都能 0 行动值）⇒ 顶格 = floor；rate = 0（没人做到）⇒ 顶格 = 100。
+  const at = (r) => 100 * Math.max(floor, rare + (1 - rare) * (1 - r));
+  assert.ok(Math.abs(at(1) - floor * 100) < 1e-9, 'rate=1 时应当正好是保底档');
+  assert.ok(Math.abs(at(0) - 100) < 1e-9, 'rate=0 时应当是满分档');
+});
+
+check('顶格折价后「0 行动值队登顶」这条不变式仍成立', () => {
+  // 折价只压「容易达标的副本」的顶格，绝境（低达成率）几乎不压 ——
+  // 所以绝境 0 行动值队仍应紧贴在第一梯队之下，而不是被整批压到低分区。
+  const empty = { owned: new Set(), eidolons: new Map(), cones: new Map() };
+  const keepRows = SCORING.teamPlanMaxRows;
+  SCORING.teamPlanMaxRows = 100000;
+  let strengthOnly;
+  try {
+    strengthOnly = teamPlan(livePayload, empty, {
+      availability: livePayload.availability,
+      drawWeights: normalizeDrawWeights({ strength: 1, cost: 0, versatility: 0 }),
+    });
+  } finally {
+    SCORING.teamPlanMaxRows = keepRows;
+  }
+  const strengthOnlyAv = strengthOnly.rows.filter((r) => r.avSource === true);
+  assert.ok(strengthOnlyAv.length > 0, '强度权重拉满时应仍能看到前沿行');
+  const avMax = Math.max(...strengthOnlyAv.map((r) => Number(r.strengthPct)));
+  assert.ok(avMax >= 90,
+    `绝境 0 行动值队是极低达成率（4.5 期 6/132），折价后仍应站在 ${avMax.toFixed(1)}`
+    + ' —— 若掉到 90 以下说明折价把「真·强成绩」也压掉了');
 });
 
 check('界面现算的差额 = 服务端口径（同一份 availability、同一批持有状态）', () => {

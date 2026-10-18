@@ -462,12 +462,16 @@ export const createApp = (options = {}) => {
             versionWeights: Array.isArray(versionWeights) ? versionWeights : undefined,
             includeAllTeams: true,
           });
-          // 只回 allTeams + 视频字典，其余结论字段不重复下发。
+          // 只回 allTeams + 视频字典 + 顶格折价所需的达成率，其余结论字段不重复下发。
+          // ⚠️ `zeroAvRateByEnv` **必须**在这里下发：抽卡方案的顶格档折价读它
+          //   （`advice.js` 的 `topCapOf`），而 `/conclusion` 因 660 KB 上限不带
+          //   allTeams、也就没有这个字段 —— 界面的抽卡方案只走这条路由。
           json(res, 200, {
             ok: true,
             available: true,
             allTeams: result.allTeams || [],
             videos: result.allTeamVideos || [],
+            zeroAvRateByEnv: result.zeroAvRateByEnv || null,
           });
         } catch (err) {
           console.warn('[archive] 读取全队伍列表失败：', err.message);
