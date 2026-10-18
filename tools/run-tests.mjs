@@ -44,6 +44,12 @@ const suites = [
   // ⚠️ **完全不联网**：夹具在 `theherta/backup/sync-test-<pid>/`（gitignore）里自造自清，
   // 「今天」由 `HERTA_TODAY` 注入，所以判据可复现、不会过一个月就假红。
   ['同步黑塔网（跳过判据 / 降级 / 缩水保护）', 'herta-sync-test.mjs'],
+  // v2 抽卡推荐的**评分内核**（用户 2026-10-18 重构，见 `docs/抽卡推荐重构设计.md`）。
+  // `src/server/gacha-score.js` 是纯函数：判据两套（行动值 / 轮次）、星魂档归并、
+  // baseline（剔除 0 金队）、跨版本加权平均的**分母规则**、上场率四类分箱。
+  // 离线，直接读 `theherta/archive.json` 复核真实 baseline（绝境 4.5 = 9 金之类），
+  // 所以**数据集重建后这些数字会跟着变** —— 那是特性，不是抖动。
+  ['v2 评分内核（判据 / baseline / 整包 / 上场率）', 'gacha-score-test.mjs'],
   // 用户 2026-10-14 点名的两条不变式：强度对投入单调（E6S5 > E6S1 > E2S1 > E0S0）、
   // 以及成本账（限定 E6S5 不算隐金 = 12 金）。离线，样本角色，实测 638 组可比档位。
   ['强度口径不变式（新两档规则 / E6S5=12 金）', 'strength-invariant-test.mjs'],
