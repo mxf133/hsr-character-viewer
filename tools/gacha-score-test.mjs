@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import {
   AV_CAP, aggregatePacks, baselineOf, costPartOf, eidolonTierOf, envKindOf,
   memberOf, packKeyOf, packOf, scoreEnvRows, scoreRow, strengthPartOf,
-  usageByBand, USAGE_BANDS_OF,
+  usageByBand, usageSummaryOf, USAGE_BANDS_OF,
 } from '../src/server/gacha-score.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -299,6 +299,86 @@ check('同一行里出现两次的同一角色只数一次', (() => {
   const out = usageByBand([{ m: ['A|0|X|1', 'A|0|X|1'], a: 0, n: 5 }], USAGE_BANDS_OF.round[0]);
   return out.length === 1 && out[0].count === 5;
 })());
+
+// ---- ⑥ §三 上场率：Top N + 其它 --------------------------------------------
+console.log('\n[上场率汇总 — Top N + 其它，份额必须刚好 100%]');
+{
+  // 12 个角色，每人在自己那行独苗出现一次 ⇒ 份额各不相同不成问题，
+  // 关键是 Top 10 之外那 2 个要被并成一圈，且 Σshare 仍是 1。
+  const many = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']
+    .map((c, i) => ({ a: 0, n: i + 1, m: [`${c}|0|-|0`] }));
+  const summary = usageSummaryOf(many, 'round', { top: 10 });
+  eq('四类都在', summary.map((b) => b.key), ['clear', 'zero', 'r1', 'r2']);
+  const clear = summary[0];
+  eq('Top 10 各自一条 + 一条「其它」', clear.items.length, 11);
+  check('「其它」排在最后并打了标记',
+    clear.items[clear.items.length - 1].other === true,
+    JSON.stringify(clear.items.at(-1)));
+  // ⚠️ 降序排完之后，被挤出去的是**次数最少**的两人（A=1、B=2），不是名单最后的 K、L。
+  check('「其它」把 Top 10 之外那两人的次数并在一起（A 的 1 + B 的 2）',
+    clear.items.at(-1).count === 1 + 2, String(clear.items.at(-1).count));
+  check('Top 10 里排第一的是次数最多的 L（12 次）',
+    clear.items[0].char === 'L' && clear.items[0].count === 12,
+    JSON.stringify(clear.items[0]));
+  near('Σshare 仍然 = 1（这一条是饼图讲得通的前提）',
+    clear.items.reduce((s, it) => s + it.share, 0), 1, 1e-9);
+  check('Top 里按人次降序', clear.items.slice(0, 10).every((it, i, arr) => i === 0 || arr[i - 1].count >= it.count));
+
+  const allInTop = usageSummaryOf(many.slice(0, 3), 'round', { top: 10 });
+  check('角色不足 N 个时不生成空的「其它」圈',
+    allInTop[0].items.every((it) => it.other !== true));
+}
+
+{
+  // 「0T」这一档即使在轮次型里也不该被别的档混进来。
+  const rows = [
+    { a: 0, n: 4, m: ['A|0|-|0', 'B|0|-|0'] },
+    { a: 1, n: 6, m: ['C|0|-|0', 'B|0|-|0'] },
+    { a: 2, n: 2, m: ['A|0|-|0', 'C|0|-|0'] },
+  ];
+  const s = usageSummaryOf(rows, 'round');
+  const zero = s.find((b) => b.key === 'zero');
+  eq('0T 那档只数 a=0 的行', zero.items.map((it) => it.char).sort(), ['A', 'B']);
+  eq('0T 那档的投稿规模是 4 条', zero.submissions, 4);
+  eq('样本的行数也报出来（UI 要印）', zero.entries, 1);
+}
+
+// ---- 真实数据集：把 UI 上要印的样本量钉下来 ---------------------------------
+console.log('\n[真实数据集 — 四类样本量（饼图必须把它印出来）]');
+{
+  // ⚠️ 这一组存在的理由：轮次型投稿的**自选择偏差极端**。混沌 4.5 实测 0T 占 95.6%、
+  // 「1T」只有 3 条。不标样本量，饼图会被读成「大家都打得到 1T」，而真相是没人往
+  // 「打通就好」那一档投稿。这些数字同时也是设计文档 §10 第 2 条的出处。
+  const mcRows = frontierOf('Memory of Chaos', '', '4.5');
+  const mc = usageSummaryOf(mcRows, 'round');
+  const totalRow = mc[0];
+  const zeroRow = mc.find((b) => b.key === 'zero');
+  const r1Row = mc.find((b) => b.key === 'r1');
+  console.log(`         混沌 4.5：通关 ${totalRow.submissions} 条 / 0T ${zeroRow.submissions} 条`
+    + ` / 1T ${r1Row.submissions} 条`);
+  check('0T 那档不是空的', zeroRow.submissions > 0);
+  check('⭐ 四类都占不满通关那个分母 —— 这正是必须印样本量的原因',
+    zeroRow.submissions < totalRow.submissions, `${zeroRow.submissions} vs ${totalRow.submissions}`);
+  check('Top 之外的角色确实存在（否则「其它」那一圈没意义）',
+    totalRow.items.at(-1)?.other === true);
+  near('真实数据的 Σshare 也是 1', totalRow.items.reduce((s, it) => s + it.share, 0), 1, 1e-9);
+
+  // 行动值型走另一套判据，顺手确认它不会被当成轮次。
+  const plRows = frontierOf('Anomaly Arbitration', 'plight', '4.5');
+  const pl = usageSummaryOf(plRows, 'av');
+  eq('行动值型的四类标签', pl.map((b) => b.label),
+    ['通关', '小于 300 行动值', '300 ~ 500 行动值', '0 行动值']);
+  const lt300 = pl.find((b) => b.key === 'lt300');
+  const band300 = pl.find((b) => b.key === 'av300');
+  console.log(`         绝境 4.5：通关 ${pl[0].submissions} 条 / <300 ${lt300.submissions} 条`
+    + ` / 300~500 ${band300.submissions} 条`);
+  check('嵌套关系成立：<300 与 300~500 都不超过通关',
+    lt300.submissions <= pl[0].submissions && band300.submissions <= pl[0].submissions);
+  // 两支 A∩B 互不重叠 ⇒ 它们加起来可以少于通关（中间还有 ≥500 那档）。
+  check('300~500 与 <300 互不重叠，合计 ≤ 通关',
+    lt300.submissions + band300.submissions <= pl[0].submissions,
+    `${lt300.submissions}+${band300.submissions} vs ${pl[0].submissions}`);
+}
 
 // ---- 收尾 -------------------------------------------------------------------
 console.log(`\n合计 ${passed} 项通过，${failed} 项失败`);

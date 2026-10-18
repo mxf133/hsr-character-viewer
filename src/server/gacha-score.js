@@ -346,6 +346,60 @@ export const USAGE_BANDS_OF = {
 };
 
 /**
+ * 某一档的样本规模 —— UI 必须在饼图旁边把它印出来。
+ *
+ * ⚠️ 为什么必须印：轮次型投稿的**自选择偏差极端**。混沌回忆 4.5 实测 0T 占 95.6%，
+ * 而「1T」这一档只有 3 条投稿。不标样本量的话，饼图会被当成「大家都打得到 1T」，
+ * 而实际上只是没人往「打通就好」那一档投稿。
+ *
+ * @returns `{ submissions, entries }` —— 投稿**条数**（按 `n` 累加）与 frontier **行数**
+ */
+export const bandSampleOf = (rows, band) => {
+  let submissions = 0;
+  let entries = 0;
+  for (const row of rows) {
+    if (!band.match(row)) continue;
+    entries += 1;
+    submissions += Math.max(1, finiteOf(row.n) ?? 1);
+  }
+  return { submissions, entries };
+};
+
+/**
+ * §三 的完整上场率：四类口径各一份 Top N，最后塞一个「其它」把剩下的并成一圈。
+ *
+ * @param rows  某一（关卡 × 版本）的 frontier 行
+ * @param kind  `envKindOf()` 的结果
+ * @returns `[{ key, label, submissions, entries, items: [{char, count, share, other?}] }]`
+ *
+ * 三条口径：
+ *   * `share` 的分母是**角色人次**（一支队伍 4 个位置，Σshare = 1），不是投稿数 ——
+ *     见 `usageByBand` 里那段注释；
+ *   * 「其它」永远占最后一位，`other: true` 供 UI 换个颜色；
+ *   * Top N 之外没有剩余角色时**不生成**「其它」（免得画出一个 0% 的扇形）。
+ */
+export const usageSummaryOf = (rows, kind, options = {}) => {
+  const { top = 10, otherLabel = '其它' } = options;
+  const bands = USAGE_BANDS_OF[kind] || USAGE_BANDS_OF.round;
+  return bands.map((band) => {
+    const counts = usageByBand(rows, band);
+    const { submissions, entries } = bandSampleOf(rows, band);
+    const head = counts.slice(0, top).map((it) => ({ ...it, other: false }));
+    const rest = counts.slice(top);
+    if (rest.length) {
+      // 其余角色的份额从 `counts` 现加，与 Top N **同源**，所以整个 items 的 Σshare 仍是 1。
+      head.push({
+        char: otherLabel,
+        count: rest.reduce((n, r) => n + r.count, 0),
+        share: rest.reduce((n, r) => n + r.share, 0),
+        other: true,
+      });
+    }
+    return { key: band.key, label: band.label, submissions, entries, items: head };
+  });
+};
+
+/**
  * 某一档里面的角色人次。
  *
  * ⚠️ **按 `row.n`（真实投稿数）累加，不是按行数**。同一套阵容常被拆出十几种配装变体，
