@@ -165,20 +165,20 @@ check('⭐ 候选池取自**逐档榜**（每角色 × 每星魂档），不是�
     `池规模口径自洽：去重前 ${plan.poolAll} 应 ≥ 剔除补金 0 后的 ${plan.pool}`);
 });
 
-check('三个分量按**抽卡权重**合成，默认 4:5:1 = 0.4 / 0.5 / 0.1', () => {
+check('三个分量按**抽卡权重**合成，默认 1:1 = 0.5 / 0.5（泛用性退出，恒为 0）', () => {
   const plan = fixturePlan();
   const draw = plan.drawWeights;
-  // ⚠️ 用户 2026-10-13 第 3 条（「泛用性权重也适用于补金推荐」）之前这里是 `0.5 / 0.5`
-  //    （方案只吃强度与性价比、两项自己再归一）；2026-10-13 之后三项一起归一到三等分
-  //    `1/3 × 3`；**2026-10-16 第 1 条把泛用性的默认权重降到 0.5**，于是默认变成
-  //    `1 : 1 : 0.5` → 归一 `0.4 / 0.4 / 0.2`；**2026-10-18 改成 `4 : 5 : 1`**，归一
-  //    `0.4 / 0.5 / 0.1`（性价比抬到一半、泛用性压到一成）。
-  // 先把「默认值本身」钉住（用户 2026-10-18）：改它就是改口径，必须是有意的。
-  assert.deepEqual(drawWeightDefaults(), { strength: 4, cost: 5, versatility: 1 },
-    '抽卡权重的默认原始值应是 4 : 5 : 1');
+  // ⚠️ 口径史：2026-10-13 第 3 条之后三项一起归一；2026-10-16 第 1 条默认 `1 : 1 : 0.5`；
+  //    2026-10-18 改成 `4 : 5 : 1`；**2026-10-18 重构（需求文档「抽卡权重的泛用性删掉，
+  //    强度:性价比默认 1:1」）去掉泛用性旋钮，默认变成 `1 : 1 : 0` → 归一 `0.5 / 0.5 / 0`**。
+  //    `DRAW_WEIGHT_ROWS` 里只剩两行，`normalizeDrawWeights` 仍显式补 `versatility: 0`
+  //    （下游公式还带着第三项，补 0 让它恒不生效）。
+  // 先把「默认值本身」钉住：改它就是改口径，必须是有意的。
+  assert.deepEqual(drawWeightDefaults(), { strength: 1, cost: 1 },
+    '抽卡权重的默认原始值应是 1 : 1（泛用性旋钮已删，不在表里）');
   assert.deepEqual(draw, {
-    strength: 0.4, cost: 0.5, versatility: 0.1,
-  }, '默认抽卡权重应是 4:5:1 归一化后的 0.4 / 0.5 / 0.1');
+    strength: 0.5, cost: 0.5, versatility: 0,
+  }, '默认抽卡权重应是 1:1 归一化后的 0.5 / 0.5（泛用性 0）');
   for (const r of plan.rows) {
     // ⚠️ 第二项是 `gapPct`（用户 2026-10-12 第 6 条：性价比这一侧只有差额接近度）；
     //    第三项是 `versatilityPct`（用户 2026-10-13 第 3 条）。
@@ -495,11 +495,11 @@ check('⭐ ① = **绝对强度分**（0~100，不含金数项）：它直接取
     '行上不许出现 strength（① 就是 strengthPct）');
 });
 
-check('⭐ 抽卡权重只认**相对大小**：3:1:1 与 0.6:0.2:0.2 得到同一个榜', () => {
-  const a = strengthPlan({ strength: 3, cost: 1, versatility: 1 });
-  const b = strengthPlan({ strength: 0.6, cost: 0.2, versatility: 0.2 });
-  assert.deepEqual(a.drawWeights, { strength: 0.6, cost: 0.2, versatility: 0.2 },
-    '回显生效权重（已归一化）');
+check('⭐ 抽卡权重只认**相对大小**：3:1 与 0.6:0.2 得到同一个榜（泛用性恒 0）', () => {
+  const a = strengthPlan({ strength: 3, cost: 1 });
+  const b = strengthPlan({ strength: 0.6, cost: 0.2 });
+  assert.deepEqual(a.drawWeights, { strength: 0.75, cost: 0.25, versatility: 0 },
+    '回显生效权重（已归一化；versatility 补 0）');
   assert.deepEqual(a.rows.map((r) => r.key), b.rows.map((r) => r.key), '名次必须逐位一致');
   for (const [i, r] of a.rows.entries()) {
     assert.equal(r.total, b.rows[i].total, `${r.key}: 总分必须逐位一致`);
@@ -507,20 +507,16 @@ check('⭐ 抽卡权重只认**相对大小**：3:1:1 与 0.6:0.2:0.2 得到同�
   // ⚠️ **这条断言在 v4.6.97 反过来了**（用户 2026-10-13 第 3 条原话：
   //    「泛用性权重也适用于补金推荐」）。v4.6.95/96 时方案只吃强度/性价比、
   //    两项自己再归一，所以当时钉的是「调泛用性**不许**动方案」；
-  //    现在三项一起归一，泛用性拉满 = 系数 `0 / 0 / 1`，名次只由 ③ 决定。
+  //    ⚠️ 2026-10-18 重构：泛用性旋钮已删 —— 传 `versatility` 进来**恒被忽略**，
+  //    全 0 强度/性价比 = 没有偏好 → 退回默认 `0.5 / 0.5 / 0`（不再是当年的 0/0/1）。
   const onlyVersatility = strengthPlan({ strength: 0, cost: 0, versatility: 1 });
-  assert.deepEqual(onlyVersatility.drawWeights, { strength: 0, cost: 0, versatility: 1 },
-    '泛用性拉满时三项系数应是 0 / 0 / 1');
-  for (const r of onlyVersatility.rows) {
-    assert.ok(Math.abs(r.total - r.versatilityPct) < 1e-4,
-      `${r.key}: 总分应当只等于 ③（${r.total} vs ${r.versatilityPct}）`);
-  }
-  // ③ 真的分得开才说明它**在算**（夹具 charX 100 分 / charY 25 分，见下面那条用例）：
-  // 队级 ③ 的原始量是「队内成员组内相对分的成本加权平均」，刻度是候选池的 min ~ max。
+  assert.deepEqual(onlyVersatility.drawWeights, { strength: 0.5, cost: 0.5, versatility: 0 },
+    '泛用性输入被忽略：全 0 两项退回默认 0.5 / 0.5（versatility 补 0）');
+  // ③ 仍要在算（它进角色总榜与方案行的 versatilityPct 列），只是不进总分加权：
   assert.ok(onlyVersatility.versatilityHi > onlyVersatility.versatilityLo,
     `③ 的刻度不该退化：${onlyVersatility.versatilityLo} ~ ${onlyVersatility.versatilityHi}`);
   assert.equal(Math.round(onlyVersatility.rows[0].versatilityPct), 100,
-    '泛用性拉满时该由「队内平均泛用性最高」的那支排第一');
+    '泛用性列仍应有 100 分的那一行（尺子没坏，只是不加权）');
 });
 
 check('⭐ 队级泛用性 = 成员各自的**组内相对分**按**成本占比**加权（2026-10-14 第 1 条 + 2026-10-17 第 1 条）', () => {
@@ -618,28 +614,26 @@ check('⭐ 强度权重高 → 强度分高的在前；性价比权重高 → �
 });
 
 check('抽卡权重的边界：全部清空 / 非法值 → 退回**默认比例**，不出现整列 0 分', () => {
-  // ⚠️ 2026-10-13 第 1 条加了第三个旋钮（泛用性）之后，「清空」必须**三个键一起**才算
-  // 「我没有偏好」；只清两个、第三个留着默认时，第三项就是 100% —— 那是真实的偏好。
-  // ⚠️ 2026-10-18 的默认值是 `4:5:1`，所以「退回默认」= 归一后的 `0.4 / 0.5 / 0.1`
-  //    （上一版是 `1:1:0.5` → `0.4 / 0.4 / 0.2`，再往前是 `1/3 × 3`）。
-  const dflt = { strength: 0.4, cost: 0.5, versatility: 0.1 };
-  assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0, versatility: 0 }), dflt);
-  assert.deepEqual(normalizeDrawWeights({ strength: '', cost: '', versatility: '' }), dflt,
-    '空串 = 用户清空了输入框 → 按 0 算，三个都是 0 时退回默认比例');
-  assert.deepEqual(normalizeDrawWeights({ strength: -1, cost: 'abc', versatility: NaN }), dflt,
+  // ⚠️ 口径史：2026-10-18 重构去掉泛用性旋钮后只剩两个键（`DRAW_WEIGHT_ROWS`），
+  //    `normalizeDrawWeights` 仍显式补 `versatility: 0`（下游公式带着第三项，补 0 让它恒不生效）。
+  //    「退回默认」= 归一后的 `0.5 / 0.5 / 0`。老的「只清两个、第三个留着 = 全押泛用性」
+  //    语义随旋钮一起消失：现在泛用性输入恒被忽略。
+  const dflt = { strength: 0.5, cost: 0.5, versatility: 0 };
+  assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0 }), dflt);
+  assert.deepEqual(normalizeDrawWeights({ strength: '', cost: '' }), dflt,
+    '空串 = 用户清空了输入框 → 按 0 算，两个都是 0 时退回默认比例');
+  assert.deepEqual(normalizeDrawWeights({ strength: -1, cost: 'abc' }), dflt,
     '非法值忽略、退回默认');
-  assert.deepEqual(normalizeDrawWeights({ strength: 2, cost: null }),
-    // 期望值按**同一个算式**写（`值 / 默认总和 8`），避免手抄小数时差 1 ulp 造成假红。
-    { strength: 2 / 8, cost: 5 / 8, versatility: 1 / 8 },
-    '只给一个键时另两个按默认值补齐（性价比 5、泛用性 1）');
+  assert.deepEqual(normalizeDrawWeights({ strength: 3, cost: null }),
+    { strength: 0.75, cost: 0.25, versatility: 0 },
+    '只给一个键时另一个按默认值补齐（默认 1:1）');
   assert.deepEqual(normalizeDrawWeights({ strength: 1, cost: 0 }),
-    { strength: 1 / 2, cost: 0, versatility: 1 / 2 },
-    '单边为 0 是**合法**的：用户可以把某一侧彻底关掉（泛用性那个默认 1 仍在）');
-  assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0 }),
-    { strength: 0, cost: 0, versatility: 1 },
-    '只清空强度/性价比 = 全押泛用性（第三个框还开着，那不是「没有偏好」）');
+    { strength: 1, cost: 0, versatility: 0 },
+    '单边为 0 是**合法**的：用户可以把某一侧彻底关掉');
+  assert.deepEqual(normalizeDrawWeights({ strength: 0, cost: 0, versatility: 1 }), dflt,
+    '泛用性输入恒被忽略（旋钮已删）：全 0 强度/性价比 = 没有偏好 → 退回默认');
   assert.deepEqual(normalizeDrawWeights(undefined), dflt,
-    '不给参数时用默认值（默认 4:5:1 → 0.4 / 0.5 / 0.1）');
+    '不给参数时用默认值（默认 1:1 → 0.5 / 0.5）');
 });
 
 check('⭐ 性价比只有**差额接近度**一个刻度：差额与整包分都相同时同分（用户 2026-10-12 第 6 条）', () => {

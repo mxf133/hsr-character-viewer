@@ -3984,3 +3984,165 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
   --cone-border: rgba(91, 155, 213, 0.45);
   --cone-bg: rgba(91, 155, 213, 0.07);
 }
+
+/* ==========================================================================
+   环境统计 · 上场率（2026-10-18 重构 §5）
+   —— 5 个副本全展开，每个副本四张环形图（通关 / 顶格 / 次档 / 其余）。
+
+   只在「新结构」里生效：容器的第一级子节点是 `.usage-group`。旧的「一个副本一份
+   stats.characters 竖排 60 行」那条路径已经删了（连下拉框一起），所以这里不必再
+   兼容旧标记；真要回退，`git revert` 那一版即可，别写成两套共存的样式。
+   ========================================================================== */
+
+.advice-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* 一组 = 一个副本：标题行 + 四张图。副本之间用一条极淡的分隔线断开，
+   比给每组加边框干净（四张图本身已经有卡片底色）。 */
+.usage-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.usage-group + .usage-group {
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.usage-group-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+}
+.usage-group-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gold);
+  letter-spacing: 0.02em;
+}
+
+/* 四张图一行：窄屏自动折成 2×2 / 1×4。
+   ⚠️ `auto-fit` + `minmax(190px, 1fr)` 而不是写死 4 列：1920px 下四张并排，
+   1280px 下也还能挤下四张，再窄就自己折 —— 卡片里的图例是竖排的，宽度不够时会
+   把角色名截成省略号（见 `.usage-legend-name`），所以给一个比「刚好四列」略大的
+   下限，让它宁可折行也别把名字截烂。 */
+.usage-donut-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.usage-donut-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  /* 卡片起浮：与总榜行同一档的观感（2px，别做成弹窗那种大阴影）。 */
+  transition: border-color var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.usage-donut-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-2px);
+}
+
+.usage-donut-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 8px;
+}
+.usage-donut-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.usage-donut {
+  display: block;
+  width: 100%;
+  max-width: 150px;
+  height: auto;
+  margin: 0 auto;
+  overflow: visible;
+}
+
+/* 弧段入场：从「一圈空白」（dashoffset 被推到整圈）长到自己的弧长。
+   ⚠️ 动画只动 `stroke-dashoffset`（合成器友好，不触发布局）；`--arc-delay`
+   由 JS 按名次写进 `style`，11 段依次展开约 500ms 收尾。 */
+.usage-arc {
+  animation: usage-arc-in 0.62s var(--ease-out) both;
+  animation-delay: var(--arc-delay, 0ms);
+}
+@keyframes usage-arc-in {
+  from { stroke-dashoffset: 239; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .usage-arc { animation: none; }
+  .usage-donut-card { transition: none; }
+  .usage-donut-card:hover { transform: none; }
+}
+
+/* 环心：上面是角色数，下面是「角色」两个字。用 fill 显式取值 —— SVG 文本不继承
+   `.muted` 那套 class（它们只对 HTML 生效）。 */
+.usage-donut-total {
+  fill: var(--text);
+  font-family: var(--font);
+  font-size: 17px;
+  font-weight: 700;
+  dominant-baseline: middle;
+}
+.usage-donut-hint {
+  fill: var(--text-muted);
+  font-family: var(--font);
+  font-size: 8px;
+  dominant-baseline: middle;
+}
+
+/* 图例：两列（11 项 → 6 + 5），太窄时退成一列。 */
+.usage-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 2px 8px;
+  font-size: 11px;
+}
+.usage-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--text-dim);
+}
+.usage-legend-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+}
+.usage-legend-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.usage-legend-share {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+/* 「其它」是中性灰的合计项，不与某个角色并列，所以不抢小数点后那一位的注意力。 */
+.usage-legend-item.is-other .usage-legend-name {
+  color: var(--text-muted);
+}

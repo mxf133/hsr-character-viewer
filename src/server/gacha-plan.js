@@ -47,6 +47,16 @@ import {
  */
 export const rosterKeyOf = (members) => [...members].map(packKeyOf).sort().join('~');
 
+/**
+ * 一套阵容的**折叠键** = 四名角色的名字排序后拼接（不看星魂 / 光锥 / 叠影）。
+ *
+ * ⚠️ 这个键**不参与聚合与算分**，只在交付阶段把「同一套四人、配装不同」的行并成一栏
+ * （用户 2026-10-18 决策：按角色组合折叠）。整包键 `rosterKeyOf` 仍是聚合身份 ——
+ * 换一件光锥就是另一条成绩，分数照算，只是折叠后在界面上共用一栏。
+ * ⚠️ 排序原因同 `rosterKeyOf`：位置顺序不参与阵容身份。
+ */
+export const lineupKeyOf = (members) => [...members].map((m) => m.char).sort().join('~');
+
 // ------------------------------------------------------------------ 性价比项（方案专用）
 
 /**
@@ -402,6 +412,7 @@ export const buildPlan = (scored, options = {}) => {
 
     pool.push({
       key: entry.key,
+      lineup: lineupKeyOf(entry.members),
       members: entry.members,
       entry,
       // ★ 方案分 = 逐版本取最大值（用户 2026-10-18 决策）
@@ -443,13 +454,36 @@ export const buildPlan = (scored, options = {}) => {
     }
   });
 
-  // ---- 第三趟：给要下发的行补隐金 / fill / mid / alternatives ----------------
+  // ---- 第三趟：按角色组合折叠，再决定下发哪些 ------------------------------
+  //
+  // ⚠️ **折叠发生在「下发条数」之前**，否则 `maxRows=20` 会被同阵容的各种配装吃光：
+  // 实测绝境关前三名全是「砂金•戏浪 / 知更鸟•晴歌 / 不死途 / 缇宝」四个角色，
+  // 只差光锥叠影（6.551 / 6.533 / 6.524）。用户 2026-10-18 决策：按角色组合折叠。
+  //
+  // 折叠规则：同一 `lineup` 只留**排最前**（= 分最高）那条当代表，其余收进 `variants`
+  // （按原顺序，即分数降序）。`pool` 本身不动 —— 次选配队要从全池找邻队，
+  // 折叠掉的那些配装仍是合法邻队。
+  const foldByLineup = () => {
+    const seen = new Map();          // lineup → 代表行（pool 里的对象）
+    const reps = [];
+    for (const p of pool) {
+      const hit = seen.get(p.lineup);
+      if (hit) { hit.variants.push(p); continue; }
+      seen.set(p.lineup, p);
+      p.variants = [];
+      reps.push(p);
+    }
+    return reps;
+  };
+  const lineups = foldByLineup();
+
+  // ---- 第四趟：给要下发的行补隐金 / fill / mid / alternatives ----------------
   //
   // ⚠️ 隐金与逐版本明细都**只对下发的这几十条算**。这是全模块最大的一处性能设计：
   // 实测 1649 行投稿挤出 1442 套候选，而 `hiddenReductionOf` 跑全池要 8.6 ms、
   // 跑 20 条只要 0.28 ms —— 它压根不参与排序（既不进 `score` 也不进任何 tie-break），
   // 所以提前给全池算是纯浪费。判断「要不要提前算」只有一条标准：会不会改变下发的内容。
-  const delivered = pool.slice(0, Math.max(1, maxRows));
+  const delivered = lineups.slice(0, Math.max(1, maxRows));
   for (const row of delivered) {
     row.cuts = hiddenReductionOf(row.members, availability, hidden, 'dataset');
     row.hiddenCut = row.cuts.team ?? 0;
@@ -460,6 +494,26 @@ export const buildPlan = (scored, options = {}) => {
     row.pullsExpected = row.fill.reduce((n, it) => n + (it.pullsExpected || 0), 0);
     row.mid = midOf(row, { account });
     row.alternatives = alternativesOf(row, pool, rankOf, byMember, maxAlternatives);
+    // 折叠进来的其它配装：**只带界面能用的字段**（成员整包 + 分数 + 补金），
+    // 不跑 fill / mid / cuts —— 用户点开变体时要的是「换个光锥能省几金」，
+    // 给每个变体都算一遍补金明细会把这几十行的成本翻几倍，而没人看。
+    row.variants = (row.variants || []).map((v) => ({
+      key: v.key,
+      score: v.score,
+      bestSeason: v.bestSeason,
+      strengthPart: v.strengthPart,
+      costPart: v.costPart,
+      gap: v.gap,
+      gold: v.gold,
+      video: v.video,
+      members: v.members.map((m) => ({
+        char: m.char,
+        eidolon: m.eidolon,
+        lc: m.lc ?? null,
+        superimp: m.superimp ?? 0,
+        owned: isOwned(m.char),
+      })),
+    }));
   }
 
   return {
@@ -490,11 +544,15 @@ export const buildPlan = (scored, options = {}) => {
       fill: row.fill,
       mid: row.mid,
       alternatives: row.alternatives,
+      variants: row.variants,
+      // 折叠键：前端用它做「一栏一行」的身份（与 `key` 不同，`key` 是整包身份）
+      lineup: row.lineup,
       video: row.video,
     })),
     pool: pool.length,
+    lineups: lineups.length,
     poolRows: scored.length,
     maxRows,
-    truncated: pool.length > delivered.length,
+    truncated: lineups.length > delivered.length,
   };
 };

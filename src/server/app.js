@@ -29,7 +29,8 @@ import {
   normalizeRoster, presetById, presetContext, presetContextRefs, signatureCones, withSignatureCones,
 } from './virtual-accounts.js';
 import { charCostOf, coneCostOf } from '../../public/scripts/advice.js';
-import { archiveConclusion, archiveCharacterPacks } from './conclusion.js';
+import { archiveConclusion, archiveCharacterPacks, archiveUsage } from './conclusion.js';
+import { runPlan, DEFAULT_PLAN_ENV } from './gacha-plan-run.js';
 import { limitedCountOf } from './limited-count.js';
 import { compareRosters } from './compare.js';
 import { fetchBattleRecordsRaw, normalizeBattleRecords } from './records.js';
@@ -349,6 +350,30 @@ export const createApp = (options = {}) => {
         return;
       }
 
+      // 上场率四类分层（2026-10-18 重构 §5）：**5 个副本全展开**，每个副本各自返回
+      // 通关 / 0T / 500-300 行动值 / <300 行动值（轮次型副本换成 0T / 1T / 2T 及以上）
+      // 四类里「前 10 角色 + 其它」的占比。数据量很小（5 副本 × 4 类 × 11 项），
+      // 一次全给前端，切换副本时不再请求。
+      if (path === '/api/archive/usage' && req.method === 'GET') {
+        const unavailable = {
+          ok: true,
+          available: false,
+          hint: '尚未采集资料。请在项目目录运行：node tools/herta-fetch.mjs && node tools/herta-build.mjs',
+        };
+        try {
+          if (!(await archiveExists())) { json(res, 200, unavailable); return; }
+          const usage = await archiveUsage({
+            window: url.searchParams.get('window') || undefined,
+            versionWeights: options.versionWeights,
+          });
+          json(res, 200, usage);
+        } catch (err) {
+          console.warn('[archive] 读取上场率失败：', err.message);
+          json(res, 200, { ...unavailable, detail: err.message });
+        }
+        return;
+      }
+
       if (path === '/api/archive/stats' && req.method === 'GET') {
         const unavailable = {
           ok: true,
@@ -445,6 +470,43 @@ export const createApp = (options = {}) => {
       // ⚠️ 本地图标路由（`/icons/*`）的实现在**上面**的静态分支里，不在这里。
       // 它不是 `/api/*`，走不到 API 路由区 —— 曾经在这里又写了一份，静态分支先
       // `return` 了，那份永远执行不到（纯死代码，且会让人以为两处都要维护）。
+
+      // 抽卡方案 v2（2026-10-18 重构）：**只看一个关卡**，逐版本取最大值。
+      //
+      // 与 `/conclusion` 的分工：结论是「跨四个副本加权的角色总榜」，方案是「选了某个
+      // 关卡时，我这账号该抽什么」。两者读同一份 frontier 行、同一套 `SCORING`，
+      // 但**不共享中间结果** —— 所以必须分开算，不能拿结论那份乘个系数。
+      //
+      // 用 POST 是为了带账号持有情况与两套权重（同 `/conclusion` 的理由）；
+      // GET 也留着，方便探针和浏览器直接打开看。
+      if (path === '/api/archive/plan' && (req.method === 'POST' || req.method === 'GET')) {
+        const unavailable = {
+          ok: true,
+          available: false,
+          hint: '尚未采集资料。请在项目目录运行：node tools/herta-fetch.mjs && node tools/herta-build.mjs',
+        };
+        try {
+          if (!(await archiveExists())) { json(res, 200, unavailable); return; }
+          const body = req.method === 'POST' ? await readBody(req) : {};
+          const q = url.searchParams;
+          const result = await runPlan({
+            // 关卡：`aa|plight` 这种串（见 `gacha-plan-run.js` 的 `PLAN_ENVS`）。
+            // 不传 = 默认绝境；不认识的值也退回默认，不报错。
+            envKey: body.envKey || q.get('env') || DEFAULT_PLAN_ENV,
+            account: body.account || body || {},
+            drawWeights: body.drawWeights,
+            hiddenCosts: body.hiddenCosts,
+            versionWeights: body.versionWeights
+              ?? JSON.parse(q.get('versionWeights') || 'null') ?? undefined,
+            maxRows: body.maxRows ?? q.get('maxRows') ?? undefined,
+          });
+          json(res, 200, result);
+        } catch (err) {
+          console.warn('[archive] 计算抽卡方案失败：', err.message);
+          json(res, 200, { ...unavailable, detail: err.message });
+        }
+        return;
+      }
 
       // 把自己队伍丢进榜单里比一比：只回传命中的那几行，不把整个池子发给浏览器。
       // 全部有通关记录的队伍（用户 2026-10-18：候选池放宽到「全部队伍」，配合前端

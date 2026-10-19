@@ -13,7 +13,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scoreEnvRows } from '../src/server/gacha-score.js';
 import {
-  alternativesOf, buildPlan, fillOf, groupRosters, midOf, planCostPartOf, rosterKeyOf,
+  alternativesOf, buildPlan, fillOf, groupRosters, lineupKeyOf, midOf, planCostPartOf, rosterKeyOf,
 } from '../src/server/gacha-plan.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -109,6 +109,68 @@ check('少一个人 → 另一个键', rosterKeyOf([
   { char: 'Hero', eidolon: 2, lc: 'HeroLC', superimp: 3 },
   { char: 'Mage', eidolon: 0, lc: null, superimp: 0 },
 ]) !== keyA);
+
+// ---- ①b 折叠键：只认角色组合，不看配装 ---------------------------------------
+// 「整包一致才算同一套阵容」是**聚合身份**（换一件光锥就是另一条成绩），
+// 但界面上要给「同一套四人、只是想换个光锥看看」收成一栏 —— 两个键必须分开。
+console.log('[折叠键 — 角色组合相同即同一栏]');
+const packsOf = (arr) => arr.map((t) => {
+  const [char, eidolon, lc, superimp] = t.split('|');
+  return { char, eidolon: Number(eidolon), lc: lc || null, superimp: Number(superimp) || 0 };
+});
+const mainPacks = packsOf(ROSTER_MAIN);
+eq('同角色组合 → 同一个折叠键', lineupKeyOf(mainPacks), lineupKeyOf([
+  mainPacks[1], mainPacks[0], mainPacks[2], mainPacks[3],
+]));
+check('换一件光锥：折叠键**不变**', lineupKeyOf([
+  { char: 'Hero', eidolon: 2, lc: 'OtherLC', superimp: 3 },
+  { char: 'Mage', eidolon: 0, lc: null, superimp: 0 },
+  { char: 'Free', eidolon: 6, lc: 'FreeLC', superimp: 5 },
+  { char: 'Stan', eidolon: 0, lc: null, superimp: 0 },
+]) === lineupKeyOf(mainPacks));
+check('换一个星魂档：折叠键**不变**', lineupKeyOf([
+  { char: 'Hero', eidolon: 0, lc: 'HeroLC', superimp: 3 },
+  { char: 'Mage', eidolon: 6, lc: null, superimp: 0 },
+  { char: 'Free', eidolon: 6, lc: 'FreeLC', superimp: 5 },
+  { char: 'Stan', eidolon: 0, lc: null, superimp: 0 },
+]) === lineupKeyOf(mainPacks));
+check('换一个角色：折叠键**变**', lineupKeyOf([
+  { char: 'Hero', eidolon: 2, lc: 'HeroLC', superimp: 3 },
+  { char: 'Mage', eidolon: 0, lc: null, superimp: 0 },
+  { char: 'Free', eidolon: 6, lc: 'FreeLC', superimp: 5 },
+  { char: 'Other', eidolon: 0, lc: null, superimp: 0 },
+]) !== lineupKeyOf(mainPacks));
+check('⚠️ 两个键必须都从成员派生、但**互不相等**（整包键含配装，折叠键只含角色）',
+  keyA !== lineupKeyOf(mainPacks));
+
+// ---- ①c 折叠对下发的影响：同角色组合只占一行 --------------------------------
+// 用一份「同四人、三套配装」的合成数据，断言只下发 1 行、其余进 variants。
+console.log('[折叠 — 同角色组合只下发一行]');
+const VARIANT_FIXTURE = [
+  // 同一套四人，只差光锥叠影 / 一件光锥 —— 分数依次降低
+  { season: '4.6', c: 9, a: 100, n: 1, t: 3, m: ['Hero|2|HeroLC|3', 'Mage|0||0', 'Free|6|FreeLC|5', 'Stan|0||0'] },
+  { season: '4.6', c: 10, a: 120, n: 1, t: 3, m: ['Hero|2|HeroLC|1', 'Mage|0||0', 'Free|6|FreeLC|5', 'Stan|0||0'] },
+  { season: '4.6', c: 11, a: 140, n: 1, t: 3, m: ['Hero|2|HeroLC|5', 'Mage|0||0', 'Free|6|FreeLC|1', 'Stan|0||0'] },
+  // 完全不同的一套，用来确认折叠不会把别的阵容也吃掉
+  { season: '4.6', c: 4, a: 200, n: 1, t: 3, m: ['Zed|0||0', 'Mage|0||0', 'Free|6|FreeLC|5', 'Stan|0||0'] },
+];
+const vScored = scoreEnvRows(VARIANT_FIXTURE, {
+  mode: 'aa', stage: 'plight', ws: 1, wc: 1, versionWeightOf,
+}).scored;
+const vPlan = buildPlan(vScored, { wc: 1, maxRows: 20 });
+eq('4 条投稿 → 2 个整包阵容池，折叠后 2 栏', vPlan.rows.length, 2);
+check('折叠结果计入 `lineups` 而不是 `pool`', vPlan.pool === 4 && vPlan.lineups === 2,
+  `pool=${vPlan.pool} lineups=${vPlan.lineups}`);
+const vMain = vPlan.rows.find((r) => r.members.some((m) => m.char === 'Hero'));
+eq('同角色组合只下发一行', vMain ? 1 : 0, 1);
+eq('另外两套配装收进 variants', vMain?.variants?.length, 2);
+check('代表行是**分最高**的那个（叠影 3 而不是 1 / 5）',
+  vMain?.members.find((m) => m.char === 'Hero')?.superimp === 3,
+  String(vMain?.members.find((m) => m.char === 'Hero')?.superimp));
+check('variants 按分数降序', (vMain?.variants?.[0]?.score ?? 0) >= (vMain?.variants?.[1]?.score ?? 0),
+  JSON.stringify((vMain?.variants || []).map((v) => v.score)));
+check('variants 只带轻字段、不跑补金明细（不给 UI 用不到的东西）',
+  vMain?.variants?.every((v) => v.fill === undefined && v.mid === undefined && v.seasons === undefined));
 
 // ---- ② 方案的成本项：Δgold 而不是队伍自己的 c --------------------------------
 console.log('\n[方案成本项 — Δgold 做分母，已齐 = 1]');

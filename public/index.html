@@ -241,11 +241,13 @@
           <div id="recordModes" class="record-modes"></div>
         </section>
 
-        <!-- 跨模式综合结论：把 5 个副本/关卡放在一起回答「这个账号该抽什么」。 -->
+        <!-- 跨模式综合结论：把 5 个副本/关卡放在一起回答「这个账号该抽什么」。
+             ⚠️ 2026-10-18 更名：原「综合结论 · 该抽什么」→「角色和配队 · 抽卡推荐」
+             （重构需求文档 外观改进第 1 条）。 -->
         <div id="adviceConclusion" class="advice-conclusion" hidden>
           <div class="advice-section-head">
             <h3 class="advice-h3">
-              <span class="record-no">②</span> 综合结论 · 该抽什么
+              <span class="record-no">②</span> 角色和配队 · 抽卡推荐
               <span class="muted small" id="adviceConclusionMeta"></span>
             </h3>
           </div>
@@ -276,20 +278,16 @@
                ⚠️ 2026-10-16 第 3 条当时要的是「三组分别换行」，本轮按用户的新要求反过来了；
                窄屏（≤1100px）仍退回竖排，见 app.css 里的 media。 -->
           <div class="advice-weights is-compact" id="adviceFrontierWeights">
-            <span class="advice-weights-title">权重</span>
-            <span class="advice-weights-hint muted small"><strong>三大类</strong>：<strong>关卡权重</strong>决定
-              哪些副本算数（角色总榜与抽卡方案都吃它，调成 0 = 这个副本不进榜）；
-              <strong>抽卡权重</strong>决定角色总榜与抽卡方案里<strong>强度 / 性价比 / 泛用性</strong>
-              各占多少（强度越高越推<strong>行动值低、投入高</strong>的强队，
-              性价比越高越推<strong>你还要补得越少</strong>的队伍）；
-              <strong>版本权重</strong>决定每个副本窗口里<strong>从最新往前 N 个版本</strong>各占多少
-              （越旧被稀释得越厉害，某一版设 0 = 那一版不进窗口；默认 6 版，
-              用<strong>加一版 / 删一版</strong>改窗口长度，1~12 版）。
-              三组都只有<strong>相对大小</strong>有意义，改任一组都会重算总榜。</span>
+            <span class="advice-weights-title">设置</span>
+            <span class="advice-weights-hint muted small"><strong>关卡</strong>：一次只统计一个关卡，
+              下面的角色榜、抽卡方案、上场率都只算这个关卡（默认绝境）；
+              <strong>抽卡权重</strong>决定<strong>强度 / 性价比</strong>各占多少；
+              <strong>版本权重</strong>决定从最新往前 N 个版本各占多少。
+              都只有<strong>相对大小</strong>有意义。</span>
             <button type="button" id="adviceFrontierWeightsReset" class="btn btn-ghost btn-sm">恢复默认</button>
             <div class="advice-weights-groups">
               <div class="advice-weights-group">
-                <span class="advice-weights-subtitle">关卡权重</span>
+                <span class="advice-weights-subtitle">关卡</span>
                 <div class="advice-weights-grid" id="adviceFrontierWeightRow"></div>
                 <span class="muted small advice-weights-meta" id="adviceFrontierWeightsMeta"></span>
               </div>
@@ -332,38 +330,17 @@
           </div>
 
           <!-- 一节：角色总榜（纯黑塔网投稿口径，不看你的角色池）。
-               ⚠️ 权重栏与隐金设置**不在这里** —— 2026-10-17 起它们属于「② 综合结论」
-               这一节的开头（两个榜共用的旋钮，见本节上方那段注释）。 -->
+               ⚠️ 权重栏与隐金设置**不在这里** —— 2026-10-17 起它们属于「② 角色和配队」
+               这一节的开头（两个榜共用的旋钮，见本节上方那段注释）。
+               ⚠️ 2026-10-18 删掉了两段小字（重构需求文档 外观改进第 3 条：「删除下方的
+               『看什么、怎么算、切档位、不会消失』」）—— 那四条讲的是旧口径
+               （两个档位进池、占比排序），重构后已经不成立，留着会误导。 -->
           <div class="advice-section-head">
             <h4 class="advice-h4">
               角色总榜
               <span class="muted small">角色 / 星魂 / 光锥混排 · 只看黑塔网投稿数据</span>
             </h4>
           </div>
-          <p class="muted small advice-note" id="adviceUnitNote">
-            <span class="advice-note-line"><span class="advice-note-tag">看什么</span>
-              这个榜<strong>完全不看你的角色池</strong>：它只统计黑塔网上别人投稿的配队，
-              你抽到没抽到都不影响名次。</span>
-            <span class="advice-note-line"><span class="advice-note-tag">怎么算</span>
-              每个副本先只保留<strong>判据最好的一档与次好的一档</strong>
-              （混沌回忆/虚构叙事是 <strong>0T</strong> / <strong>≤2T</strong>、末日幻影是 <strong>积分 4000</strong> /
-              <strong>≥3700</strong>、异相仲裁·绝境王棋关是<strong>行动值 &lt;300</strong> / <strong>&lt;500</strong>），
-              这批投稿<strong>全部进池</strong>（v4.6.78 起不再只圈最便宜的 25%），
-              最后看每个单位在这批里出现的<strong>占比</strong>——
-              占比越高说明它越常在能出分的阵容里出现。</span>
-          </p>
-          <!-- 星魂档筛选的口径（用户 2026-10-11 报的缺陷：切到 E0/E1/E2/E6 只剩
-               「最佳成绩就在这一档」的角色）。说明只写在这一处，筛选器上的 title
-               写同一件事的短版。 -->
-          <p class="muted small advice-note">
-            <span class="advice-note-line"><span class="advice-note-tag">切档位</span>
-              下面的 <strong>E0 / E1 / E2 / E6</strong> 是把这一份榜拆成四个<strong>星魂档</strong>：
-              每一档<strong>各自比较</strong>，一个角色在每个档位都可能有自己的一行
-              （取它抽到这一档时最强的那个整包）。</span>
-            <span class="advice-note-line"><span class="advice-note-tag">不会消失</span>
-              所以「最佳成绩在 E2」的角色，切到 <strong>E0</strong> 也能看到它 E0 档的分数与名次 ——
-              不会因为别的档位分更高就不见了。</span>
-          </p>
           <!-- 筛选器（星魂档 / 「只看我没有的」）：`feat/team-plan` 那一轮把它连同这个
                节点一起撤掉了，而 `dsh/fix-eidolon-tier-filter` 恰好把它修好（每档各自
                收敛一条）—— 收尾人裁决**保留并修好**，所以节点在这里，渲染在
@@ -391,29 +368,10 @@
               <span class="muted small" id="adviceTeamPlanMeta"></span>
             </h4>
           </div>
-          <p class="muted small advice-note" id="adviceTeamPlanNote">
-            <span class="advice-note-line"><span class="advice-note-tag">是什么</span>
-              一条<strong>可以照着走的补金路线</strong>：先看你已有几位核心角色，
-              再看<strong>下一步最适合补什么</strong>。</span>
-            <span class="advice-note-line"><span class="advice-note-tag">队伍来源</span>
-              候选来自<strong>逐档榜 ∪ 角色总榜 ∪ 行动值前沿</strong>（每个副本行动值最好的 8 支），
-              同一支队伍只留一条。</span>
-            <span class="advice-note-line"><span class="advice-note-tag">分数怎么算</span>
-              补金推荐分 = <strong>队伍强度 × 抽卡权重</strong> + <strong>队伍性价比 × 抽卡权重</strong>
-              + <strong>队伍泛用性 × 抽卡权重</strong>，
-              三项一个是「这支队打得多好」、一个是「你还要补几金」、一个是「好不好换人」，各管一头。</span>
-            <span class="advice-note-line"><span class="advice-note-tag">队伍强度</span>
-              取<strong>角色总榜那一列的「角色强度」分</strong>（绝对 0~100，与总榜同一个数）——
-              每个副本取<strong>最近版本那一次</strong>成绩的行动值、按关卡权重加权，再按投入档位补分，
-              所以<strong>行动值越低越高、投入越高越高</strong>（E6S5 &gt; E6S1 &gt; E2S1 &gt; E0S0），
-              <strong>与金数无关</strong>。</span>
-            <span class="advice-note-line"><span class="advice-note-tag">队伍性价比</span>
-              只看<strong>你自己还要补几金</strong>：补得越少分越高，<strong>正好补到「候选池封顶值」= 0 分，
-              超过就转负分</strong>（最低 −100）—— 所以「要补十几金」的队伍会被真的压下去，
-              而不是和更贵的队一起并排停在 0 分（指数 1.5 让尾部掉得更快，补 1~2 金的几乎不受影响）。</span>
-            <span class="advice-note-line"><span class="advice-note-tag">每张卡</span>
-              都带角色 / 光锥图片、补金顺序与过渡档位，点分数还能展开刻度来源和相近的次选配队。</span>
-          </p>
+          <!-- 2026-10-18 删掉这一整段说明（重构需求文档 外观改进第 5 条：「删除抽卡方案下方的
+               『是什么、队伍来源、分数怎么算、队伍强度、队伍性价比、每张卡』」）。旧文案讲的是
+               旧口径（逐档榜 ∪ 前沿的候选池、三项加权、1.5 次幂压尾巴），重构后全部不成立；
+               各字段自己的 title / 悬浮提示仍在，用户想深挖时点得开。 -->
           <!-- 抽卡方案的工具条（用户 2026-10-18）：翻页 + 搜索，整块靠左。
                原来这里只有「最多 15 条」的硬截断，现在整池都列出来、每页 20 支顺序翻
                （见 advice-view.js 的 TEAM_PLAN_PAGE_SIZE / renderTeamPlanPager）。
@@ -432,33 +390,26 @@
           <div id="adviceTeamPlanPagerBottom" class="advice-pager" hidden></div>
         </div>
 
-        <!-- 环境统计（上场率）：这一节按「当前副本 / 版本」算，所以选择器放在它自己的标题行里。
-             原来它挂在「推荐阵容」标题行上，用户要求删掉那一节之后挪过来。 -->
+        <!-- 环境统计（上场率）：**5 个副本全展开**，每个副本一组四张环形图
+             （2026-10-18 重构 §5）。需求文档原话：「统计不同关卡、不同版本的 通关 / 0T /
+             500-300 行动值 / 小于300 行动值 的投稿所包含的角色数量，提供饼图展示前 10
+             角色 + 其它角色的百分比，要有合适的动态效果」；用户澄清「分关卡情况」=
+             5 个副本全展开，所以这里**没有副本/版本选择器**了 —— 一次全画出来。
+             ⚠️ 原来的 adviceMode / adviceSeason 两个下拉框随之消失，advice-view.js
+             里对它们的引用也一并清掉（那两个节点已不存在）。 -->
         <div class="advice-section-head">
           <h3 class="advice-h3">
             环境统计 · 上场率
             <span class="muted small" id="adviceCharMeta"></span>
           </h3>
-          <div class="advice-section-fields">
-            <label class="field field-inline">
-              <span>副本</span>
-              <select id="adviceMode"></select>
-            </label>
-            <label class="field field-inline">
-              <span>版本</span>
-              <select id="adviceSeason"></select>
-            </label>
-          </div>
         </div>
         <p class="muted small advice-note" id="adviceCharNote">
-          <span class="advice-note-line"><span class="advice-note-tag">排的是</span>
-            按「通过该副本的投稿中出现次数」排序。</span>
+          <span class="advice-note-line"><span class="advice-note-tag">看的是</span>
+            每个关卡里，<b>每一档成绩</b>的投稿都用到了哪些角色（前 10 名 + 其它）。</span>
           <span class="advice-note-line"><span class="advice-note-tag">注意</span>
             <b>这只说明玩的人多，不代表强</b>，所以上面的榜不按它排。</span>
-          <span class="advice-note-line"><span class="advice-note-tag">用途</span>
-            看清当前环境围绕哪些角色，以及各自的星魂普及度。</span>
         </p>
-        <div id="adviceChars" class="advice-chars"></div>
+        <div id="adviceChars" class="advice-usage"></div>
       </div>
     </section>
   </main>
