@@ -40,7 +40,7 @@
 // 2026-10 删掉的两节：「你的补强路径」与「推荐阵容 · 按金数分档」——前者被
 // 「抽卡方案」完全覆盖，后者的信息在「性价比总榜 + 环境统计」里已经给全。
 import {
-  EVIDENCE_LABEL, MODE_ORDER, ENV_WEIGHT_ROWS, envWeightDefaults,
+  EVIDENCE_LABEL, ENV_WEIGHT_ROWS, envWeightDefaults,
   // 抽卡权重（用户 2026-10-12 第 2、3 条）：旋钮清单与默认值都只有 advice.js 那一份。
   DRAW_WEIGHT_ROWS, drawWeightDefaults, normalizeDrawWeights,
   // 版本权重（用户 2026-10-16 第 3 条）：**第三类**权重 —— 每个副本窗口里「从最新往前
@@ -60,7 +60,7 @@ import {
   // 强度两档的天花板常量（`strengthSecondBandCap`）：详情窗口要把这条规则写出来
   // （v4.6.113），必须读 `advice.js` 那一份，不许在这里另抄一个 90。
   SCORING,
-  weightInputOf, teamPlan,
+  weightInputOf,
   // 隐金设置（用户 2026-10-11）：五组的名单 / 文案 / 默认值都只有 advice.js 那一份，
   // 这里只负责按它画界面，绝不抄第二份名单。
   HIDDEN_COST_IDS, HIDDEN_COST_SETTINGS, DEFAULT_HIDDEN_COSTS,
@@ -79,13 +79,15 @@ import { accessHeaders, readAccessToken } from './access.js';
 import { closeTipWindow, isTipWindowOpen, openTipWindow } from './advice-tip-window.js';
 // 「隐金设置」那个详情窗口的外壳（用户 2026-10-11）。同样是「外壳归它、内容归本文件」。
 import { openGoldSettings } from './advice-gold-modal.js';
+// 环境统计 · 上场率（2026-10-18 重构 §5）：5 个副本全展开、每副本四张环形图。
+// 抽成独立模块的理由与 advice-paging.js 一样 —— 它只碰 DOM、不碰评分，
+// 而且那套环形图几何（dasharray/offset）抄进 6000 行的文件里会很难读。
+import { renderUsage } from './advice-usage.js';
 
 const $ = (id) => document.getElementById(id);
 
 const el = {
   layoutAdvice: $('layoutAdvice'),
-  mode: $('adviceMode'),
-  season: $('adviceSeason'),
   /** 抽卡方案的状态行（挂在标题行里）。 */
   teamPlanMeta: $('adviceTeamPlanMeta'),
   reload: $('adviceReload'),
@@ -105,7 +107,6 @@ const el = {
   conclusion: $('adviceConclusion'),
   conclusionMeta: $('adviceConclusionMeta'),
   conclusionUnits: $('adviceConclusionUnits'),
-  unitNote: $('adviceUnitNote'),
   unitFilter: $('adviceUnitFilter'),
   unitMeta: $('adviceUnitMeta'),
   /** 角色总榜的搜索框（用户 2026-10-18：按角色 / 光锥名称搜）。 */
@@ -127,8 +128,7 @@ const el = {
   /** 隐金设置（权重块下方的按钮 + 它旁边的状态行）。 */
   hiddenCostsOpen: $('adviceHiddenCostsOpen'),
   hiddenCostsMeta: $('adviceHiddenCostsMeta'),
-  /** 抽卡方案（队伍口径）：说明块 + 列表。 */
-  teamPlanNote: $('adviceTeamPlanNote'),
+  /** 抽卡方案（队伍口径）：列表（说明块已在 2026-10-18 按需求文档删掉）。 */
   teamPlanBody: $('adviceTeamPlanBody'),
   /** 抽卡方案的搜索框与两个翻页条（用户 2026-10-18：配队改为尽量多 + 每页 20）。 */
   teamPlanSearch: $('adviceTeamPlanSearch'),
@@ -157,6 +157,14 @@ const WEIGHT_SCOPE = 'frontier';
 const WEIGHT_SCOPES = ['plan', 'frontier'];
 const WEIGHTS_KEY = { plan: 'hsr.advice.weights.plan', frontier: 'hsr.advice.weights.frontier' };
 const LEGACY_WEIGHTS_KEY = 'hsr.advice.weights';
+/**
+ * **选中的关卡**的本地存档键（2026-10-18 起）。
+ *
+ * 形状是 `{ envKey: 'aa|plight' }`。与上面几个 key 分开存：旧 key 里是「五档权重表」，
+ * 读它时会走 `selectedEnvKeyOf()` 降级兼容（见 `loadWeights`），但**再也不往里写** ——
+ * 免得新版存的单关卡被老版本页面读成「只有一个副本有权重」。
+ */
+const ENV_KEY_STORAGE = 'hsr.advice.envKey';
 /**
  * **抽卡权重**（强度 / 性价比）的本地存档键（用户 2026-10-12 第 2、3 条）。
  *
@@ -195,12 +203,27 @@ const SEARCH_DEBOUNCE = 120;
 /** 单位类型的中文名（**抽卡方案**那一节按 kind 分段时用）。 */
 const KIND_LABEL = { char: '角色', eidolon: '星魂', cone: '光锥' };
 
+/**
+ * 「关卡选择」的默认关卡：**异相仲裁 · 绝境**（需求文档原话「默认选择绝境」）。
+ *
+ * ⚠️ 它是 `ENV_WEIGHT_ROWS` 的第 0 项，但这里**按 `mode|stage` 写死**而不是取 `[0]` ——
+ * 那张表将来重排时，默认关卡不该跟着漂。
+ * ⚠️ 它必须定义在 `const state = {...}` **之前**：`state.envKey` 的初值就是它，而
+ *    `const` 有 TDZ —— 写在后面会「Cannot access before initialization」，整页白屏。
+ */
+const DEFAULT_ENV_KEY = 'aa|plight';
+
+/** 选中关卡的权重值。与旧口径「权重决定哪些副本算数」等价：非 0 即算数。 */
+const SELECTED_ENV_WEIGHT = 10;
+
+
 const state = {
   index: null,
-  stats: null,
-  mode: null,
-  stage: '',
-  season: null,
+  /**
+   * 上场率（/api/archive/usage）的载荷。**只在内存**，不缓存到 localStorage ——
+   * 它是现算的，存下来只会让人看到旧数。
+   */
+  usage: null,
   loading: false,
   snapshot: null,
   owned: new Set(),
@@ -210,6 +233,15 @@ const state = {
   coneRanks: new Map(),
   /** 用户自己定的副本权重（`${副本}|${关卡}` → 数值；`.plan` 那份只剩旧存档）。
    *  空对象 = 用默认值。见 advice.js 的 `WEIGHT_SCOPES`。 */
+  /**
+   * 选中的关卡键（`'aa|plight'` 这种形态，见 `ENV_WEIGHT_ROWS`）。
+   *
+   * ⚠️ 2026-10-18 起取代了原来的 `weights: { plan, frontier }`：界面上只剩**一个**关卡，
+   * 没有「五个权重」了。原来的表由 `envWeightsOf(state.envKey)` 现算（选中 = 10、
+   * 其余 = 0），所以下游拿到的形状与旧版完全一致。
+   */
+  envKey: DEFAULT_ENV_KEY,
+  // 抽卡权重 / 版本权重仍是各自的表（它们没被这次重构改掉）。
   weights: { plan: {}, frontier: {} },
   /**
    * **抽卡权重**（用户 2026-10-12 第 2、3 条）：`{ strength, cost }` 两个**原始**输入值。
@@ -286,20 +318,19 @@ const state = {
    */
   teamPlanPage: 1,
   /**
-   * **抽卡方案的计算结果缓存**。
+   * **抽卡方案的计算结果**（2026-10-18 重构起由服务端算）。
    *
-   * `teamPlan()` 在**浏览器里**跑（服务端不下发队伍方案），全池 284 支实测约 22 ms ——
-   * 翻一次页 / 敲一个字都重算一遍会明显卡手。所以按「输入签名」缓存一份：
-   * 只有结论对象换了、账号持有变了、或三类权重里的抽卡权重变了才重算。
+   * 旧版这里是 `teamPlanCache`：一份「浏览器里算出来的方案 + 搜索用 haystack」。
+   * 现在只存 `/api/archive/plan` 的原始返回 —— 分数、名次、补金顺序、次选、变体
+   * 全在里面，前端**不重算**（重算就是第二份加权实现，而 2026-10 修的每一个
+   * 「两个榜对不上」都源于此）。
    *
-   * ⚠️ 签名**必须**含 `conclusion` 的对象身份：换账号 / 改关卡权重 / 改版本权重都会
-   *    让服务端重算出一份**新的** `conclusion`（旧对象被丢弃），靠身份就能识别；
-   *    只比 `counts` 之类的字段会在「同账号改权重」时漏掉。
-   * ⚠️ 也含 `owned` / `eidolons` / `coneRanks` 的**规模**：同一份结论下换一个「角色数
-   *    相同」的虚拟账号，池里的队伍不变但差额全变（`marginalCostOf` 吃这三份）。
-   *    规模相同、内容不同的极端情形由上面的 `conclusion` 身份兜住 —— 换账号必然重取结论。
+   * `planKey` 是请求时用的输入签名（`planInputsKey()`）：签名没变就不再请求。
+   * 翻页 / 搜索根本不走这里 —— 它们只重画当前页那 20 张卡。
    */
-  teamPlanCache: null,
+  plan: null,
+  planKey: '',
+  planError: '',
   /**
    * 三个分项的归一上下限，**当结论还没加载过时**由 `/api/archive/packs` 随包带回
    * （角色面板那条路：用户可能直接在「角色信息」页点开一张卡）。
@@ -557,67 +588,6 @@ const iconImg = (url, className, alt = '', loading = 'lazy') => {
 const unitAvatar = (name) => {
   const img = iconImg(iconUrlOf('char', name), 'advice-unit-avatar', cn(name));
   return img || text('span', 'advice-unit-avatar is-empty');
-};
-
-// ------------------------------------------------------------------ controls
-
-/**
- * 副本/关卡选择。**异相仲裁的两个关卡各占一条**：它把三种难度混在同一版本里
- * （骑士关与普通王棋关看轮次，绝境王棋关看行动值，判据完全不同），其余副本只有
- * 一档。
- *
- * 为什么合成一个选择器、而不是另做一个「关卡」下拉框：那个控件只有异相仲裁用得上。
- * 收起来会让控件行从两行变一行，整排控件上下跳 131px（1920px 下实测，正是以前修过
- * 的那个 bug）；一直留着又纯属冗余——它的内容本来就是这个副本的名字。合成一个之后
- * 控件行宽度恒定，两个问题一起没了。
- *
- * 选项 value 一律是 `副本|关卡`（单档副本的关卡是空串），和服务端
- * `/api/archive/stats?mode=&stage=` 的两个参数一一对应。
- */
-const modeValueOf = (mode, stage) => `${mode}|${stage || ''}`;
-
-const parseModeValue = (value) => {
-  const [mode, stage] = String(value || '').split('|');
-  return { mode: mode || null, stage: stage || '' };
-};
-
-const renderModeOptions = () => {
-  el.mode.innerHTML = '';
-  const modes = [...(state.index.modes || [])].sort(
-    (a, b) => MODE_ORDER.indexOf(a.mode) - MODE_ORDER.indexOf(b.mode),
-  );
-  for (const mode of modes) {
-    for (const stage of mode.stages || []) {
-      const option = document.createElement('option');
-      option.value = modeValueOf(mode.mode, stage.stage);
-      // 有独立关卡名的（异相仲裁）拼上关卡名；单档副本沿用「中文（英文）」的写法。
-      option.textContent = stage.labelCn
-        ? `${mode.labelCn} · ${stage.labelCn}`
-        : `${mode.labelCn}（${mode.label}）`;
-      el.mode.appendChild(option);
-    }
-  }
-  const options = [...el.mode.options];
-  const wanted = modeValueOf(state.mode, state.stage);
-  const picked = options.find((o) => o.value === wanted) || options[0];
-  if (picked) el.mode.value = picked.value;
-  ({ mode: state.mode, stage: state.stage } = parseModeValue(el.mode.value));
-};
-
-const renderSeasonOptions = () => {
-  const mode = (state.index.modes || []).find((m) => m.mode === state.mode);
-  const stage = (mode?.stages || []).find((s) => s.stage === state.stage);
-  const seasons = [...(stage?.seasons || mode?.seasons || [])].reverse();
-  const latestForMode = seasons[0] || null;
-  el.season.innerHTML = '';
-  for (const season of seasons) {
-    const option = document.createElement('option');
-    option.value = season;
-    option.textContent = season === latestForMode ? `${season} 版本（最新）` : `${season} 版本`;
-    el.season.appendChild(option);
-  }
-  if (!seasons.includes(state.season)) state.season = latestForMode;
-  if (state.season) el.season.value = state.season;
 };
 
 // ------------------------------------------------------------------ rendering
@@ -1162,9 +1132,13 @@ const accountPayload = () => ({
   cones: Object.fromEntries(state.coneRanks),
 });
 
-/** 某个口径权重覆盖的签名（进 `conclusionKey`，用于判断要不要重算）。 */
-const weightSignature = (scope) => Object.entries(state.weights?.[scope] || {}).sort()
-  .map(([k, v]) => `${k}=${v}`).join(',');
+/**
+ * 关卡选择的签名（进 `conclusionKey`，用于判断要不要重算）。
+ *
+ * ⚠️ 2026-10-18：原来签的是一张「五档权重表」，现在只有一个 `state.envKey`。
+ * 仍然返回字符串而不是对象 —— `conclusionKey()` 是拼字符串用的。
+ */
+const weightSignature = () => String(state.envKey || '');
 
 /**
  * 结论只在「持有情况、**任一口径的副本权重**、**隐金设置**或数据集变了」时才需要重算：
@@ -1182,7 +1156,7 @@ const conclusionKey = () => {
     p.owned.slice().sort().join(','),
     Object.entries(p.eidolons).sort().map(([k, v]) => `${k}:${v}`).join(','),
     Object.entries(p.cones).sort().map(([k, v]) => `${k}:${v}`).join(','),
-    weightSignature(WEIGHT_SCOPE),
+    weightSignature(),
     `hidden[${hiddenCostsSignature()}]`,
     // 抽卡权重（用户 2026-10-13 第 2 条起它进服务端请求，所以必须进这个键）。
     `draw[${drawWeightsSignature()}]`,
@@ -1196,19 +1170,65 @@ const conclusionKey = () => {
 // ------------------------------------ 权重三大类（关卡 / 抽卡 / 版本，三组各占一行）
 
 /**
- * **关卡权重**那一类的标题、网格与说明节点（`scope` 恒为 `frontier`，见 WEIGHT_SCOPE）。
+ * **关卡选择**那一类的标题、网格与说明节点（`scope` 恒为 `frontier`，见 WEIGHT_SCOPE）。
  *
- * 2026-10-12 第 2 条起它叫「关卡权重」（原来叫「总榜权重」）：它不再只影响角色总榜 ——
- * 抽卡方案的「强度得分」也走同一条 `frontier` 口径的链。
+ * ⚠️ 2026-10-18 口径变更（重构需求文档「关卡权重改为关卡选择（5选1，默认绝境）」）：
+ * 原来这里是**五个数字输入框**（副本权重，调成 0 = 不进榜），现在是**一个下拉框** ——
+ * 一次只用**一个**关卡，没有「权重」这回事了。
+ *
+ * 这一改把「关卡权重」这个概念从界面上去掉了（另外两类仍在：抽卡权重、版本权重），但
+ * **底层数据形状刻意没改**：`state.weights.frontier` 仍是 `{ 'aa|plight': 10, ... }`
+ * 那样的表，选中关卡 = 10、其余 = 0。理由是整条下游链（`activeWeights()` →
+ * POST body → `archiveConclusion` → `buildConclusion` 的 `weights`）吃的都是这张表，
+ * 换形状要穿透四层，`tools/` 里几十个探针也在用它。而「选中 = 10、其余 = 0」
+ * 与旧口径**语义完全等价**（权重决定哪些副本算数，0 = 不进榜），下游一行不用改。
  */
 const WEIGHT_UI = {
-  label: '关卡权重',
+  label: '关卡选择',
   grid: () => el.frontierWeightRow,
   meta: () => el.frontierWeightsMeta,
 };
 
-/** 当前某个口径生效的权重覆盖表：`{ 'aa|plight': 10, ... }`；空对象 = 用默认值。 */
-const activeWeights = (scope) => ({ ...(state.weights[scope] || {}) });
+/** 一张 `{ 'aa|plight': 10 }` 形状的表里，**实际被选中**的那个关卡键（没选/选了 0 → 默认关卡）。 */
+const selectedEnvKeyOf = (weights) => {
+  const table = weights && typeof weights === 'object' ? weights : {};
+  // 多个非 0 只在**老存档**里出现（旧界面允许同时开几个副本）。取权重最大的那个，
+  // 并列时按 `ENV_WEIGHT_ROWS` 的顺序 —— 这样老存档升级后落到一个**确定**的关卡上，
+  // 而不是随对象键顺序漂。
+  let best = null;
+  let bestValue = 0;
+  for (const row of ENV_WEIGHT_ROWS) {
+    const key = `${row.mode}|${row.stage}`;
+    const value = Number(table[key]);
+    if (Number.isFinite(value) && value > bestValue) { best = key; bestValue = value; }
+  }
+  return best || DEFAULT_ENV_KEY;
+};
+
+/**
+ * 把「选中的关卡」摊成下游要的那张权重表。
+ *
+ * ⚠️ 这是**唯一**把 `state.envKey` 变成权重的地方 —— `activeWeights()` 调它，其它地方
+ * 不要各写一份 `{ [key]: 10 }`。
+ */
+const envWeightsOf = (envKey) => {
+  const out = {};
+  for (const row of ENV_WEIGHT_ROWS) out[`${row.mode}|${row.stage}`] = 0;
+  const key = envKey && `${envKey}` in out ? envKey : DEFAULT_ENV_KEY;
+  // 选中的关卡可能不在表里（老存档 / 手工改过的键）—— 那时退回默认关卡，别下发一张全 0 表
+  // （全 0 会被服务端当成「一个副本都不算」，榜面直接空掉）。
+  out[key] = SELECTED_ENV_WEIGHT;
+  return out;
+};
+
+/**
+ * 当前生效的关卡权重表：`{ 'aa|plight': 10, 'moc|': 0, ... }`。
+ *
+ * ⚠️ 2026-10-18 起它**恒由一个选中的关卡派生**（`state.envKey` → `envWeightsOf()`）：
+ * 界面上已经没有「五个权重」这回事了，只剩一个下拉框。保留「返回一张表」的形状是为了
+ * 下游（`activeWeights()` 的十几个调用点、POST body、`buildConclusion` 的 `weights`）不用改。
+ */
+const activeWeights = () => envWeightsOf(state.envKey);
 
 /** 权重写法：整数不补小数，其余最多三位（默认口径里有 1.875 这种数）。 */
 const formatWeight = (value) => {
@@ -1218,96 +1238,96 @@ const formatWeight = (value) => {
   return n.toFixed(3).replace(/0+$/, '').replace(/\.$/, '');
 };
 
-/** 读某个口径的五个输入框 → `state.weights[scope]`（空串按 0，非法值不写）。 */
-const readWeights = (grid) => {
-  const out = {};
-  if (!grid) return out;
-  for (const input of grid.querySelectorAll('input.advice-weight')) {
-    const key = `${input.dataset.mode}|${input.dataset.stage || ''}`;
-    const n = weightInputOf(input.value);
-    if (n !== null) out[key] = n;
-  }
-  return out;
-};
 
-/** 从 localStorage 恢复权重（界面上只剩 `frontier` 一套，见 WEIGHT_SCOPE 的注释）。 */
+/**
+ * 从 localStorage 恢复**选中的关卡**（2026-10-18 起取代旧版「五档权重表」）。
+ *
+ * 老存档兼容：旧版存的是 `{ 'aa|plight': 1, 'moc|': 0.5, ... }` 那样的表，
+ * 一律交给 `selectedEnvKeyOf()` 挑出「权重最大」的那一个当选中关卡 —— 用户之前
+ * 只开着一个副本（最常见）时，升级后落到的正是他原本看的那个副本。
+ * `WEIGHTS_KEY.frontier` 与更老的 `LEGACY_WEIGHTS_KEY` 两个来源都读。
+ */
 const loadWeights = () => {
-  let legacy = null;
-  try { legacy = JSON.parse(localStorage.getItem(LEGACY_WEIGHTS_KEY) || 'null'); } catch { legacy = null; }
-  const out = { plan: {}, frontier: {} };
-  for (const scope of WEIGHT_SCOPES) {
-    let parsed = null;
-    try { parsed = JSON.parse(localStorage.getItem(WEIGHTS_KEY[scope]) || 'null'); } catch { parsed = null; }
-    const value = parsed && typeof parsed === 'object' ? parsed : legacy;
-    out[scope] = value && typeof value === 'object' ? value : {};
+  let stored = null;
+  for (const key of [ENV_KEY_STORAGE, WEIGHTS_KEY.frontier, LEGACY_WEIGHTS_KEY]) {
+    if (stored) break;
+    try { stored = JSON.parse(localStorage.getItem(key) || 'null'); } catch { stored = null; }
+    if (stored && typeof stored === 'object') break;
+    stored = null;
   }
-  return out;
+  // 新格式可能是 `{ envKey: 'moc|' }`，也可能直接是老格式的权重表。
+  state.envKey = stored?.envKey
+    ? (ENV_WEIGHT_ROWS.some((row) => `${row.mode}|${row.stage}` === stored.envKey)
+      ? stored.envKey : DEFAULT_ENV_KEY)
+    : selectedEnvKeyOf(stored);
+  return stored;
 };
 
-const saveWeights = () => {
-  for (const scope of WEIGHT_SCOPES) {
-    try {
-      localStorage.setItem(WEIGHTS_KEY[scope], JSON.stringify(state.weights[scope] || {}));
-    } catch {
-      // 隐私模式 / 配额满：记不住就记不住，不影响本次会话
-    }
+/** 记下选中的关卡（旧版这里记的是五档权重表）。 */
+const saveEnvKey = () => {
+  try {
+    localStorage.setItem(ENV_KEY_STORAGE, JSON.stringify({ envKey: state.envKey }));
+  } catch {
+    // 隐私模式 / 配额满：记不住就记不住，不影响本次会话
   }
 };
 
 /**
- * 「当前口径」一行：只列**被改过**的副本（没改过就说「用默认口径」）。
+ * 关卡选择下面那行小字。
  *
- * 为什么不再把五档全列一遍：输入框里已经是那五个数，再抄一遍等于把一行字写两遍，
- * 而且改过一个副本之后，真正需要看见的是「改了哪个、原值是多少」。
+ * ⚠️ 2026-10-18 起它不再写「改了哪个副本的权重」（没有权重了），改成印**当前选中的关卡**
+ * 与「这个关卡决定什么」。用户要求「更新所有小字介绍（尽量简略）」，所以这里只留一句。
  */
-const renderWeightsMeta = (scope) => {
+const renderWeightsMeta = () => {
   const meta = WEIGHT_UI.meta();
   if (!meta) return;
-  const defaults = envWeightDefaults();
-  const current = state.weights[scope] || {};
-  const changed = ENV_WEIGHT_ROWS.filter((row) => {
-    const key = `${row.mode}|${row.stage}`;
-    const value = current[key];
-    if (value === undefined) return false;
-    return Number(value) !== Number(defaults[key] ?? 1);
-  });
-  meta.textContent = changed.length
-    ? `已改：${changed.map((row) => {
-      const key = `${row.mode}|${row.stage}`;
-      return `${row.label} ×${formatWeight(defaults[key] ?? 1)} → ×${formatWeight(current[key])}`;
-    }).join(' · ')}`
-    : '未改动（用默认口径）';
+  const row = ENV_WEIGHT_ROWS.find((it) => `${it.mode}|${it.stage}` === state.envKey)
+    || ENV_WEIGHT_ROWS[0];
+  meta.textContent = `当前：${row?.label || '—'}`;
 };
 
-/** 画某个口径的五个权重输入框（值 = 用户存档优先，否则默认口径）。 */
-const renderWeightRow = (scope) => {
+/**
+ * 画「关卡选择」下拉框（用户 2026-10-18：5 选 1，默认绝境）。
+ *
+ * 原来是五个数字输入框（副本权重）。现在一个下拉框，`onchange` 写 `state.envKey`
+ * 后直接重算 —— 不需要「应用」按钮，旧版改权重也要点按钮只是因为一次改多个框。
+ */
+const renderWeightRow = () => {
   const grid = WEIGHT_UI.grid();
   if (!grid) return;
-  const defaults = envWeightDefaults();
-  const current = state.weights[scope] || {};
   grid.innerHTML = '';
+  const field = document.createElement('label');
+  field.className = 'field field-inline advice-weight-field advice-env-field';
+  field.appendChild(text('span', '', '关卡'));
+  const select = document.createElement('select');
+  select.className = 'advice-env-select';
+  select.id = 'adviceEnvSelect';
+  select.setAttribute('aria-label', '选择关卡（一次只统计一个关卡）');
   for (const row of ENV_WEIGHT_ROWS) {
     const key = `${row.mode}|${row.stage}`;
-    const label = document.createElement('label');
-    label.className = 'field field-inline advice-weight-field';
-    label.appendChild(text('span', '', row.label));
-    const input = document.createElement('input');
-    input.className = 'advice-weight';
-    input.type = 'number';
-    input.min = '0';
-    input.max = '99';
-    input.step = '0.25';
-    input.inputMode = 'decimal';
-    input.dataset.mode = row.mode;
-    input.dataset.stage = row.stage;
-    input.dataset.scope = scope;
-    input.value = String(current[key] ?? defaults[key] ?? 1);
-    // 说明已在权重区块的提示文字中展示，避免原生 title 在输入框悬浮时遮挡邻近内容。
-    input.setAttribute('aria-label', `${row.label}（${WEIGHT_UI.label}）`);
-    label.appendChild(input);
-    grid.appendChild(label);
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = row.label;
+    if (key === state.envKey) option.selected = true;
+    select.appendChild(option);
   }
-  renderWeightsMeta(scope);
+  // 老存档里可能存着一个已经不在表里的键 —— 下拉框会显示第一项，状态也要跟上，
+  // 否则「看到的是绝境、算的是别的关卡」。
+  if (!ENV_WEIGHT_ROWS.some((row) => `${row.mode}|${row.stage}` === state.envKey)) {
+    state.envKey = DEFAULT_ENV_KEY;
+    select.value = DEFAULT_ENV_KEY;
+  }
+  select.addEventListener('change', () => {
+    state.envKey = select.value || DEFAULT_ENV_KEY;
+    saveEnvKey();
+    renderWeightsMeta();
+    // 关卡变了 = 整套结论都要重算（角色总榜、抽卡方案、上场率都是单关卡口径）。
+    // 直接复用「重新计算」那条路径，不另写一套。
+    if (state.index) loadConclusion();
+  });
+  field.appendChild(select);
+  grid.appendChild(field);
+  renderWeightsMeta();
 };
 
 /**
@@ -1402,14 +1422,15 @@ const renderDrawWeightsMeta = () => {
   const parts = DRAW_WEIGHT_ROWS
     .map((row) => `${row.label} ${(draw[row.key] * 100).toFixed(0)}%`)
     .join(' · ');
-  meta.textContent = `角色总榜：${parts}`
-    // ⚠️ 不改口径、只改文案（v4.6.114 起）：默认值改过两次（`1:1:1` → `1:1:0.5` →
-    //    2026-10-18 的 `4:5:1`），所以这里**不写死任何比例**，只印归一化后的百分比 +
-    //    「（默认）」—— 写「默认三等分」那种词等于在界面上说假话。
+  meta.textContent = `当前：${parts}`
+    // ⚠️ 不写死任何比例，只印归一化后的百分比 + 「（默认）」—— 默认值改过四次
+    //    （`1:1:1` → `1:1:0.5` → `4:5:1` → 2026-10-18 的 `1:1`），写死等于说假话。
     + (changed ? '' : '（默认）')
-    // ⚠️ 三个系数**两个榜都吃**（用户 2026-10-13 第 3 条「泛用性权重也适用于补金推荐」）：
-    //    角色总榜的角色得分、抽卡方案的补金推荐分，用的是同一个 `normalizeDrawWeights`。
-    + '；角色得分与补金推荐分都按这三个系数加权。';
+    // ⚠️ 两个系数**两个榜都吃**：角色总榜的角色得分、抽卡方案的补金推荐分，
+    //    用的是同一个 `normalizeDrawWeights`。
+    // ⚠️ 2026-10-18 起泛用性不再是旋钮（需求文档「抽卡权重删去泛用性」），所以这句话
+    //    从「三个系数」改成「两个系数」。
+    + '；角色得分与补金推荐分都按这两个系数加权。';
 };
 
 /**
@@ -2783,7 +2804,7 @@ const fetchPacks = async (charKey) => {
   // ⚠️ **版本权重同理**（用户 2026-10-16 第 3 条）：面板里的「跨版本发挥」那一列
   // 按 `seasonWeights` 算，而它是服务端拿版本权重现算的 —— 漏进缓存键时用户改了版本
   // 权重、总榜重算了，点开角色详情却仍是旧权重那一份分（与上面两类完全同一个症状）。
-  const weights = activeWeights('frontier');
+  const weights = activeWeights();
   const wSig = Object.entries(weights).sort().map(([k, v]) => `${k}=${v}`).join(',');
   const hSig = hiddenCostsSignature();
   const dSig = drawWeightsSignature();
@@ -4604,61 +4625,92 @@ const planRecommendation = (row) => {
 // ------------------------------------------------- 抽卡方案：缓存 / 搜索 / 分页
 
 /**
- * 抽卡方案的**输入签名**（决定要不要重算 `teamPlan()`）。
+ * 抽卡方案的**输入签名**（决定要不要重新请求 `/api/archive/plan`）。
  *
- * 只有这几样东西会改变方案：结论对象本身（换账号 / 改关卡权重 / 改版本权重 / 改隐金
- * 都会让服务端重新发一份）、账号的三份持有规模、以及**抽卡权重**（它直接在浏览器里
- * 参与加权，不发服务端）。其余状态（翻页、搜索词、滚动位置）一律不该触发重算。
+ * 只有这几样东西会改变方案：账号的三份持有规模、**抽卡权重**、**隐金设置**、
+ * **版本权重**，以及**关卡**（这是 2026-10-18 新加的：方案现在只看一个关卡）。
+ * 其余状态（翻页、搜索词、滚动位置）一律不该触发重算。
  *
- * ⚠️ 权重取 `Number(...) || 0`：输入框被清空时 `state.drawWeights` 里是空串，
- *    `advice.js` 的 `normalizeDrawWeights()` 会把它当默认值 —— 这里只要保证「同样的
- *    输入得到同样的签名」，不必与归一化口径一致。
+ * ⚠️ 签名只用于「同一份输入不重复请求」，**不再参与算分** —— 算分全在服务端。
+ *    所以这里允许比服务端的归一化口径粗一点：签名相同而口径不同只会导致
+ *    **少请求一次**，而下面 `fetchPlan()` 会把服务端回显的 `drawWeights` 存进
+ *    `state.plan`，界面印的是那一份。
  */
-const teamPlanInputsKey = () => JSON.stringify([
+const planInputsKey = () => JSON.stringify([
+  state.envKey,
   state.owned.size,
   state.eidolons.size,
   state.coneRanks.size,
-  Number(state.drawWeights?.strength) || 0,
-  Number(state.drawWeights?.cost) || 0,
-  Number(state.drawWeights?.versatility) || 0,
+  normalizeDrawWeights(state.drawWeights || {}),
+  hiddenCostsSignature(),
+  state.versionWeights || [],
 ]);
 
 /**
  * 一支队伍的可搜索文本：四个成员的**角色名 + 光锥名**（中文名与英文键都进）。
  *
  * 用户 2026-10-18 的原话是「能够根据角色或光锥名称进行搜索」，所以光锥也必须能搜 ——
- * 「我想找用某某专锥的那支队」是真实需求。搜索**只看成员**，不看「最佳证据的副本名」：
+ * 「我想找用某某专锥的那支队」是真实需求。搜索**只看成员**，不看关卡名：
  * 那是筛选条件不是队伍身份。
  */
 const teamPlanRowText = (row) => searchTextOf((row.members || []).flatMap(
-  (m) => [m.char, cn(m.char), m.lc, cnCone(m.lc)],
+  (m) => [m.char, m.charCn, m.lc, m.lcCn],
 ));
 
+/** 正在请求的那一次的签名（并发时只认最后一次，见 `fetchPlan()` 的竞态防护）。 */
+let planFetchKey = '';
+
 /**
- * 取抽卡方案（**带缓存**）。
+ * 取抽卡方案 —— 服务端算，前端只缓存**最近一次**的返回。
  *
- * `teamPlan()` 在浏览器里跑：全池 284 支实测 22 ms（见 `tools/_probe-team-plan-perf.mjs`）。
- * 翻一页、敲一个字都重算一遍的话，第二次点「下一页」就开始卡手 —— 而这两件事跟分数
- * **一点关系都没有**（截断与过滤都只是展示层）。所以按签名缓存一份，命中时连
- * 搜索用的 haystack 也一起复用（那一份是 284 × 8 个字符串，没必要每次重拼）。
+ * 为什么不像旧版那样在浏览器里算：旧版 `teamPlan()` 读的是服务端下发的
+ * `frontierTiers` 再自己加权，于是「总榜的分」与「方案的分」各有一份加权实现，
+ * 2026-10 反复修的「两个榜对不上」都是这么来的。现在只有一份（`gacha-plan.js`）。
+ *
+ * 缓存策略：签名（`planInputsKey()`）没变就直接返回上一份；变了才请求。
+ * 翻页 / 搜索完全不走这里 —— 它们只重画当前页那 20 张卡。
  */
-const planWithCache = (conclusion) => {
-  const key = teamPlanInputsKey();
-  const cached = state.teamPlanCache;
-  if (cached && cached.conclusion === conclusion && cached.key === key) return cached;
-  const plan = teamPlan(conclusion, {
-    owned: state.owned,
-    eidolons: state.eidolons,
-    cones: state.coneRanks,
-  }, {
-    availability: conclusion.availability || {},
-    // 抽卡权重（用户 2026-10-12 第 3、4 条）：界面发**用户敲的原值**，归一化在
-    // `advice.js` 的 `normalizeDrawWeights()` 里做一次（两边各算一遍就会分叉）。
-    drawWeights: state.drawWeights,
-  });
-  const haystacks = new Map(plan.rows.map((row) => [row, teamPlanRowText(row)]));
-  state.teamPlanCache = { conclusion, key, plan, haystacks };
-  return state.teamPlanCache;
+const fetchPlan = async () => {
+  const key = planInputsKey();
+  if (state.plan && state.planKey === key) { renderTeamPlan(); return state.plan; }
+  planFetchKey = key;
+  state.planError = '';
+  try {
+    const res = await fetch('/api/archive/plan', {
+      method: 'POST',
+      headers: accessHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        envKey: state.envKey,
+        account: accountPayload(),
+        // 界面发**用户敲的原值**，归一化在服务端做一次（两边各算一遍就会分叉）。
+        drawWeights: { ...(state.drawWeights || {}) },
+        hiddenCosts: { ...(state.hiddenCosts || {}) },
+        versionWeights: [...(state.versionWeights || [])],
+      }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.ok) {
+      const message = res.status === 401
+        ? (readAccessToken()
+          ? '访问令牌无效。请检查地址中的 #token=… 后重新加载。'
+          : '此服务需要访问令牌，请使用 #token=你的令牌 追加到地址后重新加载。')
+        : (data?.error || `HTTP ${res.status}`);
+      throw new Error(message);
+    }
+    // 期间账号 / 权重 / 关卡又变了就以最新那一次为准，避免旧结果覆盖新结果。
+    if (planFetchKey !== key) return state.plan;
+    state.plan = data;
+    state.planKey = key;
+    state.teamPlanPage = 1;
+  } catch (err) {
+    if (planFetchKey === key) {
+      state.plan = null;
+      state.planKey = '';
+      state.planError = err.message;
+    }
+  }
+  renderTeamPlan();
+  return state.plan;
 };
 
 /**
@@ -4682,8 +4734,8 @@ const renderTeamPlanPager = (total, pages) => {
       const next = clampPage(target, pages);
       if (next === state.teamPlanPage) return;
       state.teamPlanPage = next;
-      // 只重画这一块：`teamPlan()` 走缓存（翻页不是计算动作）。
-      renderTeamPlan(state.conclusion);
+      // 只重画这一块：翻页不是计算动作，数据早在 `state.plan` 里。
+      renderTeamPlan();
       // 翻页后回到列表顶部 —— 否则人还停在上一页的末尾，看到的是新一页的后半截。
       if (el.teamPlanPager) el.teamPlanPager.scrollIntoView({ block: 'start', inline: 'nearest' });
     };
@@ -4737,14 +4789,35 @@ const renderTeamPlanPager = (total, pages) => {
  * 三件展示层的事各归各：`planWithCache()` 管**算一次**、`pageSliceOf()` 管**切哪一段**、
  * `renderTeamPlanPager()` 管**画翻页条**。卡片构建只跑「当前这一页」的 20 条。
  */
-const renderTeamPlan = (conclusion) => {
+/**
+ * ② 抽卡方案（**队伍口径**，2026-10-18 重构后由服务端算）。
+ *
+ * 与旧版（v4.6.12x 及以前）的根本区别：**分数全部由服务端算**
+ * （`POST /api/archive/plan` → `runPlan()`）。旧版 `teamPlan()` 在浏览器里跑，
+ * 它读服务端下发的 `frontierTiers` 再自己加权 —— 于是「总榜的分」与「方案的分」
+ * 要各自维护一份加权口径，这正是 2026-10 反复修「两个榜对不上」的根源。
+ * 现在只有一份实现（`src/server/gacha-plan.js`），前端只画。
+ *
+ * 卡片结构（按需求文档 §二）：
+ *
+ *   #名次  补金推荐分 xx.x = 队伍强度 xx.xxx × ws + 性价比 x.xxx × wc（行动值 / 轮次口径）
+ *   四个位置（角色 E档 + 光锥 S档，标「已有 / 缺」）
+ *   账面 N 金｜补金 M 金｜最佳版本 x.x
+ *   补金顺序（有序列表）：1. 名字 类型 N 金
+ *   过渡 / 逐版本成绩 / 其它配装 / 次选配队（后两个折叠）
+ *
+ * ⚠️ 旧版的三个分项（队伍强度 / 队伍性价比 / 队伍泛用性）已经不存在：
+ *    泛用性按用户 2026-10-18 要求从抽卡权重里删掉；另两项改名并按新公式重算。
+ *    所以这里**没有** `strengthPct / gapPct / versatilityPct` 那三个 0~100 的百分数 ——
+ *    新口径下强度是小数量（≤ ws），再乘个 100 反而误导。
+ *
+ * 展示层的三件事各归各：`fetchPlan()` 管**取一次**（带缓存）、`pageSliceOf()` 管
+ * **切哪一段**、`renderTeamPlanPager()` 管**画翻页条**。卡片构建只跑当前这一页。
+ */
+const renderTeamPlan = () => {
   if (!el.teamPlanBody) return;
   el.teamPlanBody.innerHTML = '';
-  // 「补金推荐分」徽标点开看详情（用户 2026-10-11 第 8 条）：与总榜那两个榜共用同一套
-  // 大窗口接线（`wireValueTips` 内部有 `dataset.tipsWired` 幂等守卫，重画多少次只接一次）。
-  wireValueTips(el.teamPlanBody);
-  const meta = () => el.teamPlanMeta;
-  const setMeta = (value) => { if (meta()) meta().textContent = value; };
+  const setMeta = (value) => { if (el.teamPlanMeta) el.teamPlanMeta.textContent = value; };
 
   if (!state.owned.size) {
     setMeta('');
@@ -4754,59 +4827,45 @@ const renderTeamPlan = (conclusion) => {
       + '「哪支队伍最值得照抄、还差几金」。上面的角色总榜不需要登录。'));
     return;
   }
-  if (!conclusion) {
+
+  const plan = state.plan;
+  if (!plan) {
     setMeta('');
     renderTeamPlanPager(0, 0);
     el.teamPlanBody.appendChild(text('p', 'muted small',
-      state.conclusionError ? `读取失败：${state.conclusionError}` : '正在计算…'));
+      state.planError ? `读取失败：${state.planError}` : '正在计算…'));
+    return;
+  }
+  if (plan.available === false) {
+    setMeta('');
+    renderTeamPlanPager(0, 0);
+    el.teamPlanBody.appendChild(text('p', 'muted small',
+      plan.hint || '本地数据集里还没有这个关卡的投稿。'));
     return;
   }
 
-  // ⚠️ 账号持有情况必须与界面上那一份**同源**：`state.owned` / `state.eidolons` /
-  // `state.coneRanks` 就是 `accountPayload()` 发给服务端的三份，所以这里的差额与
-  // 服务端算出来的边际成本完全一致（同一批已拥有状态）。
-  //
-  // 是否叠加「三月七 = 两命途互通」的别名，由 `advice.js` 决定（它在 `ownedCharacters`
-  // 里做），界面不复制那条规则 —— 复制一份早晚会分叉。
-  //
-  // ⚠️ 2026-10-18 起 `teamPlan()` 的结果走**缓存**（`planWithCache()`）：翻页与搜索
-  // 只重画这一页的 20 张卡，不重算全池（全池 22 ms 是 `_probe-team-plan-perf.mjs` 实测的；
-  // 重建 20 张卡的耗时本机测不了 —— 没有浏览器，见 `docs/CDP布局套件.md` §2.1）。
-  const { plan, haystacks } = planWithCache(conclusion);
-  // 生效的权重由 `plan` 回显（已归一化）——界面照它印那**三个**系数，不自己再算一遍。
-  const draw = plan.drawWeights || normalizeDrawWeights(state.drawWeights || {});
-  const ws = formatShare(draw.strength);
-  const wc = formatShare(draw.cost);
-  // ③ 泛用性（用户 2026-10-13 第 3 条）：它现在也进补金推荐分，卡片的等式要印出来。
-  const wv = formatShare(draw.versatility);
+  const rows = plan.rows || [];
+  const ws = formatShare(plan.drawWeights?.strength ?? 0.5);
+  const wc = formatShare(plan.drawWeights?.cost ?? 0.5);
 
-  // ---- 搜索 + 分页（用户 2026-10-18）-----------------------------------------
+  // ---- 搜索 + 分页 -----------------------------------------------------------
   //
-  // 搜索只筛**这一批要展示的队伍**（不重算分数）：命中的队伍仍按补金推荐分排，
-  // 名次沿用它在完整列表里的序号 —— 「我搜出来的这一支是第 12 名」要有意义。
+  // 搜索只筛**已经下发的那批行**（不重算分数）：命中的行仍按补金推荐分排，
+  // 名次沿用它在完整列表里的序号 —— 「我搜出来的这支队是第 12 名」要有意义。
   const query = queryOf(state.teamPlanQuery);
-  // ⚠️ 2026-10-18：多关键词**同时包含**（AND）。`matchesQuery` 内部把整串拆成若干词
-  //    逐个判，所以这里传整串即可；用 `terms.length` 判空是为了让「只敲了分隔符」
-  //    （例如 `  ,  `）被当成「没搜索」而不是白跑一次 filter。
   const terms = queryTermsOf(state.teamPlanQuery);
   const matched = terms.length
-    ? plan.rows.filter((row) => matchesQuery(haystacks.get(row), terms))
-    : plan.rows;
-  // 页码越界（搜索把结果缩短了 / 换账号后池子变小）时夹回最后一页 —— 否则会停在空页上。
-  // 这段算术在 `advice-paging.js`（`pageSliceOf` 一份实现，Node 直接测）。
+    ? rows.filter((row) => matchesQuery(teamPlanRowText(row), terms))
+    : rows;
+  // 页码越界（搜索把结果缩短了 / 换账号后池子变小）时夹回最后一页。
   const { rows: pageRows, start, page, pages } = pageSliceOf(
     matched, state.teamPlanPage, TEAM_PLAN_PAGE_SIZE,
   );
   state.teamPlanPage = page;
-  // ⚠️ 2026-10-18（用户：「搜索到的结果应当显示其真实的排名，而不是重新开始算」）：
-  //    卡片上的名次必须是**完整候选池**里的名次，不是「筛选后第几条」。
-  //    改前用的是 `start + i + 1` —— 搜索后那是从 1 重排的，于是搜出来的卡片印着
-  //    `#1 / #2 / …`，读起来就是「它在榜上排第 1」，那是假话。
-  //    `start + i + 1` 本身没错（没搜索时它就等于真名次），所以保留给状态行的「第几条」。
-  const pageRanked = withRealRank(plan.rows, pageRows);
+  // ⚠️ 卡片上的名次必须是**完整列表**里的名次，不是「筛选后第几条」
+  //    （用户 2026-10-18：「搜索到的结果应当显示其真实的排名」）。
+  const pageRanked = withRealRank(rows, pageRows);
 
-  // ⚠️ 状态行在多词时要把「**同时包含**」说出来（用户 2026-10-18）：只印
-  //    「搜索「A B」命中 24 支」的话，读者分不清是「名字里有 AB」还是「A 和 B 都要有」。
   const hit = terms.length
     ? ` · 搜索「${terms.join(' + ')}」${terms.length > 1 ? '（同时包含）' : ''}`
       + `命中 ${matched.length} 支`
@@ -4814,69 +4873,47 @@ const renderTeamPlan = (conclusion) => {
   const range = matched.length
     ? ` · 第 ${start + 1}–${start + pageRows.length} 条 / 共 ${matched.length} 条`
     : '';
-  setMeta(plan.rows.length
-    ? `候选 ${plan.pool} 支队伍（逐档榜 ∪ 总榜 ∪ 行动值前沿 ${plan.poolAll} 支里去掉「补金 0」的）`
-      + `${hit}${range}${pages > 1 ? ` · 第 ${page}/${pages} 页` : ''}`
-    : '没有需要补金的队伍');
+  setMeta(rows.length
+    ? `${plan.envLabel || plan.env} · ${rows.length} 支配队` + hit + range
+      + (pages > 1 ? ` · 第 ${page}/${pages} 页` : '')
+    : `${plan.envLabel || plan.env} · 没有可用配队`);
 
   renderTeamPlanPager(matched.length, pages);
 
   if (!matched.length) {
     el.teamPlanBody.appendChild(text('p', 'muted small', query
       ? (terms.length > 1
-        ? `没有队伍**同时**包含「${terms.join(' + ')}」这些角色或光锥`
-          + `（多个关键词用空格分隔，结果要全都出现在同一支队伍里）。`
-        : `没有队伍包含「${state.teamPlanQuery.trim()}」这个角色或光锥。`)
-        + '（搜索只在这批候选队伍里找 —— 想换人或换队，看上面的角色总榜。）'
-      : '当前角色池下，角色总榜的候选池里没有「还需要补金」的队伍（能上榜的队伍你已经凑齐）。'));
+        ? `没有配队**同时**包含「${terms.join(' + ')}」这些角色或光锥`
+          + '（多个关键词用空格分隔，结果要全都出现在同一支队伍里）。'
+        : `没有配队包含「${state.teamPlanQuery.trim()}」这个角色或光锥。`)
+        + '（搜索只在这批配队里找 —— 想换人或换队，看上面的角色总榜。）'
+      : '这个关卡下没有可用的配队（该关卡的投稿里没有可评成绩）。'));
     return;
   }
 
   pageRows.forEach((row, i) => {
     const card = text('div', 'advice-plan-team');
     const head = text('div', 'advice-plan-team-head');
-    // 名次 = **完整候选池**里的真实名次（2026-10-18 用户要求）。搜索 / 翻页都只是视图，
-    // 它们不许改写名次 —— 没搜索时它等于 `start + i + 1`，搜索后那才是对的。
+    // 名次 = **完整列表**里的真实名次（搜索 / 翻页都只是视图，不许改写名次）。
     head.appendChild(text('span', 'advice-unit-rank', `#${pageRanked[i].rank || start + i + 1}`));
-    // 用户 2026-10-11（抽卡方案第 2 条）：「改为：补金推荐分 + 75.7 = 强度得分 68.0 × 0.5
-    // + 性价比 83.3 × 0.5，注意空格不要离得太远」——所以徽标的标签改成「补金推荐分」、
-    // 后面那句用普通空格（改前是 `　+　` 全角空格，实测两处各多出 ~8px）。
-    // ⚠️ 2026-10-12 第 3、4、6 条之后第二项叫**性价比**（它本来就是那句原话里的名字）：
-    // v4.6.87 一度改成合成的「性价比得分」，v4.6.89 按用户要求收回成单一刻度 ——
-    // 所以这里印的是 `gapPct`，不是中间量。
-    // ⚠️ 同样**懒构建**（`lazyTip()`）：改前一张卡就建一套详情，15 张卡 = 15 套；
-    //    现在每页 20 张（v4.6.122 分页），懒构建更要紧 —— 20 套详情窗口一次全建进 DOM
-    //    是白白多出的几万个节点。
-    // `teamSlots` 这里给 0 —— 那个计数只服务总榜那条探针的选择逻辑（见 `lazyTip()` 的注释）。
-    head.appendChild(valueBadge(row.total, lazyTip(() => teamPlanTip(row, plan)),
-      (v) => Number(v || 0).toFixed(1), '补金推荐分'));
-    // ⚠️ 三个分项名带「队伍」前缀（用户 2026-10-17 第 4 条：「补金推荐的强度/性价比/泛用性
-    //    更名为队伍强度/队伍性价比/队伍泛用性」）—— 与角色总榜那三行（「角色强度 /
-    //    角色性价比 / 角色泛用性」）分开：它们量的是**同一把尺子的不同对象**
-    //    （这一支队 vs 承载证据的那个整包）。
-    //    ⚠️ 原来第一项叫「强度得分」，「得分」二字在本轮按用户口径**去掉**（三项形式统一）。
+    // 分数保留两位：补金推荐分的量纲是 0~ws+wc ≈ 0~1.5（版本权重最大 6 时到 6+），
+    // 一位小数会把 6.55 与 6.52 压成同一个 6.5，相邻名次看着像同分。
+    head.appendChild(text('strong', 'advice-plan-team-score', Number(row.score).toFixed(2)));
     head.appendChild(text('span', 'advice-plan-team-eq',
-      `= 队伍强度 ${Number(row.strengthPct).toFixed(1)} × ${ws}`
-      + ` + 队伍性价比 ${Number(row.gapPct).toFixed(1)} × ${wc}`
-      + ` + 队伍泛用性 ${Number(row.versatilityPct).toFixed(1)} × ${wv}`));
+      `= 队伍强度 ${Number(row.strengthPart).toFixed(3)} × ${ws}`
+      + ` + 性价比 ${Number(row.costPart).toFixed(3)} × ${wc}`
+      + `（${plan.kind === 'turn' ? '轮次' : '行动值'}口径）`));
     card.appendChild(head);
 
-    // ---- 队伍四个位置 --------------------------------------------------------
+    // ---- 四个位置 ------------------------------------------------------------
     const slots = text('div', 'advice-plan-team-slots');
     for (const m of row.members) {
       const slot = text('div', `advice-plan-team-slot${m.owned ? ' is-owned' : ' is-missing'}`);
       const icon = iconUrlOf('char', m.char);
       if (icon) slot.appendChild(iconImg(icon, 'advice-plan-team-icon'));
       const label = text('div', 'advice-plan-team-label');
-      // 「已有 / 缺」徽标：2026-10-17 起与**总榜行**、**环境统计**同一套样式
-      // （`.advice-own-badge`）。改前同一个意思有三套写法 —— 那两处是绿 pill，
-      // 方案卡这里是自己的 `.advice-plan-team-own`（青 / 红 pill），并排在
-      // 屏上就成了「三种已有」。
-      // 位置也从「整张槽的最右边」挪到**角色名后面**，与另两处对齐。
-      // ⚠️ 名字与徽标必须单独包一层 flex 行：`.advice-plan-team-label` 是 grid，
-      //    直接 append 会让徽标独占一行（变成「名字 / 徽标 / 星魂 / 光锥」四行）。
       const nameRow = text('div', 'advice-plan-team-name');
-      nameRow.appendChild(text('strong', 'advice-plan-team-char', cn(m.char)));
+      nameRow.appendChild(text('strong', 'advice-plan-team-char', m.charCn || cn(m.char)));
       nameRow.appendChild(text('span', `advice-own-badge${m.owned ? '' : ' is-gap'}`,
         m.owned ? '已有' : '缺'));
       label.appendChild(nameRow);
@@ -4886,7 +4923,7 @@ const renderTeamPlan = (conclusion) => {
         const coneIcon = iconUrlOf('cone', m.lc);
         if (coneIcon) cone.appendChild(iconImg(coneIcon, 'advice-plan-team-cone-icon'));
         cone.appendChild(text('span', 'advice-unit-cone-text',
-          `${cnCone(m.lc)} S${Number(m.superimp) || 1}`));
+          `${m.lcCn || cnCone(m.lc)} S${Number(m.superimp) || 1}`));
         label.appendChild(cone);
       }
       slot.appendChild(label);
@@ -4894,13 +4931,8 @@ const renderTeamPlan = (conclusion) => {
     }
     card.appendChild(slots);
 
-    // ---- 金数与最佳证据 ------------------------------------------------------
+    // ---- 金数 / 版本 / 视频 ---------------------------------------------------
     const facts = text('div', 'advice-plan-team-facts');
-    // 账面金数按**数据集口径**算（本体 + 真实星魂级数 + 光锥本体×叠影），与下面那句
-    // 「最佳证据：… N 金」同一个尺子 —— 否则 E3 被折成 E2 时两个数会对不上。
-    // ⚠️ 2026-10-17：数字改走 `goldText()`（白色加粗）。改前是纯字符串拼，于是同一张卡里
-    //    「账面 / 补金」是一身金色平体、而下面每笔补金又是白加粗 —— `goldText()` 的注释
-    //    早就点名「别处再拼一遍就会出现有的数字白、有的灰」，这里正是被警告的那处。
     const goldLine = text('span', 'advice-plan-team-gold');
     goldLine.appendChild(text('span', '', '账面 '));
     goldLine.appendChild(goldText(row.displayGold ?? row.gold));
@@ -4910,194 +4942,106 @@ const renderTeamPlan = (conclusion) => {
     goldLine.appendChild(text('span', '', '｜补金 '));
     goldLine.appendChild(goldText(row.gap));
     facts.appendChild(goldLine);
-    if (row.bestEnv) {
-      const b = row.bestEnv;
-      // ⚠️ 2026-10-17 三处对齐总榜行那一句（`renderUnits()` 里的 `.advice-unit-best`）：
-      //    ① 语序从「285 行动值」改成「**行动值** 285」—— 两块并排时同一指标两种写法；
-      //    ② 补上**档位**（`tierLabelOf`）—— 总榜那行有、这里原先没有；
-      //    ③ 金数走 `goldText()`（与同一张卡的 facts 行一致），且**取不到时不画** ——
-      //       改前写 `${b.bestTeamGold ?? '—'} 金`，缺数据会印出「— 金」（破折号吊个单位）。
-      const best = text('span', 'advice-plan-team-best muted small');
-      best.appendChild(text('span', '', `最佳证据：${b.label}`));
-      const meta = frontierEnvMeta(b.id);
-      const scoreText = scoreTextOf(meta?.mode, meta?.stage, b.actionValue, tierLabelOf(meta, b.tier));
-      if (scoreText) best.appendChild(text('span', '', ` · ${scoreText}`));
-      if (hasNumber(b.bestTeamGold)) {
-        // ⚠️ **同一个金数只印一次**（用户 2026-10-18：「抽卡方案给的配队有些会再显示一次
-        //    全队金数，不要重复显示」）。证据金数与上面那句「账面 N 金」量的本来就是同一个
-        //    东西（账面 = 这套配置的金数），而方案里的目标档位通常**就是**投稿那一档，
-        //    所以绝大多数卡片两个数完全相等 —— 一行里印两遍「8 金」。
-        //    只在**两者不同**时才补在后面（目标档位比投稿档位高时才会不同，那种情况
-        //    「证据 8 金 / 账面 11 金」是有信息量的）。
-        //    ⚠️ 比较对象是**印出来的那个账面数**（`displayGold`，隐金后），不是 `gold`。
-        const shownGold = Number(row.displayGold ?? row.gold);
-        const evidenceGold = Number(b.bestTeamGold);
-        if (!(Number.isFinite(shownGold) && shownGold === evidenceGold)) {
-          best.appendChild(text('span', '', ' '));
-          best.appendChild(goldText(b.bestTeamGold));
-        }
-      }
-      if (b.season) best.appendChild(text('span', '', ` · ${b.season} 版本`));
-      facts.appendChild(best);
-      // **来源视频**（用户 2026-10-14 第 6 条）：这张卡就是一支队，所以图标紧跟在
-      // 「最佳证据」那半句后面 —— 它标的正是那支队伍的证据投稿。取不到地址时不画。
-      // ⚠️ 这一份来自 `frontierTiers`（方案的候选池就是它）—— 服务端只在那份载荷上带了
-      //    `video`，见 `src/server/conclusion.js` 的 `slimFrontierUnit`。
-      const video = videoLink(b.video);
-      if (video) facts.appendChild(video);
+    if (row.bestSeason) {
+      facts.appendChild(text('span', 'advice-plan-team-best muted small',
+        `最佳版本 ${row.bestSeason}`));
     }
+    // 来源视频（用户 2026-10-14 第 6 条 + 2026-10-18「把视频接回来」）：
+    // 服务端按「版本 + 角色名集合」匹配，所以它是**这套阵容**的某条投稿，不是这一分的。
+    const video = videoLink(row.video);
+    if (video) facts.appendChild(video);
     card.appendChild(facts);
 
-    // 把分数转成用户可以执行的下一步：先告诉他已有多少，再告诉他第一笔该补什么。
-    const recommendation = planRecommendation(row);
-    const advice = text('div', 'advice-plan-team-recommendation');
-    if (recommendation.icon) {
-      const icon = iconImg(recommendation.icon, 'advice-plan-team-recommendation-icon',
-        '下一步推荐', 'lazy');
-      if (icon) advice.appendChild(icon);
+    // ---- 补金顺序 ------------------------------------------------------------
+    // 隐金设置下**不添加成本**的那几笔（`cost === 0`）不显示 —— 它们本来就不用抽。
+    const fillItems = (row.fill || []).filter((item) => Number(item.cost ?? item.pulls) > 0);
+    if (fillItems.length) {
+      const fill = text('ol', 'advice-plan-team-fill');
+      for (const item of fillItems) {
+        const li = document.createElement('li');
+        li.className = `advice-fill-item is-${item.kind}`;
+        const icon = iconUrlOf(item.kind === 'cone' ? 'cone' : 'char', item.name);
+        if (icon) li.appendChild(iconImg(icon, 'advice-fill-icon'));
+        li.appendChild(text('strong', 'advice-fill-name', item.nameCn || item.name));
+        li.appendChild(text('span', 'advice-fill-step', item.kindCn || ''));
+        li.appendChild(text('span', 'advice-fill-cost muted small',
+          `${Math.max(0, Math.round(Number(item.pulls) || 0))} 金`));
+        fill.appendChild(li);
+      }
+      card.appendChild(fill);
+    } else {
+      card.appendChild(text('p', 'advice-plan-team-mid muted small',
+        '这套阵容你已经齐了，现在就能打。'));
     }
-    const adviceCopy = text('div', 'advice-plan-team-recommendation-copy');
-    adviceCopy.appendChild(text('strong', 'advice-plan-team-recommendation-title',
-      recommendation.title));
-    adviceCopy.appendChild(text('span', 'advice-plan-team-recommendation-body',
-      recommendation.body));
-    advice.appendChild(adviceCopy);
-    card.appendChild(advice);
 
-    const meters = text('div', 'advice-plan-team-meters');
-    for (const [label, value, tone] of [
-      // ① = 角色总榜那一列的强度分（绝对 0~100，2026-10-14 第 10 条口径），条宽与徽标同源。
-      // 三项名带「队伍」前缀（用户 2026-10-17 第 4 条），与卡片等式、分数来源表三行**逐字一致**。
-      ['队伍强度', row.strengthPct, 'strength'],
-      // ② 就是徽标里那一项本身（用户第 6 条：只要性价比），条宽同一套数 ——
-      // 否则「条比徽标长」会让人以为界面算错了。
-      ['队伍性价比', row.gapPct, 'gap'],
-      // ③ 泛用性（用户 2026-10-15）：队内成员按成本占比加权的泛用性得分。
-      ['队伍泛用性', row.versatilityPct, 'versatility'],
-    ]) {
-      const meter = text('div', 'advice-plan-team-meter');
-      const meterHead = text('div', 'advice-plan-team-meter-head');
-      meterHead.appendChild(text('span', '', label));
-      meterHead.appendChild(text('strong', '', `${Number(value).toFixed(0)} 分`));
-      meter.appendChild(meterHead);
-      const track = text('span', 'advice-plan-team-meter-track');
-      const fillBar = text('span', `advice-plan-team-meter-fill is-${tone}`);
-      fillBar.style.width = `${Math.max(0, Math.min(100, Number(value) || 0))}%`;
-      track.appendChild(fillBar);
-      meter.appendChild(track);
-      meters.appendChild(meter);
-    }
-    card.appendChild(meters);
-
-    // ---- 补金顺序（用户点名要的那一项）---------------------------------------
-    // 用户 2026-10-11 第 5 条：**不显示抽数**、右侧那个「性价比 N」也删掉 ——
-    // 一行只留「名字 + 目标状态 + 这一笔几金」。
-    // 第 6 条：隐金设置下**不添加成本**的那几笔（`cost === 0`）不显示 ——
-    // 它们本来就不用抽，列在「补金顺序」里只会让人以为还得花金。
-    const fill = text('ol', 'advice-plan-team-fill');
-    row.fill.filter((item) => Number(item.cost ?? item.pulls) > 0).forEach((item) => {
-      const li = document.createElement('li');
-      li.className = `advice-fill-item is-${item.kind}`;
-      const icon = iconUrlOf(item.kind === 'cone' ? 'cone' : 'char', item.name);
-      if (icon) li.appendChild(iconImg(icon, 'advice-fill-icon'));
-      li.appendChild(text('strong', 'advice-fill-name', fillItemName(item)));
-      li.appendChild(text('span', 'advice-fill-step', fillItemText(item)));
-      // ⚠️ 这里写的是**不隐金时这一笔要几金**（`pulls`），与卡片上那句「补金 N 金」同一口径：
-      // 隐金设置按用户明确要求**只影响角色总榜**，抽卡方案的差额不跟着变。
-      // 隐金真把这一笔减到 0 时，这一笔整个不显示（见上面那条 `cost > 0` 的过滤）。
-      li.appendChild(text('span', 'advice-fill-cost muted small',
-        `${Math.max(0, Math.round(Number(item.pulls) || 0))} 金`));
-      fill.appendChild(li);
-    });
-    card.appendChild(fill);
-
-    // ---- 过渡档位（用户 2026-10-11 第 7 条）-----------------------------------
-    // 需要补多笔时，先补前半段就能到一个**成本完全下位**的中间配队（要买的项是子集），
-    // 补金顺序天然先到它；这一行把它写出来，方便「平滑地补金」。
+    // ---- 过渡档位 ------------------------------------------------------------
     if (row.mid) {
       card.appendChild(text('p', 'advice-plan-team-mid muted small',
-        `过渡：先补前 ${row.mid.items} 笔（${row.mid.gold} 金）→ ${midStateText(row.mid)}，`
-        + `再补 ${row.mid.rest} 金到本方案`));
+        `过渡：先补前 ${row.mid.items} 笔（${row.mid.gold} 金），再补 ${row.mid.rest} 金到本方案`));
+    }
+
+    // ---- 逐版本成绩（多版本时才画，单版本是多一行废话）-----------------------
+    if ((row.seasons || []).length > 1) {
+      card.appendChild(text('p', 'advice-plan-team-seasons muted small',
+        (row.seasons || [])
+          .map((s) => `${s.season}：${Number(s.planScore).toFixed(2)}`).join(' · ')));
+    }
+
+    // ---- 其它配装（同一套四人，光锥 / 叠影不同）------------------------------
+    // 用户 2026-10-18 决策：按角色组合折叠。代表行是分最高的那套配装，
+    // 其余收在这个折叠块里 —— 「换个光锥能省 2 金」这种信息不该丢掉。
+    if ((row.variants || []).length) {
+      const details = document.createElement('details');
+      details.className = 'advice-plan-team-variants';
+      details.appendChild(text('summary', '', `其它 ${row.variants.length} 套配装（同角色）`));
+      for (const v of row.variants) {
+        const line = text('div', 'advice-plan-variant');
+        line.appendChild(text('span', 'advice-plan-variant-score', Number(v.score).toFixed(2)));
+        line.appendChild(text('span', 'advice-plan-variant-gap', `补 ${v.gap} 金`));
+        line.appendChild(text('span', 'advice-plan-variant-members',
+          (v.members || []).map((m) => (m.lc
+            ? `${m.charCn || m.char}·${m.lcCn || m.lc}S${m.superimp || 1}`
+            : `${m.charCn || m.char}`)).join(' / ')));
+        details.appendChild(line);
+      }
+      card.appendChild(details);
+    }
+
+    // ---- 次选配队 ------------------------------------------------------------
+    if ((row.alternatives || []).length) {
+      const details = document.createElement('details');
+      details.className = 'advice-plan-team-alts';
+      details.appendChild(text('summary', '', `次选 ${row.alternatives.length} 支（共享成员多）`));
+      for (const alt of row.alternatives) {
+        const line = text('div', 'advice-plan-variant');
+        line.appendChild(text('span', 'advice-plan-variant-score', Number(alt.score).toFixed(2)));
+        line.appendChild(text('span', 'advice-plan-variant-gap',
+          `共享 ${alt.shared} 人 · 补 ${alt.gap} 金`));
+        line.appendChild(text('span', 'advice-plan-variant-members',
+          (alt.members || []).map((m) => m.charCn || m.char).join(' / ')));
+        details.appendChild(line);
+      }
+      card.appendChild(details);
     }
 
     el.teamPlanBody.appendChild(card);
   });
 
-  // 归一化上下限**跟着数据走**（用户 2026-10-11 第 2 条：不能写死），所以必须写在界面上，
-  // 否则「为什么只补 1 金却排在 5 金后面」这种问题读者无法自查。
-  // ⚠️ 措辞必须把**封顶值那一档**说清楚：② 是**封顶**的（用户第六轮选了「p50 封顶」、
-  //    第八轮改到 p75，因为池子放宽之后 p50 自己变小、把强队压死；2026-10-15 调到 p60）——
-  //    而且 **2026-10-15 起 0 以下不再截断**（用户：「可不可以让性价比过低的得分改为负数」），
-  //    所以文案从「达到或超过就 0 分」改成「正好到 = 0 分、超过就转负分」。
-  //    不写出来读者会以为「补 30 金的队伍也拿得到几分」，或者反过来以为贵队一律 0 分
-  //    （那正是改前那种「贵队之间全打平」的毛病）。
-  // ⚠️ 封顶分位必须**现取** `plan.gapCapPct`：这里原来在另一处的刻度行写死了「池内 p75」，
-  //    常量调到 p60 之后界面一直在说假话。
-  // ⚠️ 还要写明刻度取自**整个候选池**（第七轮修）：这样「只列前 N 条」就不会被误读成
-  //    「分数是按这 N 条算的」——改条数时分数不变，读者得能从文案上看出来。
-  // ⚠️ v4.6.83 起候选池的来源是**逐档榜**（每角色 × 每星魂档各一条），不再是总榜 ——
-  //    文案必须跟着改，否则读者会拿「总榜 84 支」去对「候选 245 支」，以为算错了。
-  const capPct = Math.round((Number(plan.gapCapPct) || 0.75) * 100);
-  // ② 那条曲线的指数（用户 2026-10-12 第 9 条）：脚注必须写出来，否则读者按线性算会对不上。
-  const gapPower = Math.max(1, Number(plan.gapPower) || 1);
-  /**
-   * ② 那条曲线上的**取样点**：给两个「补 N 金能拿几分」的实例，读者才量得出这条曲线有多陡。
-   *
-   * ⚠️ **必须按当前的封顶值与指数现算，不能写死数字**（2026-10-15 修）：改前这里写的是
-   *    「补 2 金 79 分、补 8 金 28 分、补 10 金 15 分」——那三个数是对着**旧的**
-   *    封顶（池内 p75 ≈ 14 金）与**旧的**指数（^1.5）算出来的。封顶改成 p60、指数改成
-   *    ^1.8 之后三个数**一个都不对**，而界面照样印出来 —— 这正是仓库里反复出现的
-   *    「口径改了、文案没跟着改，于是界面上写着假话」。现算之后这类改动再也不会失同步。
-   * ⚠️ **指数后来又收回 1.5**（用户 2026-10-17「差额接近度以 1.5 为准」；^1.8 越界了
-   *    「小差额几乎不动」那条口径，理由见 `advice.js` 里 `teamPlanGapPower` 的换挡史）。
-   *    所以现在这一格印的是**封顶 p60 + 指数 1.5**——上面那段 ^1.8 只是当时的记录。
-   */
-  const gapSample = (g) => {
-    const t = 1 - g / Math.max(1, plan.gapMax);
-    // ⚠️ 与 `advice.js` 里那条曲线**同一个形状**（含 0 以下的负分，见 `teamPlanGapPower`
-    //    的注释）：`sign(t) × |t|^k`，幅值截到 1。负数不能直接开小数次方（JS 给 NaN）。
-    const curve = Math.sign(t) * Math.abs(t) ** gapPower;
-    return (100 * Math.max(-1, Math.min(1, curve))).toFixed(0);
-  };
-  const gapHalf = Math.max(1, Math.round(Number(plan.gapMax) / 2));
-  // ⚠️ 取一个**明确超过封顶值**的取样点，读者才看得到「负分」那一段长什么样。
-  const gapOver = Math.max(Number(plan.gapMax) + 3, Math.round(Number(plan.gapMax) * 1.5));
-  const capped = plan.rows.filter((r) => r.gap >= plan.gapMax).length;
-  const drawFoot = plan.drawWeights || normalizeDrawWeights(state.drawWeights || {});
+  // ---- 口径脚注 --------------------------------------------------------------
+  // ⚠️ 用户 2026-10-18 让「删除抽卡方案下方的说明文字」，但**脚注保留**：
+  //    上面那一大段（是什么 / 队伍来源 / 三项加权 / 1.5 次幂）确实删了，
+  //    这里只留三句「怎么算」的定量口径 —— 没有它，`= 队伍强度 0.412 × 0.5`
+  //    对读者就是一组没有单位的数字。用户要删的是**推荐语气的长段落**，不是公式说明。
   el.teamPlanBody.appendChild(text('p', 'muted small advice-plan-team-foot',
-    `口径：候选 = 角色**逐档榜 ∪ 总榜 ∪ 行动值前沿**按队伍去重`
-    + `（逐档榜 = 每个角色在 E0/E1/E2/E6 各收敛一条，再并上每个角色的总最佳；`
-    + `行动值前沿 = 各副本行动值最好的几支队，${plan.poolAv ?? 0} 支；共 ${plan.poolAll} 支），`
-    + `去掉补金 0 金的之后剩 ${plan.pool} 支 —— `
-    + '**这样同一支队伍的低配档位也在池内**，便宜但强度略低的队伍能靠补金少拉分；'
-    // ⚠️ 2026-10-18 起**整池都列出来**（用户要求「尽可能多的配队」），所以这里不能再写
-    //    「只列前 N 条」——那句文案从 v4.6.56 起一直是「截断只影响显示」，现在没有截断了。
-    + `**${plan.rows.length} 支**全部列在这里（按补金推荐分排），每页 ${TEAM_PLAN_PAGE_SIZE} 支、`
-    + '可翻页，上面的搜索框按角色 / 光锥名筛；'
-    // ⚠️ 2026-10-15：① 换成角色总榜那一列的**绝对强度分**（用户 2026-10-14 第 10 条重定：
-    //    围绕行动值 + 投入单调，**省金是性价比那一项的事**）。v4.6.91~2026-10-14 这里写的是
-    //    「含金数项的整包分按候选池归一」，那会让**池内最省金**的那支自动拿 100 分 ——
-    //    用户 2026-10-15 报的「这支 10 金的队强度得分怎么是 100」就是这个错位。
-    + `队伍强度 = **角色总榜那一列的强度分**（绝对 0~100，与总榜同一把尺子：`
-    + `每副本取**最近版本**那一次成绩的行动值、按关卡权重加权、再按投入档位补 5 分 —— `
-    + `所以**行动值越低越高、投入越高越高**，E6S5 > E6S1 > E2S1 > E0S0），`
-    + '**与金数无关**（「这支队打得多好」与「你要补几金」是两件事）；'
-    // ⚠️ 用户 2026-10-12 第 6 条之后这里**只有一个刻度**（性价比）——
-    //    别再写成「差额 × a + 压金 × b」：那层合成已删（它等于同一个数的两种名字）。
-    + `队伍性价比 = sign(1 − 补金 ÷ ${plan.gapMax} 金) × |1 − 补金 ÷ ${plan.gapMax} 金|^${gapPower}`
-    + `（**候选池**差额的 ${capPct} 分位当封顶值：**正好到封顶值 = 0 分，超过就转负分**，`
-    + `最低 −100 —— 2026-10-15 起 0 以下不再截断，否则贵队之间全是 0 分、这一项等于失效；`
-    + `指数 ${gapPower} 是「给要补大量金的队伍少给点分」那条曲线 —— 补 2 金 `
-    + `${gapSample(2)} 分、补 ${gapHalf} 金 ${gapSample(gapHalf)} 分、`
-    + `补到 ${plan.gapMax} 金 0 分、补 ${gapOver} 金 ${gapSample(gapOver)} 分，`
-    + `候选池里有 ${capped} 支落在这一档`
-    + `${Number(plan.gapRealMax) > Number(plan.gapMax)
-      ? `、补金最多的是 ${plan.gapRealMax} 金` : ''}）；`
-    + '「这支队总共几金」（卡片上的账面金数）只作参考，**不进分数**；'
-    + `补金推荐分 = 队伍强度 × ${formatShare(drawFoot.strength)}`
-    + ` + 队伍性价比 × ${formatShare(drawFoot.cost)}（抽卡权重，上面可调）；`
-    + '补金顺序按每抽收益（性价比 ÷ 期望抽数）从高到低，光锥一定排在它自己的角色之后。'
-    + '① 是绝对刻度（换账号不变）；②③ 的上下限随账号与数据现算，这两个换账号后不可直接比较。'));
+    `口径：只算「${plan.envLabel || plan.env}」这一个关卡，逐版本取**最大值**`
+    + `（版本窗口 ${plan.window} 期，评分时乘版本权重）；`
+    + (plan.kind === 'turn'
+      ? '队伍强度 = ws ÷ (轮次 + 1)，0 轮最高；'
+      : '队伍强度 = ws × (1 − 行动值 ÷ 500)，行动值越低越高；')
+    + '性价比 = （该版本**最低金**）÷（本队补到成型所需金），你已齐时取 1（最高）；'
+    + '补金推荐分 = 队伍强度 × ' + ws + ' + 性价比 × ' + wc + '（抽卡权重，上面可调）。'
+    + '补金顺序按每抽收益从高到低，光锥一定排在它自己的角色之后；'
+    + '「其它配装」是同一套四人换了光锥 / 叠影的变体（按角色组合折叠，只展示分最高的那套）。'));
 };
 
 // ------------------------------------------------------- 跨模式综合结论（渲染）
@@ -5327,17 +5271,19 @@ const renderConclusion = () => {
     // ⚠️ 旧版这里写的是「角色 N / 星魂 N / 光锥 N」（按 `kind` 数）—— 整包口径之后
     // 每条都是 `kind: 'pack'`，那三个数**恒为 0 / 0 / 0**，等于一行废话。
     // 换成用户真正会用的维度：每个星魂档各有多少个角色（= 筛选器上的计数）。
-    const tiers = tierKeysOf(conclusion);
-    const tierText = tiers.length
-      ? ` · 按星魂档：${tiers.map((t) => `${tierNameOf(t)} ${unitListOf(conclusion, t).length}`).join(' / ')}`
-      : '';
+    // ⚠️ **2026-10-18 删掉「· 按星魂档：E0 59 / E1 58 / E2 63 / E6 81」**（重构需求文档
+    // 外观改进第 2 条原话）。那一段是四个数字的罗列，用户明确说不要；星魂档现在
+    // 只体现在下面的筛选器上（每档各自收敛一条）。
     el.conclusionMeta.textContent = frontier.length
-      ? `${c.envs || 0} 个副本/关卡 · 总榜 ${frontier.length} 条（每个角色一条）${tierText}`
+      ? `${c.envs || 0} 个副本/关卡 · 总榜 ${frontier.length} 条（每个角色一条）`
       : (state.conclusionError ? '读取失败' : '正在计算…');
   }
   renderUnits();
   renderUnitFilters();
-  renderTeamPlan(conclusion);
+  // 抽卡方案由服务端单算（`/api/archive/plan`），结论回来后重新请求一次：
+  // 关卡 / 抽卡权重 / 隐金 / 版本权重里任何一项变了，结论和方案都会变，
+  // 而方案那份只在 `planInputsKey()` 变了时才真发请求（缓存命中就直接重画）。
+  void fetchPlan();
 };
 
 /**
@@ -5383,7 +5329,7 @@ const loadConclusion = async () => {
       body: JSON.stringify({
         account: payload,
         window: 6,
-        frontierWeights: activeWeights(WEIGHT_SCOPE),
+        frontierWeights: activeWeights(),
         hiddenCosts: { ...(state.hiddenCosts || {}) },
         // 抽卡权重（用户 2026-10-13 第 1、2 条）：角色总榜的三个分项按它加权，
         // 而总榜的「每角色只留一条」收敛在服务端 —— 所以**必须显式发**。
@@ -5418,10 +5364,9 @@ const loadConclusion = async () => {
           state.conclusion.allTeams = allTeams;
           state.conclusion.allTeamVideos = videos;
           state.conclusion.zeroAvRateByEnv = zeroAvRateByEnv;
-          // allTeams / 达成率变了 → 候选池与顶格档折价都变 → 抽卡方案要重算
-          //（缓存签名里要带上它们）。
-          state.teamPlanCache = null;
-          renderTeamPlan(state.conclusion);
+          // ⚠️ 2026-10-18 起抽卡方案的候选池**不再**来自 allTeams（那条链是旧算法的
+          // 「逐档榜 ∪ 总榜 ∪ 前沿」拼池）；方案直接读该关卡的 frontier 行。
+          // 所以这里不再触发重算 —— 留着只会白跑一次全池计算。
         }
       });
     }
@@ -5434,45 +5379,27 @@ const loadConclusion = async () => {
   renderConclusion();
 };
 
-/** 环境统计（上场率）：当前副本 / 版本下，各角色在投稿里出现多少次。 */
-const renderCharacters = (stats) => {
-  el.chars.innerHTML = '';
-  // 这一节改成两列 / 三列的紧凑网格之后高度只有原来的 1/3，所以多给一些
-  // （原来 40 行是为了「一屏别铺太长」，现在不需要了）。
-  const rows = (stats.characters || []).slice(0, 60);
-  el.charMeta.textContent = rows.length
-    ? `共 ${stats.characters.length} 个角色 · 近 ${stats.recentSeasons.length} 个版本`
-    : '';
-  rows.forEach((row, i) => {
-    const wrap = text('div', 'advice-char-row');
-    wrap.appendChild(text('span', 'advice-rank', `#${i + 1}`));
-    const card = text('div', `advice-char${state.owned.has(row.name) ? ' is-owned' : ''}`);
-    const head = text('div', 'advice-char-head');
-    const name = text('span', 'advice-char-name', characterName(row));
-    if (state.owned.has(row.name)) name.appendChild(text('span', 'advice-own-badge', '已有'));
-    head.appendChild(name);
-    head.appendChild(text('span', 'advice-char-count', `${row.count} 次`));
-    card.appendChild(head);
-
-    const meta = text('div', 'advice-char-meta');
-    if (row.pathCn || row.path) meta.appendChild(text('span', 'advice-path', row.pathCn || row.path));
-    // 绝境王棋关的判据是行动值而不是轮次，所以这里要用 bestAv（最好行动值）；
-    // 其余模式用 best（轮次制就是轮次，末日幻影就是积分）。
-    const bestRaw = stats.stage === 'plight' && Number.isFinite(row.bestAv)
-      ? row.bestAv : row.best;
-    if (Number.isFinite(bestRaw)) {
-      meta.appendChild(text('span', '', `最佳 ${metricValueText(stats.mode, stats.stage, bestRaw)}`));
-    }
-    if (row.eidolon?.share) {
-      const top = row.eidolon.dist.indexOf(Math.max(...row.eidolon.dist));
-      meta.appendChild(text('span', '', `主流 E${top}（${formatRate(row.eidolon.share[top])}）`));
-    }
-    card.appendChild(meta);
-    wrap.appendChild(card);
-    el.chars.appendChild(wrap);
-  });
+/**
+ * 环境统计（上场率）：2026-10-18 起改成 **5 个副本全展开 × 每副本四类环形图**。
+ *
+ * 数据来自 `/api/archive/usage`（一次给全，见 `archiveUsage()`），**不再是**原来那条
+ * 「按当前副本 / 版本取一份 stats.characters 再列 60 行」的路径 —— 那条路径的下拉框
+ * （`adviceMode` / `adviceSeason`）已随本次重构从 index.html 删掉。
+ *
+ * 为什么整块搬给 `advice-usage.js`：环形图的几何、配色、入场动画是一整套，
+ * 混进这个 6000 行的文件里会很难读；而且它只碰 DOM，不碰评分。
+ */
+const renderCharacters = (usage) => {
+  renderUsage(el.chars, usage?.envs || []);
+  const total = (usage?.envs || []).reduce(
+    (n, env) => n + (env.bands?.[0]?.submissions || 0), 0,
+  );
+  if (el.charMeta) {
+    el.charMeta.textContent = usage?.envs?.length
+      ? `${usage.envs.length} 个关卡 · 共 ${total} 条投稿 · 近 ${usage.window} 期`
+      : '';
+  }
 };
-
 const render = () => {
   // 三份数据的状态一起画（角色快照 / 战斗记录 / 黑塔网数据），见 `dataStatusCells()`。
   renderDataStatus();
@@ -5480,17 +5407,10 @@ const render = () => {
   // 不要被下面「统计还没读到」的提前返回挡掉。
   renderRecord();
   renderConclusion();
-  const stats = state.stats;
-  if (!stats) return;
-  renderCharacters(stats);
-
-  // 「环境统计」这一节按当前副本算，所以把这一期的判据线写进它的说明里
-  // （旧的「推荐阵容」标题行连同它的说明块一起按用户要求撤掉了）。
-  if (el.charNote) {
-    el.charNote.textContent = `判据：${tierLineText(stats).replace(/^判据：/, '')}`
-      + `${stats.stage === 'plight' || stats.mode === 'as' ? '' : '（T = 轮次）'}。`
-      + '上场率只看「玩的人多不多」，不代表强；要判断强度请看上面的角色总榜。';
-  }
+  // 上场率（2026-10-18 起独立取数）：**五个副本全展开**，与「当前选中的关卡」无关，
+  // 所以与「当前选中的关卡」完全解耦。说明文字是静态的（写在 index.html 里），
+  // 因为判据现在按副本类型分两套（行动值 / 轮次），一句话说不清四个副本。
+  if (state.usage) renderCharacters(state.usage);
 
   el.body.hidden = false;
   el.empty.hidden = true;
@@ -5498,24 +5418,30 @@ const render = () => {
 
 // ------------------------------------------------------------------ loading
 
-const loadStats = async () => {
-  if (!state.mode || state.loading) return;
-  state.loading = true;
-  el.loading.hidden = false;
-  try {
-    const query = new URLSearchParams({ mode: state.mode, window: '6', perBand: '8' });
-    if (state.stage) query.set('stage', state.stage);
-    if (state.season) query.set('season', state.season);
-    state.stats = await apiGet(`/api/archive/stats?${query}`);
-    render();
-  } catch (err) {
-    showEmpty(`读取投稿统计失败：${err.message}`);
-  } finally {
-    state.loading = false;
-    el.loading.hidden = true;
-  }
+/**
+ * 上场率取数（2026-10-18）：**一次拿五个副本**，与「当前选中的关卡」无关。
+ *
+ * 服务端 `/api/archive/usage` 现算（`archiveUsage()`），实测约 670ms —— 比结论轻得多，
+ * 所以不进 `loadConclusion()` 那条链，单独一个入口、只拉一次。
+ *
+ * ⚠️ 用模块级 promise 收口在途请求，理由与 `loadIndex()` 那条注释相同：
+ *    `show()` 与用户点「重新读取」可能同时进来，重复请求就是重复现算。
+ * ⚠️ `.finally` 里必须清空 —— 失败之后不能把这个 promise 永久缓存。
+ */
+let usagePromise = null;
+const loadUsage = async () => {
+  if (usagePromise) return usagePromise;
+  usagePromise = (async () => {
+    try {
+      state.usage = await apiGet('/api/archive/usage?window=6');
+      renderCharacters(state.usage);
+    } catch (err) {
+      // 上场率是独立一节，失败不该把整页打成空态 —— 留一行说明就行。
+      if (el.charMeta) el.charMeta.textContent = `读取上场率失败：${err.message}`;
+    }
+  })().finally(() => { usagePromise = null; });
+  return usagePromise;
 };
-
 /**
  * ⚠️ **并发的 `loadIndex()` 必须共用同一次请求**（2026-10-14 实测踩到）。
  *
@@ -5544,13 +5470,8 @@ const loadIndex = async () => {
       }
       state.index = index;
       renderDataStatus();
-      renderModeOptions();
-      const mode = index.modes.find((m) => m.mode === state.mode);
-      const stage = (mode?.stages || []).find((s) => s.stage === state.stage);
-      state.season = (stage?.seasons || mode?.seasons || []).slice(-1)[0]
-        || index.latestPerMode?.[state.mode] || null;
-      renderSeasonOptions();
-      await loadStats();
+      // 上场率与「当前关卡」无关，跟主索引**并发**拉：不 await，别拖慢首屏。
+      void loadUsage();
     } catch (err) {
       showEmpty(`无法读取本地资料索引：${err.message}`);
     } finally {
@@ -5707,13 +5628,16 @@ export const mountAdviceView = (options = {}) => {
       if (value === state.teamPlanQuery) return;
       state.teamPlanQuery = value;
       state.teamPlanPage = 1;
-      renderTeamPlan(state.conclusion);
+      // 搜索是纯展示层动作：不重新请求，只重画当前页。
+      renderTeamPlan();
     },
   });
 
-  // 权重三大类：先恢复用户上次定下的倾向（关卡权重 + 抽卡权重 + 版本权重），再把
-  // 三组输入框画出来（用户 2026-10-16 第 3 条起是三类，三组各占一行）。
-  state.weights = loadWeights();
+  // 权重三大类：先恢复用户上次定下的倾向（选中的关卡 + 抽卡权重 + 版本权重），再把
+  // 三组控件画出来（用户 2026-10-16 第 3 条起是三类，三组各占一行）。
+  // ⚠️ 2026-10-18：第一类从「五档关卡权重」变成「一个选中的关卡」，所以这里回的是
+  // `state.envKey` 而不是一张权重表（见 `loadWeights`）。
+  loadWeights();
   state.drawWeights = loadDrawWeights();
   state.versionWeights = loadVersionWeights();
   renderWeightRows();
@@ -5732,48 +5656,6 @@ export const mountAdviceView = (options = {}) => {
   });
 
   el.recordRefresh?.addEventListener('click', () => loadRecords({ refresh: true }));
-  el.mode.addEventListener('change', () => {
-    // 副本与关卡合成一个下拉框，所以这里一次解析出两者。
-    ({ mode: state.mode, stage: state.stage } = parseModeValue(el.mode.value));
-    state.season = null;
-    renderSeasonOptions();
-    loadStats();
-  });
-  el.season.addEventListener('change', () => {
-    state.season = el.season.value;
-    loadStats();
-  });
-  // 权重三大类之一：**关卡权重**输入 → 存本地 → 防抖后请服务端按新权重重算。
-  //
-  // ⚠️ 2026-10-11 起**只有 frontier 这一套**（用户第 10 轮「去掉方案权重那一行」）：
-  // 角色总榜与抽卡方案的「强度得分」都吃它，所以这一行会同时改两块 —— 这是口径使然
-  // （两处本来就该同源），不是耦合没拆干净。
-  {
-    const scope = WEIGHT_SCOPE;
-    const grid = WEIGHT_UI.grid();
-    if (grid) {
-      grid.addEventListener('input', () => {
-        state.weights[scope] = readWeights(grid);
-        saveWeights();
-        renderWeightsMeta(scope);
-        const meta = WEIGHT_UI.meta();
-        if (meta) meta.classList.add('is-pending');
-        clearTimeout(state.weightsTimer);
-        state.weightsTimer = setTimeout(async () => {
-          // ⚠️ **这一条原先漏了**（用户 2026-10-13 第 10 条报的角色得分权重 bug）：
-          // 角色面板 / 角色得分详情里那份「该角色的全部配队」走 `/api/archive/packs?char=`
-          // 的 `packsCache`，而它的**缓存键里带着关卡权重**（见 `fetchPacks()` 的注释）。
-          // 抽卡权重那一行、以及隐金设置（`scheduleHiddenCostsRecompute()`）都清了这份缓存，
-          // 只有这里没清 —— 于是「改了关卡权重 → 总榜重算了 → 点开角色详情，里面还是
-          // 旧权重算出来的分」，看起来像服务端没吃新权重，其实是浏览器把旧结果又端了上来。
-          // 三处旋钮必须做同一件事，所以这段清理与另外两处**逐字一致**。
-          packsCache.clear();
-          if (state.index) await loadConclusion();
-          if (meta) meta.classList.remove('is-pending');
-        }, WEIGHTS_DEBOUNCE);
-      });
-    }
-  }
   // 权重三大类之二：**抽卡权重**输入（用户 2026-10-12 第 2、3、4 条 + 2026-10-13 第 1、2 条）。
   //
   // ⚠️ 它**现在也进服务端请求**（v4.6.95 起，与 v4.6.94 那版相反）：用户 2026-10-13 第 2 条
@@ -5796,7 +5678,7 @@ export const mountAdviceView = (options = {}) => {
           // 就必须作废 —— 否则同一个角色会一直吃旧权重的分（v4.6.69 修的就是这一类）。
           packsCache.clear();
           if (state.index) await loadConclusion();
-          else if (state.conclusion) renderTeamPlan(state.conclusion);
+          else if (state.index) void fetchPlan();
           if (meta) meta.classList.remove('is-pending');
         }, WEIGHTS_DEBOUNCE);
       });
@@ -5827,7 +5709,7 @@ export const mountAdviceView = (options = {}) => {
       clearTimeout(state.versionWeightsTimer);
       packsCache.clear();
       if (state.index) await loadConclusion();
-      else if (state.conclusion) renderTeamPlan(state.conclusion);
+      else if (state.index) void fetchPlan();
       if (meta) meta.classList.remove('is-pending');
     };
     if (grid) {
@@ -5844,7 +5726,7 @@ export const mountAdviceView = (options = {}) => {
           // 否则同一个角色会一直吃旧权重算出来的分（v4.6.69 / v4.6.93 修的就是这一类）。
           packsCache.clear();
           if (state.index) await loadConclusion();
-          else if (state.conclusion) renderTeamPlan(state.conclusion);
+          else if (state.index) void fetchPlan();
           if (meta) meta.classList.remove('is-pending');
         }, WEIGHTS_DEBOUNCE);
       });
@@ -5877,14 +5759,15 @@ export const mountAdviceView = (options = {}) => {
    * 2026-10-16 第 3 条又加了第三类），而恢复默认是「我调乱了、回到起点」的动作 ——
    * 分成三个按钮只会让人以为它们是三件互不相关的事。
    */
-  const resetWeights = async (scope) => {
-    state.weights[scope] = {};
+  const resetWeights = async () => {
+    // 关卡选择回到默认（绝境）；抽卡权重 / 版本权重回到各自的默认表。
+    state.envKey = DEFAULT_ENV_KEY;
     state.drawWeights = { ...drawWeightDefaults() };
     state.versionWeights = versionWeightDefaults();
-    saveWeights();
+    saveEnvKey();
     saveDrawWeights();
     saveVersionWeights();
-    renderWeightRow(scope);
+    renderWeightRow();
     renderDrawWeightRow();
     renderVersionWeightRow();
     // ⚠️ **和三个输入框处理器做同一件事**（用户 2026-10-13 第 10 条那类 bug）：这一下同样
@@ -5896,7 +5779,7 @@ export const mountAdviceView = (options = {}) => {
     packsCache.clear();
     if (state.index) await loadConclusion();
   };
-  el.frontierWeightsReset?.addEventListener('click', () => resetWeights(WEIGHT_SCOPE));
+  el.frontierWeightsReset?.addEventListener('click', () => resetWeights());
   el.reload.addEventListener('click', () => {
     state.index = null;
     loadIndex();
@@ -5926,7 +5809,8 @@ export const mountAdviceView = (options = {}) => {
       state.ownedLightCones = ownedLightCones(snapshot, coneZhToEn);
       state.coneRanks = lightConeRanksOf(snapshot, coneZhToEn);
       state.eidolons = eidolonsOf(snapshot, zhToEn);
-      if (state.stats) render();
+      // 2026-10-18 起 render() 不再依赖「当前关卡的统计」（上场率独立取数），所以无条件画。
+      render();
       // 综合结论只跟持有情况有关：持有情况没变就不重算（服务端要聚合 5 个副本）。
       if (conclusionKey() !== state.conclusionKey) await loadConclusion();
       else renderConclusion();

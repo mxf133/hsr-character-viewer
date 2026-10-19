@@ -1021,13 +1021,16 @@ check('抽卡方案卡片：「全队金数」不许印两遍（用户 2026-10-1
    * 不钉具体写法（改写措辞不该判红）。
    */
   const src = readFileSync(resolve('public/scripts/advice-view.js'), 'utf8');
-  const from = src.indexOf('const b = row.bestEnv;');
-  const to = src.indexOf('const video = videoLink(b.video)', from);
-  assert.ok(from > 0 && to > from, '找不到抽卡方案卡片的「最佳证据」那一段');
+  // ⚠️ 2026-10-18 重构后：方案卡不再有「最佳证据」段（那是旧算法从 frontierTiers 里
+  //    挑一条代表投稿的写法）。新算法逐版本取最大值，卡片上只有「账面 N 金｜补金 M 金」
+  //    一处金数 + 逐版本成绩 —— 护栏改成钉「金数只出现一次」这个结果：
+  //    卡片的 facts 段不允许再出现第二个金数来源。
+  const from = src.indexOf("const goldLine = text('span', 'advice-plan-team-gold');");
+  const to = src.indexOf('card.appendChild(facts);', from);
+  assert.ok(from > 0 && to > from, '找不到抽卡方案卡片的金数段');
   const block = src.slice(from, to);
-  assert.ok(/displayGold/.test(block),
-    '「最佳证据」里的金数必须先与卡片的账面金数（displayGold）比对，相等时不再印第二遍');
-  assert.ok(/bestTeamGold/.test(block), '证据金数本身仍要在「与账面不同」时印出来');
+  assert.ok(/displayGold/.test(block), '账面金数仍走 displayGold（隐金后的口径）');
+  assert.ok(!/bestTeamGold/.test(block), '旧「证据金数」（bestTeamGold）不许回来 —— 它就是重复印金数的源头');
 });
 
 check('强度详情窗口：投入项与单调包络的文案都不许回来（用户 2026-10-17 第 2 条）', () => {

@@ -13,6 +13,9 @@ import {
   buildConclusion, EIDOLON_TIERS, eidolonTierOf, normalizeDrawWeights, normalizeHiddenCosts,
   normalizeVersionWeights, VERSION_WEIGHT_MAX,
 } from '../../public/scripts/advice.js';
+// 上场率四类分层（2026-10-18 重构阶段 4）：判据与统计都在 `gacha-score.js`，
+// 这里只负责「把每个副本的 frontier 行取齐、喂给它」。
+import { envKindOf, usageSummaryOf } from './gacha-score.js';
 
 /** 结论覆盖的副本顺序（按游戏解锁顺序）。 */
 const MODE_ORDER = ['moc', 'pf', 'as', 'aa'];
@@ -1321,4 +1324,76 @@ export const archiveConclusion = async (account = {}, options = {}) => {
       : {}),
     skipped,
   };
+};
+
+// ------------------------------------------------------------------ 上场率（四类分层）
+
+/**
+ * §5 环境统计 · 上场率：**5 个副本全展开**，每个副本一组四类分层。
+ *
+ * 需求文档原话：
+ *   「统计不同关卡、不同版本的 通关 / 0T / 500-300 行动值 / 小于300 行动值 的投稿
+ *    所包含的角色数量，提供饼图展示前 10 角色 + 其它角色的百分比」
+ * 后续澄清：「分关卡情况」→ 5 个副本全展开（用户在 AskUserQuestion 里选的）。
+ *
+ * ⚠️ 四类判据**按副本类型分两套**（`USAGE_BANDS_OF`）：
+ *    * 行动值型（异相仲裁·绝境、末日幻影）：通关 / <300 行动值 / 300~500 行动值 / 0 行动值
+ *    * 轮次型（混沌回忆、虚构叙事、异相仲裁）：通关 / 0T / 1T / 2T 及以上
+ *    用户拍板「混沌回忆、虚构叙事、异相仲裁 改为轮次口径」，所以这里按 `envKindOf()` 分流。
+ *
+ * ⚠️ 统计单位是 `frontierRows`（每个副本窗口内的全部配装行），不是 `teams`。
+ *    `frontier` 行带成员与行动值，正是分层要的两样东西。
+ *
+ * @param {object} options.versionWeights  用户版本权重（决定窗口长度，默认 6）
+ */
+export const archiveUsage = async (options = {}) => {
+  const index = await archiveIndex();
+  // 角色中文名在这里补（下面的 item.charCn）：前端那条路是「英文键 → 界面自己查 i18n」，
+  // 但上场率这一节不属于总榜 / 方案那几条链，单独走查表只会多一个会分叉的来源。
+  const i18n = await loadI18n();
+  const { envs, skipped, window } = await conclusionEnvs(index, {
+    window: options.window,
+    versionWeights: options.versionWeights,
+  });
+
+  const envsOut = [];
+  for (const env of envs) {
+    // ⚠️ 不传 `weights`：`archiveFrontierAll` 拿权重只为了给每行记一个 `weight` 字段，
+    //    上场率完全不用它。传用户的关卡表反而会让「没选的副本」被算成 0 权重 ——
+    //    而这里恰恰要**五个副本都算**（用户选的是「5 个副本全展开」）。
+    const [f] = await archiveFrontierAll([env], {
+      window,
+      versionWeights: options.versionWeights,
+    });
+    if (!f?.ok) continue;
+    // `frontierRows` 的成员是**对象**（`{char, eidolon, lc, superimp}`），
+    // 而 `usageByBand()` 认的是 `m` 里那种 `角色|E档|光锥|S档` 字串。
+    // 这里现拼一次 —— 同一套编码规则，不另写一份解析。
+    const rows = (f.frontierRows || []).map((r) => ({
+      a: r.actionValue,
+      // 每条 frontier 行 = 一套配装的成绩。`n` 不存在时 `usageByBand` 按 1 记，
+      // 与这里显式写 1 等价（它已经兜了 `null` / 缺字段两种情况）。
+      m: (r.members || []).map((m) => `${m.char}|${m.eidolon}|${m.lc || '-'}|${m.superimp || 1}`),
+    }));
+    const kind = envKindOf(env.mode, env.stage || '');
+    envsOut.push({
+      id: env.id,
+      mode: env.mode,
+      stage: env.stage || '',
+      label: env.label || env.id,
+      season: env.frontierSeason ?? env.season,
+      kind,
+      // 四类分层：每类带 `submissions`（投稿数）/ `entries`（行数）/ `items`（前 10 + 其它）。
+      // 「其它」那一项不是角色，`charCn` 查不到就留 null（前端按 `char` 原样显示）。
+      bands: usageSummaryOf(rows, kind).map((band) => ({
+        ...band,
+        items: band.items.map((it) => ({
+          ...it,
+          charCn: it.other ? null : (zhName(i18n, 'characters', it.char) || null),
+        })),
+      })),
+    });
+  }
+
+  return { ok: true, available: true, window, envs: envsOut, skipped };
 };
