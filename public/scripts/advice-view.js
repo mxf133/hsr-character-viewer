@@ -1080,10 +1080,13 @@ const renderRecord = () => {
     el.recordMeta.hidden = meta.length === 0;
   }
   if (el.recordNote) {
+    // ⚠️ 2026-10-19：**三段压成一句**。原来是三句各 80~120 字，在页面上铺成 5~6 行灰字，
+    // 把「① 战斗记录」这一节自己的标题挤得看不见（用户从重构需求起就反复要求
+    // 「删掉重复 / 冗长的说明」）。留下的只有「这一节是什么 + 数据从哪来 + 哪件事它做不到」，
+    // 具体到「混沌第 12 层 / 虚构其四 / 末日难度 04」这种枚举交给按钮自己说。
     const parts = [
-      '米游社官方战绩接口的原始记录：四个高难副本各自一个按钮，只列最后一关（混沌回忆第 12 层 / 虚构叙事其四 / 末日幻影难度04 / 异相仲裁本赛程）的每一间——敌方、四人队伍（带头像与星魂）、通关时刻、该关回合数（末日幻影是每间积分）与祝福。',
-      '敌方名字有两个来源：末日幻影与异相仲裁是米游社官方给的（带图标）；混沌回忆与虚构叙事米游社不给敌方字段，用的是黑塔网投稿里登记的首领名——那是玩家填的社区叫法，可能与游戏内称号不同（鼠标悬停有说明）。',
-      '米游社不提供逐回合的战斗过程，这一节不会假装有。点角色名可在本页直接看它的面板（属性 / 光锥 / 遗器）。',
+      '米游社原始战绩：四个副本各一个按钮，只列最后一关的每一间（敌方 / 四人队伍 / 回合数 / 祝福）。'
+      + '混沌与虚构的敌方名来自黑塔网投稿（社区叫法，可能与游戏内不同）；米游社不提供逐回合过程。',
     ];
     if (state.recordsError) parts.unshift(`⚠ ${state.recordsError}`);
     if (state.recordsFreshness?.expired) parts.push(`这份数据可能过期：${state.recordsFreshness.staleReason || '当前展示的是较早缓存'}`);
@@ -1275,15 +1278,15 @@ const saveEnvKey = () => {
 /**
  * 关卡选择下面那行小字。
  *
- * ⚠️ 2026-10-18 起它不再写「改了哪个副本的权重」（没有权重了），改成印**当前选中的关卡**
- * 与「这个关卡决定什么」。用户要求「更新所有小字介绍（尽量简略）」，所以这里只留一句。
+ * ⚠️ 2026-10-19：**清空**。原来印的是 `当前：<关卡名>` —— 而上面那个下拉框显示的
+ * 就是同一个关卡名，两行一模一样的字上下叠着，纯冗余（用户 2026-10-18 起反复要求
+ * 「删掉重复的描述」）。留空而不是删节点：`WEIGHT_UI.meta()` 是三个权重组共用的取值
+ * 入口，删掉这一路就得在 `renderWeightsMeta` / 调用方两处加判空。
  */
 const renderWeightsMeta = () => {
   const meta = WEIGHT_UI.meta();
   if (!meta) return;
-  const row = ENV_WEIGHT_ROWS.find((it) => `${it.mode}|${it.stage}` === state.envKey)
-    || ENV_WEIGHT_ROWS[0];
-  meta.textContent = `当前：${row?.label || '—'}`;
+  meta.textContent = '';
 };
 
 /**
@@ -1298,7 +1301,8 @@ const renderWeightRow = () => {
   grid.innerHTML = '';
   const field = document.createElement('label');
   field.className = 'field field-inline advice-weight-field advice-env-field';
-  field.appendChild(text('span', '', '关卡'));
+  // ⚠️ 2026-10-19：**不再**在框前印「关卡」两个字 —— 这一组的小标题已经写着「关卡」，
+  // 同一列上下两行一样的字（见 `.advice-weights-subtitle`）。`aria-label` 留给读屏。
   const select = document.createElement('select');
   select.className = 'advice-env-select';
   select.id = 'adviceEnvSelect';
@@ -1426,11 +1430,11 @@ const renderDrawWeightsMeta = () => {
     // ⚠️ 不写死任何比例，只印归一化后的百分比 + 「（默认）」—— 默认值改过四次
     //    （`1:1:1` → `1:1:0.5` → `4:5:1` → 2026-10-18 的 `1:1`），写死等于说假话。
     + (changed ? '' : '（默认）')
-    // ⚠️ 两个系数**两个榜都吃**：角色总榜的角色得分、抽卡方案的补金推荐分，
-    //    用的是同一个 `normalizeDrawWeights`。
-    // ⚠️ 2026-10-18 起泛用性不再是旋钮（需求文档「抽卡权重删去泛用性」），所以这句话
-    //    从「三个系数」改成「两个系数」。
-    + '；角色得分与补金推荐分都按这两个系数加权。';
+    // ⚠️ 2026-10-19：删掉尾句「角色得分与补金推荐分都按这两个系数加权」。它解释的是
+    //    「这两个旋钮影响谁」—— 而这两个旋钮就长在「② 角色和配队」这一节的开头、
+    //    下面紧接着就是角色总榜和抽卡方案，读者不会以为它只影响其中一半。同理保留
+    //    「当前：…（默认）」：那是**改没改过**的信号，有信息量。
+    ;
 };
 
 /**
@@ -1540,14 +1544,15 @@ const renderVersionWeightsMeta = () => {
   const value = normalizeVersionWeights(state.versionWeights || []);
   const defaults = versionWeightDefaults(value.length);
   const changed = value.some((v, i) => Math.abs(v - (defaults[i] ?? 0)) > 1e-9);
-  // 逐个槽位印「标签 原值」（与另外两组同一个形状：**印生效的那个数**，不让用户拿输入框
-  // 里的原值自己脑补）。旋钮清单来自 `versionWeightRows(档位数)`，所以标签也**不抄第二份**。
-  const parts = versionWeightRows(value.length)
-    .map((row) => `${row.label} ${formatWeight(value[row.index])}`)
-    .join(' : ');
-  meta.textContent = `每个副本各自算（${value.length} 版）：${parts}`
-    + (changed ? '' : '（默认）')
-    + '；某版设 0 = 那一版不进窗口。改它会重算总榜。';
+  // ⚠️ 2026-10-19：**不再逐个槽位印「标签 值」**。原来把这 6 个数又抄了一遍
+  // （`当前版本 6；前1个版本 5；前2个版本 4……`），而上面那排输入框里就是同样的
+  // 6 个数字、同样的顺序 —— 一行里 120 个字有 100 个是重复的。这里只留「几条 + 口径
+  // + 0 的含义」，剩下的交给输入框自己说。
+  //
+  // 仍然点明「**每个副本算各自的**」：`4.5` 在混沌与异相仲裁里不是同一期，所以
+  // 「当前版本」是逐副本的（槽位按下标、不绑定版本号）。
+  meta.textContent = `每个副本各自算（${value.length} 版）· 设 0 = 那一版不进窗口`
+    + (changed ? '' : '（默认）');
 };
 
 /**
@@ -4870,11 +4875,16 @@ const renderTeamPlan = () => {
     ? ` · 搜索「${terms.join(' + ')}」${terms.length > 1 ? '（同时包含）' : ''}`
       + `命中 ${matched.length} 支`
     : '';
+  // 2026-10-19：原来写 `· 20 支队伍 · 第 1–20 条 / 共 20 条` ——「20 支队伍」与「共 20 条」
+  // 是同一个数，一页装得下时「第 1–20 条」又是废话（整页就 20 条）。现在只在**真的
+  // 分了页**时才报区间，否则一个「N 支」就够。
   const range = matched.length
-    ? ` · 第 ${start + 1}–${start + pageRows.length} 条 / 共 ${matched.length} 条`
+    ? (pages > 1
+      ? ` · 第 ${start + 1}–${start + pageRows.length} / 共 ${matched.length} 支`
+      : ` · ${matched.length} 支`)
     : '';
   setMeta(rows.length
-    ? `${plan.envLabel || plan.env} · ${rows.length} 支配队` + hit + range
+    ? `${plan.envLabel || plan.env}` + hit + range
       + (pages > 1 ? ` · 第 ${page}/${pages} 页` : '')
     : `${plan.envLabel || plan.env} · 没有可用配队`);
 
@@ -4934,13 +4944,23 @@ const renderTeamPlan = () => {
     // ---- 金数 / 版本 / 视频 ---------------------------------------------------
     const facts = text('div', 'advice-plan-team-facts');
     const goldLine = text('span', 'advice-plan-team-gold');
+    // 2026-10-19：`补金` 与`账面`**相等**时只说一次。
+    // 相等意味着这套四人你一个都没有（要补的金数 = 整队金数），原来会印成
+    // 「账面 26 金｜补金 26 金」—— 同一个数字在一个短语里出现两遍，读者第一反应是
+    // 「是不是算错了」。此时改用「全缺」这个词，字数少一半、意思更直接。
+    const displayGold = Number(row.displayGold ?? row.gold);
+    const gapGold = Number(row.gap);
     goldLine.appendChild(text('span', '', '账面 '));
     goldLine.appendChild(goldText(row.displayGold ?? row.gold));
     if (row.hiddenCut > 0) {
       goldLine.appendChild(text('span', '', `（含隐金减免 ${row.hiddenCut} 金）`));
     }
-    goldLine.appendChild(text('span', '', '｜补金 '));
-    goldLine.appendChild(goldText(row.gap));
+    if (gapGold > 0 && gapGold === displayGold) {
+      goldLine.appendChild(text('span', '', '｜全缺'));
+    } else {
+      goldLine.appendChild(text('span', '', '｜补金 '));
+      goldLine.appendChild(goldText(row.gap));
+    }
     facts.appendChild(goldLine);
     if (row.bestSeason) {
       facts.appendChild(text('span', 'advice-plan-team-best muted small',
@@ -4981,10 +5001,18 @@ const renderTeamPlan = () => {
     }
 
     // ---- 逐版本成绩（多版本时才画，单版本是多一行废话）-----------------------
+    // 2026-10-19：从「一整串 `4.6：6.55 · 4.5：5.24`」改成每版一个胶囊（样式见
+    // `.advice-plan-season-chip`）。`seasons` 本身就按版本从新到旧排，所以第 0 个就是
+    // 「最新那一版」，给它 `is-latest` 高亮 —— 那是这张卡名次的直接依据。
     if ((row.seasons || []).length > 1) {
-      card.appendChild(text('p', 'advice-plan-team-seasons muted small',
-        (row.seasons || [])
-          .map((s) => `${s.season}：${Number(s.planScore).toFixed(2)}`).join(' · ')));
+      const seasons = text('div', 'advice-plan-team-seasons muted small');
+      (row.seasons || []).forEach((s, i) => {
+        const chip = text('span', `advice-plan-season-chip${i === 0 ? ' is-latest' : ''}`);
+        chip.appendChild(text('span', '', s.season));
+        chip.appendChild(text('b', '', Number(s.planScore).toFixed(2)));
+        seasons.appendChild(chip);
+      });
+      card.appendChild(seasons);
     }
 
     // ---- 其它配装（同一套四人，光锥 / 叠影不同）------------------------------

@@ -83,7 +83,9 @@ const renderDonut = (band, envLabel) => {
   const head = document.createElement('div');
   head.className = 'usage-donut-head';
   head.appendChild(text('span', 'usage-donut-title', band.label));
-  head.appendChild(text('span', 'muted small', `${band.submissions} 条投稿`));
+  // ⚠️ 2026-10-19：样本量**只在环心写一次**。原来右上也印「4844 条投稿」，与环心重复；
+  // 而环心当时印的是 `items.length`（恒为 11 = 前 10 + 其它），那个数字没有任何信息量
+  // —— 读者既不知道这 11 是什么，也看不出这块饼可不可信。现在环心给投稿数，右上留空。
   card.appendChild(head);
 
   const { size, radius, width } = DONUT;
@@ -120,19 +122,23 @@ const renderDonut = (band, envLabel) => {
     svg.appendChild(circle);
   }
 
+  // 环心：**投稿数**（不是角色数）。这是判断「这块饼有多可信」的唯一线索 ——
+  // 「300~500 行动值」只有 4 条投稿、而「通关」有 4844 条，两者的百分比不该被同等看待。
   const centerValue = svgEl('text', {
     x: mid, y: mid - 2, 'text-anchor': 'middle', class: 'usage-donut-total',
   });
-  centerValue.textContent = String(band.items.length);
+  centerValue.textContent = String(band.submissions ?? 0);
   const centerHint = svgEl('text', {
     x: mid, y: mid + 11, 'text-anchor': 'middle', class: 'usage-donut-hint',
   });
-  centerHint.textContent = '角色';
+  centerHint.textContent = '条投稿';
   svg.appendChild(centerValue);
   svg.appendChild(centerHint);
   card.appendChild(svg);
 
   // 图例：**百分比一律写出来**（需求文档要求），5% 以下按一位小数省空间。
+  // 卡片宽度只够两列，长名字（「开拓者·记忆」6 字）必然被截成省略号 —— CSS 里给了
+  // `text-overflow: ellipsis`，这里再补一个 `title`，鼠标停上去能看全名。
   const legend = text('ol', 'usage-legend');
   band.items.forEach((item, index) => {
     const li = text('li', `usage-legend-item${item.other ? ' is-other' : ''}`);
@@ -140,7 +146,10 @@ const renderDonut = (band, envLabel) => {
     dot.style.background = item.other ? USAGE_COLORS[USAGE_COLORS.length - 1]
       : USAGE_COLORS[index % (USAGE_COLORS.length - 1)];
     li.appendChild(dot);
-    li.appendChild(text('span', 'usage-legend-name', item.charCn || item.char));
+    const name = item.charCn || item.char;
+    const nameEl = text('span', 'usage-legend-name', name);
+    nameEl.title = `${name} · ${(item.share * 100).toFixed(1)}%`;
+    li.appendChild(nameEl);
     li.appendChild(text('span', 'usage-legend-share', `${(item.share * 100).toFixed(1)}%`));
     legend.appendChild(li);
   });

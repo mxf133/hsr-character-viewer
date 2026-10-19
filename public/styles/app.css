@@ -2644,11 +2644,25 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   margin-top: 5px;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 12px;
+  gap: 4px 6px;
   font-size: 12px;
   color: var(--text-muted);
 }
-.advice-unit-env { white-space: nowrap; cursor: help; }
+/* 每个副本一个**看得见的胶囊**（2026-10-19）。原来它只是一段 nowrap 文字，
+   三个副本之间只靠 12px 的空隙分开 —— 名字里本身带「·」和「关卡」这类词，
+   连起来读像一句话（「…王棋关卡 21 金 末日幻影 5 金 虚构叙事…」）。
+   加底色 + 边框后与「逐版本成绩」的胶囊是同一套形状，一眼能数出几个副本。 */
+.advice-unit-env {
+  white-space: nowrap;
+  cursor: help;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.03);
+}
 .advice-unit-env-name { color: var(--text); }
 
 /* 总榜的工具条：类型筛选 + 条数 */
@@ -2927,13 +2941,19 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 }
 .advice-plan-team-meter-fill.is-gap { background: var(--gold); }
 .advice-plan-team-meter-fill.is-versatility { background: var(--violet); }
-/* 补金顺序：用户点名要的那一项，所以给成有序列表、每笔一行。 */
+/* 补金顺序：用户点名要的那一项，所以给成有序列表、每笔一行。
+   ⚠️ 2026-10-19：改成**按宽度自动铺列**。原来是单列，每笔一行 —— 而卡片宽约 1000px，
+   单列只占左边 300px、右边 700px 全空；一队要补 8 笔就是 8 行约 200px，20 张卡叠起来
+   让整页多出约 2500px。`auto-fill` + `minmax(240px, 1fr)` 在 1000px 下铺 4 列、窄屏退成
+   1 列；下限取 240px 是因为「名字 + 角色/光锥 + N 金」三者并排时再窄就会折行
+   （`flex-wrap` 会拆成两行，反而更高）。 */
 .advice-plan-team-fill {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 3px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 3px 18px;
   counter-reset: advice-fill;
 }
 .advice-fill-item {
@@ -2961,12 +2981,64 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   background: rgba(0, 0, 0, 0.3);
 }
 .advice-fill-name { font-weight: 600; }
-.advice-fill-step { color: var(--cyan); }
-.advice-fill-cost { color: var(--text-dim); }
+/* 「角色 / 光锥」这一格：它只是给名字补一个类型，不该跟名字抢注意力 ——
+   原来用青色（`var(--cyan)`），一条顺序里 8 个青字很吵。 */
+.advice-fill-step {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  flex: none;
+}
+/* 金数紧跟在「角色 / 光锥」之后，**不**往列右端推：试过 `margin-left: auto` 让每列的
+   「N 金」对齐成一条纵线，但列宽 240px 时名字与金数之间会空出近 100px，读起来反而
+   断成两截（「不死途 角色 …… 2 金」）。多列已经把高度压下去了，这里保持紧凑、
+   让「名字 → 类型 → 金数」读成一口气。 */
+.advice-fill-cost {
+  flex: none;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
 .advice-plan-team-foot { margin-top: 2px; line-height: 1.6; }
 /* 「过渡档位」那一行（用户 2026-10-11 第 7 条）：它是补金顺序**前半段**的小结，
    所以跟在顺序后面、字号与脚注一致。 */
 .advice-plan-team-mid { margin: 4px 0 0; line-height: 1.6; }
+/* 逐版本成绩（2026-10-19）：原来是一整串 `4.6：6.55 · 4.5：5.24`，冒号 + 中点连成一片，
+   扫不出「哪一版掉得最多」。改成「版本号 + 分数」的小胶囊，一版一格、格与格之间留白，
+   眼睛按块跳读。`::before` 只在前面加一个「逐版本」标签，省掉 JS 里再拼一次文案。 */
+.advice-plan-team-seasons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin: 5px 0 0;
+}
+.advice-plan-team-seasons::before {
+  content: '逐版本';
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-right: 1px;
+}
+.advice-plan-season-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.advice-plan-season-chip b {
+  color: var(--text);
+  font-weight: 600;
+}
+/* 最新那一版（列表里第一个）给一点强调：它是这张卡「为什么排这个名次」的依据。 */
+.advice-plan-season-chip.is-latest {
+  border-color: rgba(240, 198, 116, 0.42);
+  background: rgba(240, 198, 116, 0.08);
+}
 /* 「补金推荐分」详情窗口里的两块（过渡档位 / 次选配队），见 `teamPlanTip()`。 */
 .advice-plan-tip-block {
   display: block;
@@ -3223,10 +3295,29 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 .advice-weights-groups {
   grid-area: grid;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  /* ⚠️ 2026-10-19：**两列 + 版本权重独占一行**，原来是三列等高。
+     三列时，「关卡」列只有 1 个下拉框、「抽卡权重」列只有 2 个输入框，而「版本权重」
+     列是 6 个框（2×3 排布）—— `align-items: stretch` 把三列拉到同高，结果前两列各自
+     空出约 190px，左边的虚线边框一路拉到块底，看上去像「没填完的表单」。整块 336px 里
+     真正有内容的不到 120px。
+     改法是让版本权重跨满整行、内部铺 6 列，于是两行都有内容、块高降到约 190px。 */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
   align-items: stretch;
   min-width: 0;
+}
+/* 第三组 = 版本权重：跨满两列（纯 `:nth-child` 选择，不改 DOM —— 那个位置是
+   index.html 里写死的第三组，顺序变了这条也会跟着变，别在这里加 `.is-version` 之类
+   需要同步维护的类名）。 */
+.advice-weights-groups > .advice-weights-group:nth-child(3) {
+  grid-column: 1 / -1;
+  /* 跨满后它左边那条虚线就没有「左边一列」可分隔了。 */
+  padding-left: 0;
+  border-left: 0;
+}
+/* 版本权重跨行之后，6 个档位铺成一行（原来 2 列 × 3 行是给「三列并排」的窄列用的）。 */
+.advice-weights-groups > .advice-weights-group:nth-child(3) .advice-weights-grid.is-version {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 /* 每一类自己是「小标题 / 输入框网格 / 摘要」三行；组内的 `.advice-weights-grid` 必须
    **取消**外层的 `grid-area: grid`（那个名字是给 `.advice-weights.is-compact` 用的，

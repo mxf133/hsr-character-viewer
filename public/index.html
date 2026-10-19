@@ -279,11 +279,11 @@
                窄屏（≤1100px）仍退回竖排，见 app.css 里的 media。 -->
           <div class="advice-weights is-compact" id="adviceFrontierWeights">
             <span class="advice-weights-title">设置</span>
-            <span class="advice-weights-hint muted small"><strong>关卡</strong>：一次只统计一个关卡，
-              下面的角色榜、抽卡方案、上场率都只算这个关卡（默认绝境）；
-              <strong>抽卡权重</strong>决定<strong>强度 / 性价比</strong>各占多少；
-              <strong>版本权重</strong>决定从最新往前 N 个版本各占多少。
-              都只有<strong>相对大小</strong>有意义。</span>
+            <!-- 2026-10-19：这句从三行压成一行。原文把「关卡 / 抽卡权重 / 版本权重」各自
+                 解释了一遍（约 90 字），而三个小标题本身已经写着同样的词，读起来像在读
+                 表单说明书。留下的只有两条「不看说明书就会弄错」的：关卡是单选的、
+                 权重只比大小。 -->
+            <span class="advice-weights-hint muted small">关卡一次只算一个（角色榜、抽卡方案、上场率都跟它走）；权重只看相对大小。</span>
             <button type="button" id="adviceFrontierWeightsReset" class="btn btn-ghost btn-sm">恢复默认</button>
             <div class="advice-weights-groups">
               <div class="advice-weights-group">
