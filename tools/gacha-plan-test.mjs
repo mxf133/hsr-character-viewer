@@ -164,24 +164,32 @@ check('折叠结果计入 `lineups` 而不是 `pool`', vPlan.pool === 4 && vPlan
 const vMain = vPlan.rows.find((r) => r.members.some((m) => m.char === 'Hero'));
 eq('同角色组合只下发一行', vMain ? 1 : 0, 1);
 eq('另外两套配装收进 variants', vMain?.variants?.length, 2);
-check('代表行是**分最高**的那个（叠影 3 而不是 1 / 5）',
-  vMain?.members.find((m) => m.char === 'Hero')?.superimp === 3,
-  String(vMain?.members.find((m) => m.char === 'Hero')?.superimp));
+// ⚠️ 2026-10-20：这条原来写死「代表行的叠影必须是 3」—— 那是 `baseline / Δgold` 时代
+//    的巧合（叠影 3 那套恰好金数最少、强度最高）。换成线性扣分后，成本项对 gap 更敏感，
+//    代表行可能落到别的那套上。**规则本身**（代表行 = 分最高的那套）才是要锁的，
+//    具体是哪一套属于数据巧合，不该钉在测试里。
+check('代表行是**分最高**的那个（其余同角色配装收进 variants）',
+  (vMain?.variants || []).every((v) => v.score <= (vMain?.score ?? 0)),
+  `main=${vMain?.score} variants=${JSON.stringify((vMain?.variants || []).map((v) => v.score))}`);
 check('variants 按分数降序', (vMain?.variants?.[0]?.score ?? 0) >= (vMain?.variants?.[1]?.score ?? 0),
   JSON.stringify((vMain?.variants || []).map((v) => v.score)));
 check('variants 只带轻字段、不跑补金明细（不给 UI 用不到的东西）',
   vMain?.variants?.every((v) => v.fill === undefined && v.mid === undefined && v.seasons === undefined));
 
-// ---- ② 方案的成本项：Δgold 而不是队伍自己的 c --------------------------------
-console.log('\n[方案成本项 — Δgold 做分母，已齐 = 1]');
-near('Δgold = 0（已齐）→ 1，而不是 Infinity', planCostPartOf(0, 9), 1);
-near('Δgold 为 null（算不出来）也按已齐处理', planCostPartOf(null, 9), 1);
-near('有基准但有基准更便宜 → 夹到 1', planCostPartOf(3, 9), 1);
-near('costPart = baseline / Δgold', planCostPartOf(12, 9), 9 / 12);
-near('Δgold 很大 → 很小但不到 0', planCostPartOf(90, 9), 0.1);
-near('该版本取不到基准（baseline = 0）→ 0，不许假装能算', planCostPartOf(5, 0), 0);
-check('⚠️ Δgold = 0 的判定必须排在 baseline = 0 **之前**，否则会先掉进「无基准」那个分支',
-  planCostPartOf(0, 0) === 1, String(planCostPartOf(0, 0)));
+// ---- ② 方案的成本项：Δgold 线性扣分（2026-10-20 换口径）-----------------------
+console.log('\n[方案成本项 — 1 − Δgold/10，已齐 = 1]');
+near('Δgold = 0（已齐）→ 1', planCostPartOf(0), 1);
+near('Δgold 为 null（算不出来）也按已齐处理', planCostPartOf(null), 1);
+near('Δgold 为负（数据异常）→ 同样按已齐处理', planCostPartOf(-3), 1);
+near('Δgold = 5 → 0.5（线性扣分的中段）', planCostPartOf(5), 0.5);
+near('Δgold = 10 → 0（补满刻度就扣光）', planCostPartOf(10), 0);
+near('Δgold = 26 → −1.6（超过刻度转负，没有封底）', planCostPartOf(26), -1.6);
+near('Δgold 很大 → 线性变负，不是趋近 0', planCostPartOf(90), -8);
+// ⚠️ 这条是本次换口径的**核心诉求**：旧式 `baseline / Δgold` 夹在 (0,1] 里，
+//    补 26 金与补 3 金只差 0.4 分，「补得越多越不划算」几乎看不出来。
+check('补 26 金必须**明显低于**补 3 金（旧口径只差 0.4）',
+  planCostPartOf(26) < planCostPartOf(3) - 2,
+  `${planCostPartOf(26)} vs ${planCostPartOf(3)}`);
 
 // ---- ③ 按阵容聚合：逐版本只留最高分 ------------------------------------------
 console.log('\n[按阵容聚合]');
@@ -318,9 +326,12 @@ console.log('\n[buildPlan — 方案分 / 逐版本取最大 / 分页]');
   // 手动核对：Hero 缺本体(body+E1+E2=3) + HeroLC 缺 S1..S3(3) + Mage 缺本体(1) = 7
   eq('Δgold = 缺本体的那段要算 +1', main.gap, 7);
 
-  // 成绩：4.5 行动值 100 → 0.8；baseline(4.5)=4 → 4/7；× 版本权重 5
-  const expect45 = (1 - 100 / 500 + 4 / 7) * 5;
-  const expect44 = (1 - 250 / 500 + Math.min(1, 9 / 7)) * 4;
+  // 成绩：4.5 行动值 100 → 0.8；性价比 = 1 − Δgold/10（Δgold = 7 → 0.3）；× 版本权重 5
+  // ⚠️ 2026-10-20 换口径：性价比不再是 `baseline / Δgold`（旧期望 `4/7`），
+  //    而是线性扣分 `1 − gap/10`。这里同一条 gap = 7 在两版通用（gap 与版本无关）。
+  const costTerm = 1 - 7 / 10;
+  const expect45 = (1 - 100 / 500 + costTerm) * 5;
+  const expect44 = (1 - 250 / 500 + costTerm) * 4;
   check('逐版本**取最大值**（不是一个加权平均）', Math.max(expect45, expect44) === expect45
     && near('方案分 = max(各版本分)', main.score, expect45, 1e-4));
   eq('最高分来自哪一版要带出来（UI 要能标）', main.bestSeason, '4.5');
@@ -366,15 +377,26 @@ console.log('\n[buildPlan — 方案分 / 逐版本取最大 / 分页]');
 }
 
 {
-  // 性价比权重不是 1 的时候，只作用在成本项上。
+  // 两个权重各自作用在自己的分项上。
   const rows = [{ season: '4.5', c: 9, a: 100, n: 1, t: 2, m: ROSTER_MAIN },
     { season: '4.5', c: 4, a: 200, n: 1, t: 3, m: ['Zed|0||0', 'Mage|0||0', 'Free|6|FreeLC|5', 'Stan|0||0'] }];
   const scored = scoreEnvRows(rows, { mode: 'aa', stage: 'plight', versionWeightOf }).scored;
-  const mainRow = (wc) => buildPlan(scored, { availability: AVAIL, wc, maxRows: 5 })
+  // ⚠️ 默认 `ws = 1` —— 所以下面三条 wc 的断言与「强度项不乘 ws」时逐值相同，
+  //    正因为如此，**必须**再单独加一条 ws ≠ 1 的断言（见最后那条），否则这个改动
+  //    在测试里是完全隐形的。
+  const mainRow = (wc, ws = 1) => buildPlan(scored, { availability: AVAIL, ws, wc, maxRows: 5 })
     .rows.find((r) => r.key === keyA).score;
-  near('wc = 1', mainRow(1), (1 - 100 / 500 + 4 / 7) * 5, 1e-4);
-  near('wc = 2：只有成本项翻倍', mainRow(2), (1 - 100 / 500 + 2 * (4 / 7)) * 5, 1e-4);
-  near('wc = 0：退化成纯强度', mainRow(0), (1 - 100 / 500) * 5, 1e-4);
+  // ⚠️ 2026-10-20：成本项换成 `1 − gap/10`。这套 fixture 的 gap = 7（见上面
+  //    「Δgold = 缺本体的那段要算 +1」那条），所以成本项是 0.3，不再是 `4/7`。
+  const costTerm = 1 - 7 / 10;
+  const strength = 1 - 100 / 500;
+  near('wc = 1', mainRow(1), (strength + costTerm) * 5, 1e-4);
+  near('wc = 2：只有成本项翻倍', mainRow(2), (strength + 2 * costTerm) * 5, 1e-4);
+  near('wc = 0：退化成纯强度', mainRow(0), strength * 5, 1e-4);
+  // 2026-10-20（用户确认两个旋钮对称）：ws 也乘在**强度项**上，不是只用来改 wc。
+  near('ws = 0.5 时强度项打对折（0.8 → 0.4）', mainRow(0, 0.5), (0.5 * strength) * 5, 1e-4);
+  near('ws / wc 同时给 0.5：两项各取一半',
+    mainRow(0.5, 0.5), (0.5 * strength + 0.5 * costTerm) * 5, 1e-4);
 }
 
 // ---- ⑧ 真实数据集冒烟 -------------------------------------------------------

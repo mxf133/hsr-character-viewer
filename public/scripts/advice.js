@@ -1601,11 +1601,14 @@ export const normalizeDrawWeights = (input) => {
     for (const row of DRAW_WEIGHT_ROWS) value[row.key] = defaults[row.key];
     sum = sumOf(value);
   }
-  // ⚠️ 2026-10-18：`versatility` **不在 `DRAW_WEIGHT_ROWS` 里了**（界面上没有那个旋钮），
-  // 但下游还在读 `draw.versatility`（角色总榜的合成分有一项是它）。所以这里必须
-  // **显式补 0**：不补，`draw.versatility` 就是 `undefined`，
-  // `ws×强度 + wc×性价比 + wv×泛用性` 里那一项会变成 `NaN`，整列角色得分塌掉。
-  // 补 0 的语义 = 「泛用性不参与加权」，与「界面不给调」是同一件事。
+  // ⚠️ 2026-10-18：`versatility` **不在 `DRAW_WEIGHT_ROWS` 里了**（界面上没有那个旋钮）。
+  //
+  // ⚠️ 2026-10-20：`characterScore` 已经**不再读** `draw.versatility`（那一项从角色得分里
+  //    删掉了，见 `frontierBoard` 的注释）。但这里**仍然保留 `versatility: 0`**，因为：
+  //      * 旧 `teamPlan()`（`advice.js` 的 `total_score`）与一批探针还在读这个键 ——
+  //        删掉会让它们拿到 `undefined` 再被 `Number()` 成 NaN；
+  //      * 载荷里 `drawWeights` 是原样下发的，前端某些老路径也按三键读。
+  //    它的语义就是「泛用性权重恒为 0 = 这一项永不参与加权」，与「界面上不给调」是同一件事。
   // 顺手保证 `strength / cost / versatility` 三个键**恒在**，别让调用方自己兜。
   // `sum > 0` 在默认值本身也全 0 的极端配置下才不成立；那时如实给等分，不出现除零。
   if (!(sum > 0)) {
@@ -7369,9 +7372,19 @@ const buildConclusionInner = (envs, options = {}) => {
       unit.versatilityScore = Number((100 * Math.max(0, Math.min(1, spanOf(
         vExt.lo, vExt.hi, unit.versatilityRaw,
       )))).toFixed(4));
+      // ⚠️ 2026-10-20（用户：「角色得分仍然有泛用性，删除此功能」）：公式里**删掉泛用性项**。
+      //
+      // 为什么删：`drawWeights.versatility` 从 2026-10-18 起就恒为 0（界面上没有那个旋钮了），
+      // 所以这一项**数值上一直没起作用** —— 但 `0 × 分` 与「这一项不存在」是两回事：
+      //   * 它逼着 `characterScore` 的读者每次都去确认「wv 是不是真的 0」；
+      //   * 它让详情窗口仍然印一列「角色泛用性 得分 xx.x × 0%」，读者看到的是
+      //     「有个分项、恒不生效」，这正是用户报的那句「仍然有泛用性」。
+      // 现在角色得分 = 强度 + 性价比（两项，都是 0~100 归一分再按抽卡权重加权）。
+      //
+      // ⚠️ `unit.versatilityScore` / `versatilityRaw` **仍然照算**：探针、以及
+      //    `conclusion.js` 的载荷投影还读它们（老前端 / 老接口兼容），只是不再进任何分数。
       unit.characterScore = Number((drawWeights.strength * unit.strengthScore
-        + drawWeights.cost * unit.costScore
-        + drawWeights.versatility * unit.versatilityScore).toFixed(4));
+        + drawWeights.cost * unit.costScore).toFixed(4));
     }
 
     /**

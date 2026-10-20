@@ -42,6 +42,13 @@ const eq = (name, actual, expect) => check(
 //
 // 全部按「4★ 常驻」算 ⇒ 每个位置 0 金（`marginalCostOf` 的可加口径），
 // 于是分数只由 `strengthPart` 决定，名次可预测。
+//
+// ⚠️ `HeroLC` 也必须是 **4★ 非常驻**（2026-10-20，v4.6.135）：它原来写成 5★ 限定，
+//    于是带着它的那支队 gap = 1。旧口径 `baseline / Δgold` 有 `min(1, …)` 封顶，
+//    gap = 1 照样得 1.0，把「差距 1 金」这件事**遮掉了**（夹具注释说的「0 金」当场是假的）；
+//    换成线性扣分 `1 − gap/10` 之后不再封顶，那支队变成 0.9 性价比项，与二号队
+//    (0.8 + 1.0) 刚好打平 1.8 分 —— 名次就由 tie-break 决定了，与本套的判据无关。
+//    改成 4★ 才是夹具真正想表达的「0 金、分数只看强度」。
 const CHARS = [
   'Hero', 'Mage', 'Bard', 'Zed', 'Stan', 'Free',
   'Solo', 'Duo', 'Tri', 'Quad',
@@ -50,7 +57,7 @@ const CHARS = [
 const AVAIL = {
   characters: Object.fromEntries(CHARS.map((name) => [name, { rarity: 4, limited: false }])),
   lightCones: {
-    HeroLC: { rarity: 5, limited: true },
+    HeroLC: { rarity: 4, limited: false },
     FreeLC: { rarity: 4, limited: false },
   },
 };

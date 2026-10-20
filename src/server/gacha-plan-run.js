@@ -91,7 +91,9 @@ export const accountOf = (raw) => ({
 //   关卡层（`envSignatureOf`）：关卡 + 窗口 + 版本权重 + wc
 //                               —— frontier 行与投稿得分只跟这几样有关，**与账号无关**，
 //                               所以同一台机器上换个账号登录照样命中。
-//   整池层（`planSignatureOf`）：上面那些 + 账号持有 + 隐金开关。
+//   整池层（`planSignatureOf`）：上面那些 + 账号持有 + 隐金开关 + **强度权重 `ws`**
+//                               —— 2026-10-20 起 `ws` 会乘进方案分的强度项，换权重
+//                               整池名次就变；它不进关卡层（那边恒定 `ws: 1`）。
 //
 // ⚠️ 两个键都带 `archiveEpoch()`：数据集重新采集（`herta-sync`）后旧池必须失效，
 //    否则界面会一直显示上一份档案的分。存档热替换不会重启进程，光靠 LRU 淘汰不够。
@@ -121,9 +123,16 @@ export const envSignatureOf = ({ envKey, window, versionWeights, wc }) => {
   return `v${archiveEpoch()}~${envKey}|${window}|${wc}|${hashOf(list)}`;
 };
 
-export const planSignatureOf = ({ envKey, hiddenCosts, account }) => {
+/**
+ * 整池层签名：关卡层那份 + 账号持有 + 隐金开关 + **强度权重 `ws`**。
+ *
+ * ⚠️ `ws` 只能在这里带 —— 关卡层（`scoreEnvRows`）拿到的恒定是 `ws: 1`，所以它
+ *    不进 `envKey`；但方案分里强度项要乘 `ws`（`planScoreAt()`），换个强度权重
+ *    整池名次就全变了，键里不带它就会把上一组权重的池子发出去。
+ */
+export const planSignatureOf = ({ envKey, hiddenCosts, ws, account }) => {
   const hidden = normalizeHiddenCosts(hiddenCosts);
-  return `${envKey}|${hashOf(JSON.stringify(hidden))}|${accountSignatureOf(account)}`;
+  return `${envKey}|ws=${ws ?? 1}|${hashOf(JSON.stringify(hidden))}|${accountSignatureOf(account)}`;
 };
 
 /**
@@ -249,6 +258,12 @@ export const runPlan = async (options = {}) => {
   // 方案里的 wc 用**归一后的性价比系数**：用户把强度拉满（cost=0）时方案也不该再算性价比。
   const wc = Number.isFinite(draw.cost) ? draw.cost : 1;
   const envKey = envSignatureOf({ envKey: picked.key, window, versionWeights: options.versionWeights, wc });
+  // ⚠️ 2026-10-20：ws 也进方案（用户确认两个旋钮地位对称）。它**不能**传给
+  //    `scoreEnvRows()` —— 那里必须是 `ws: 1`，让 `strengthPart` 保持裸强度
+  //    （`1 − 行动值/500`）；乘权重的动作只发生在 `buildPlanPool()` 的 `planScoreAt()` 里，
+  //    两处都乘就等于把强度平方了一次。
+  //    因此 ws **不进** `envKey`（关卡层那份 scored 与 ws 无关），只进 `planKey`。
+  const ws = Number.isFinite(draw.strength) ? draw.strength : 1;
 
   // ---- ① 关卡数据：frontier 行 + 评分（只与关卡 / 版本权重 / wc 有关，**与账号无关**）----
   //
@@ -306,6 +321,10 @@ export const runPlan = async (options = {}) => {
   const planKey = planSignatureOf({
     envKey,
     hiddenCosts: options.hiddenCosts,
+    // ⚠️ ws 必须进整池键：方案分 = (ws × 强度 + wc × 性价比) × 版本权重，
+    //    换个强度权重整池的名次就全变了。wc 已经通过 `envKey` 进来了（关卡层的
+    //    `scoreEnvRows()` 收 wc），ws 不进关卡层，只能在这里单独带上。
+    ws,
     account: accountOf(options.account),
   });
   const poolState = await cachedAsync(POOL_CACHE, planKey, (value) => value.lineups.length, async () => {
@@ -315,6 +334,7 @@ export const runPlan = async (options = {}) => {
       account: accountOf(options.account),
       availability: index.availability || index.refs?.availability || {},
       hiddenCosts: options.hiddenCosts,
+      ws,
       wc,
       videoOf: (rosterKey, season) => {
         // `rosterKey` 是整包键（`角色|E档|光锥|S档` 排序拼 ~），视频索引的键是角色名。
