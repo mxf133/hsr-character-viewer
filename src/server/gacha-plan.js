@@ -346,28 +346,37 @@ export const alternativesOf = (row, ranked, rankOf, byMember, limit = 3,
 };
 
 // ------------------------------------------------------------------ 总入口
+//
+// ⚠️ **2026-10-20（v4.6.133）把「建池」与「物化」拆成了两个函数**，因为界面改成
+// 「服务端全量索引 + 按页取」之后，翻页 / 搜索每敲一个字都要重算一次：
+//   * `buildPlanPool()` —— 聚合、算方案分、排序、折叠、建倒排。**与要下发几行无关**，
+//     所以整池结果可以按输入签名缓存起来（`src/server/plan-index.js`）。
+//   * `materializePlanRow()` —— 隐金 / 逐版本明细 / 补金清单 / 过渡档位 / 次选。
+//     只对**当前这一页**的 20 行算。这一层是真正贵的（全池算要几秒），也是过去
+//     `maxRows` 必须存在的原因。
+// `buildPlan()` 保留成「建池 + 物化前 N 行」的薄包装，旧探针与 `gacha-plan-test` 照旧可用。
 
 /**
- * 算抽卡方案。
+ * 第一~三趟：把 scored 行聚合成整池（**不算任何只给界面看的明细**）。
  *
  * @param scored `scoreEnvRows()` 的 `scored` 数组（同一关卡、多版本）
  * @param options.account       `{ owned:Set, eidolons:Map, cones:Map }`
  * @param options.availability  服务端下发的 `{characters, lightCones}`
  * @param options.hiddenCosts   隐金五项开关（未经 normalize 也行）
  * @param options.wc            性价比权重
- * @param options.maxRows       下发条数
  * @param options.maxAlternatives
  * @param options.videoOf       `(rosterKey, season) => url|null`。可选；`frontier` 行里没有
  *                              视频字段（它在 sibling 的 `teams[].sample` 上），所以要由
  *                              调用方补进来 —— 不给就一律 null，不影响其余字段。
+ * @returns 池状态（`pool` 全部整包 / `lineups` 折叠后的代表行 / 倒排 / 名次表 …），
+ *          交给 `materializePlanRow()` 用。**不含任何 fill / mid / 隐金字段**。
  */
-export const buildPlan = (scored, options = {}) => {
+export const buildPlanPool = (scored, options = {}) => {
   const {
     account = {},
     availability = {},
     hiddenCosts = null,
     wc = 1,
-    maxRows = 20,
     maxAlternatives = 3,
     videoOf = null,
   } = options;
@@ -468,91 +477,141 @@ export const buildPlan = (scored, options = {}) => {
     const reps = [];
     for (const p of pool) {
       const hit = seen.get(p.lineup);
-      if (hit) { hit.variants.push(p); continue; }
+      if (hit) {
+        // ⚠️ 折叠掉的配装也要记下它属于**哪一栏**：服务端搜索的「次选回溯」按整包找邻队，
+        //    找到之后要能落回同一栏，否则同一栏会被算成两次命中（名次也会串）。
+        p.lineupIndex = hit.lineupIndex;
+        hit.variants.push(p);
+        continue;
+      }
       seen.set(p.lineup, p);
       p.variants = [];
+      p.lineupIndex = reps.length;
       reps.push(p);
     }
     return reps;
   };
   const lineups = foldByLineup();
 
-  // ---- 第四趟：给要下发的行补隐金 / fill / mid / alternatives ----------------
-  //
-  // ⚠️ 隐金与逐版本明细都**只对下发的这几十条算**。这是全模块最大的一处性能设计：
-  // 实测 1649 行投稿挤出 1442 套候选，而 `hiddenReductionOf` 跑全池要 8.6 ms、
-  // 跑 20 条只要 0.28 ms —— 它压根不参与排序（既不进 `score` 也不进任何 tie-break），
-  // 所以提前给全池算是纯浪费。判断「要不要提前算」只有一条标准：会不会改变下发的内容。
-  const delivered = lineups.slice(0, Math.max(1, maxRows));
-  for (const row of delivered) {
-    row.cuts = hiddenReductionOf(row.members, availability, hidden, 'dataset');
-    row.hiddenCut = row.cuts.team ?? 0;
-    row.displayGold = Math.max(1, row.gold - row.hiddenCut);
-    row.seasons = seasonsDetailOf(row.entry, wc, row.gap);
-    row.gapItems = gapItemsOf(row.entry, costOfMember);
-    row.fill = fillOf(row, { availability, cuts: row.cuts, charScoreOf, isOwned });
-    row.pullsExpected = row.fill.reduce((n, it) => n + (it.pullsExpected || 0), 0);
-    row.mid = midOf(row, { account });
-    row.alternatives = alternativesOf(row, pool, rankOf, byMember, maxAlternatives);
-    // 折叠进来的其它配装：**只带界面能用的字段**（成员整包 + 分数 + 补金），
-    // 不跑 fill / mid / cuts —— 用户点开变体时要的是「换个光锥能省几金」，
-    // 给每个变体都算一遍补金明细会把这几十行的成本翻几倍，而没人看。
-    row.variants = (row.variants || []).map((v) => ({
-      key: v.key,
-      score: v.score,
-      bestSeason: v.bestSeason,
-      strengthPart: v.strengthPart,
-      costPart: v.costPart,
-      gap: v.gap,
-      gold: v.gold,
-      video: v.video,
-      members: v.members.map((m) => ({
-        char: m.char,
-        eidolon: m.eidolon,
-        lc: m.lc ?? null,
-        superimp: m.superimp ?? 0,
-        owned: isOwned(m.char),
-      })),
-    }));
-  }
+  // ⚠️ 第四趟（隐金 / fill / mid / 次选）不在这里 —— 它是 `materializePlanRow()`，
+  //    只对当前页的那 20 行跑。整池结果按签名缓存，翻页 / 搜索都不重建这一份。
+  return {
+    pool,
+    lineups,
+    poolRows: scored.length,
+    rankOf,
+    byMember,
+    charScoreOf,
+    isOwned,
+    account,
+    availability,
+    hidden,
+    wc,
+    maxAlternatives,
+    costOfMember,
+  };
+};
+
+/**
+ * 第四趟：把**一条**整池行物化成界面要的方案行（隐金 / 逐版本 / 补金清单 / 过渡 / 次选）。
+ *
+ * ⚠️ 只对当前页调用。这是全模块最大的一处性能设计：实测 1649 行投稿挤出 1442 套候选，
+ *    而 `hiddenReductionOf` 跑全池要 8.6 ms、跑 20 条只要 0.28 ms —— 它压根不参与排序
+ *    （既不进 `score` 也不进任何 tie-break），提前给全池算是纯浪费。
+ *    判断「要不要提前算」只有一条标准：**会不会改变下发的内容**（以及改变本页的内容）。
+ *
+ * ⚠️ **不改写传入的整池行**（`row.variants` 等字段保持原样）：整池现在是**长期缓存**的，
+ *    物化时往上挂 `fill` / `mid` 会让「同一行物化两次」产出不同结构（第二次拿到的
+ *    `variants` 已经是投影后的轻对象）。所以这里一律用局部变量。
+ *
+ * @param row    `buildPlanPool()` 的 `lineups` 里的一行
+ * @param state  `buildPlanPool()` 的返回值
+ */
+export const materializePlanRow = (row, state) => {
+  const {
+    availability, account, wc, isOwned, charScoreOf, costOfMember,
+    maxAlternatives, pool, rankOf, byMember, hidden,
+  } = state;
+
+  const cuts = hiddenReductionOf(row.members, availability, hidden, 'dataset');
+  const hiddenCut = cuts.team ?? 0;
+  const displayGold = Math.max(1, row.gold - hiddenCut);
+  const gapItems = gapItemsOf(row.entry, costOfMember);
+  const fill = fillOf({ ...row, gapItems, cuts }, { availability, cuts, charScoreOf, isOwned });
+  const mid = midOf({ ...row, fill }, { account });
+  const alternatives = alternativesOf(row, pool, rankOf, byMember, maxAlternatives);
+  // 折叠进来的其它配装：**只带界面能用的字段**（成员整包 + 分数 + 补金），
+  // 不跑 fill / mid / cuts —— 用户点开变体时要的是「换个光锥能省几金」，
+  // 给每个变体都算一遍补金明细会把这几十行的成本翻几倍，而没人看。
+  const variants = (row.variants || []).map((v) => ({
+    key: v.key,
+    score: v.score,
+    bestSeason: v.bestSeason,
+    strengthPart: v.strengthPart,
+    costPart: v.costPart,
+    gap: v.gap,
+    gold: v.gold,
+    video: v.video,
+    members: v.members.map((m) => ({
+      char: m.char,
+      eidolon: m.eidolon,
+      lc: m.lc ?? null,
+      superimp: m.superimp ?? 0,
+      owned: isOwned(m.char),
+    })),
+  }));
 
   return {
-    rows: delivered.map((row) => ({
-      key: row.key,
-      members: row.members.map((m) => ({
-        char: m.char,
-        eidolon: m.eidolon,
-        lc: m.lc ?? null,
-        superimp: m.superimp ?? 0,
-        owned: isOwned(m.char),
-      })),
-      score: Number(row.score.toFixed(4)),
-      bestSeason: row.bestSeason,
-      strengthPart: Number(row.strengthPart.toFixed(4)),
-      costPart: Number(row.costPart.toFixed(4)),
-      seasons: row.seasons.map((s) => ({
-        ...s,
-        planScore: Number(s.planScore.toFixed(4)),
-        costPart: Number(s.costPart.toFixed(4)),
-        strengthPart: Number(s.strengthPart.toFixed(4)),
-      })),
-      gap: row.gap,
-      pullsExpected: row.pullsExpected,
-      gold: row.gold,
-      displayGold: row.displayGold,
-      hiddenCut: row.hiddenCut,
-      fill: row.fill,
-      mid: row.mid,
-      alternatives: row.alternatives,
-      variants: row.variants,
-      // 折叠键：前端用它做「一栏一行」的身份（与 `key` 不同，`key` 是整包身份）
-      lineup: row.lineup,
-      video: row.video,
+    key: row.key,
+    members: row.members.map((m) => ({
+      char: m.char,
+      eidolon: m.eidolon,
+      lc: m.lc ?? null,
+      superimp: m.superimp ?? 0,
+      owned: isOwned(m.char),
     })),
-    pool: pool.length,
-    lineups: lineups.length,
+    score: Number(row.score.toFixed(4)),
+    bestSeason: row.bestSeason,
+    strengthPart: Number(row.strengthPart.toFixed(4)),
+    costPart: Number(row.costPart.toFixed(4)),
+    seasons: seasonsDetailOf(row.entry, wc, row.gap).map((s) => ({
+      ...s,
+      planScore: Number(s.planScore.toFixed(4)),
+      costPart: Number(s.costPart.toFixed(4)),
+      strengthPart: Number(s.strengthPart.toFixed(4)),
+    })),
+    gap: row.gap,
+    pullsExpected: fill.reduce((n, it) => n + (it.pullsExpected || 0), 0),
+    gold: row.gold,
+    displayGold,
+    hiddenCut,
+    fill,
+    mid,
+    alternatives,
+    variants,
+    // 折叠键：前端用它做「一栏一行」的身份（与 `key` 不同，`key` 是整包身份）
+    lineup: row.lineup,
+    video: row.video,
+  };
+};
+
+/**
+ * 算抽卡方案（**旧契约**：一次给出前 `maxRows` 行）。
+ *
+ * 界面已经改走「全量索引 + 按页取」（`plan-index.js`），这个包装只留给探针与
+ * `gacha-plan-test` 的逐条对拍 —— 它等价于「建池 → 物化前 maxRows 行」。
+ */
+export const buildPlan = (scored, options = {}) => {
+  const { maxRows = 20 } = options;
+  const state = buildPlanPool(scored, options);
+  const limit = Math.max(1, Math.floor(Number(maxRows) || 20));
+  const delivered = state.lineups.slice(0, limit);
+  return {
+    rows: delivered.map((row) => materializePlanRow(row, state)),
+    pool: state.pool.length,
+    lineups: state.lineups.length,
     poolRows: scored.length,
     maxRows,
-    truncated: lineups.length > delivered.length,
+    truncated: state.lineups.length > delivered.length,
   };
 };

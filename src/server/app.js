@@ -477,6 +477,11 @@ export const createApp = (options = {}) => {
       // 关卡时，我这账号该抽什么」。两者读同一份 frontier 行、同一套 `SCORING`，
       // 但**不共享中间结果** —— 所以必须分开算，不能拿结论那份乘个系数。
       //
+      // ⚠️ 2026-10-20（v4.6.133）：这个接口**不再截断**到前 N 条。
+      //    `query` 在全池上搜（多关键词 AND、含次选配队），`page` / `pageSize` 决定回哪 20 条。
+      //    整池由 `gacha-plan-run.js` 按输入签名缓存，翻页 / 搜索实测 10~30 ms。
+      //    改之前只回前 20 条，于是「搜得到」= 「它恰好在前 20 名」—— 用户报的缺陷就是这个。
+      //
       // 用 POST 是为了带账号持有情况与两套权重（同 `/conclusion` 的理由）；
       // GET 也留着，方便探针和浏览器直接打开看。
       if (path === '/api/archive/plan' && (req.method === 'POST' || req.method === 'GET')) {
@@ -498,7 +503,11 @@ export const createApp = (options = {}) => {
             hiddenCosts: body.hiddenCosts,
             versionWeights: body.versionWeights
               ?? JSON.parse(q.get('versionWeights') || 'null') ?? undefined,
-            maxRows: body.maxRows ?? q.get('maxRows') ?? undefined,
+            // 搜索（多关键词用空格 / 逗号 / 顿号分隔，AND；同时搜次选配队）。
+            query: body.query ?? q.get('q') ?? q.get('query') ?? '',
+            // 分页：页码 1 起，页大小夹在 1~200（越界由 `planPageOf()` 夹回来，不报错）。
+            page: body.page ?? q.get('page') ?? undefined,
+            pageSize: body.pageSize ?? q.get('pageSize') ?? q.get('maxRows') ?? undefined,
           });
           json(res, 200, result);
         } catch (err) {

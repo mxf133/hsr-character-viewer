@@ -69,7 +69,7 @@ import {
 // —— 它们不碰 DOM、不碰评分，而「284 条是不是 15 页、最后一页几条、页码怎么夹」这类
 // 算术不该为了测它去起一次真浏览器（本机沙箱也起不来服务，见 docs/CDP布局套件.md §2.1）。
 import {
-  clampPage, matchesQuery, pageSliceOf, pageWindowOf, queryOf, queryTermsOf, searchTextOf,
+  clampPage, matchesQuery, pageWindowOf, queryOf, queryTermsOf, searchTextOf,
   withRealRank,
 } from './advice-paging.js';
 import { renderRecordSection, wireRecordPanel } from './battle-record.js';
@@ -313,8 +313,11 @@ const state = {
    * **抽卡方案的分页状态**（用户 2026-10-18：「提供尽可能多的配队，为此可以进行分页显示，
    * 每页显示 20 个配队」）。
    *
-   * `teamPlanPage` 是**过滤之后**那一段的页码（1 起）。搜索词一变就回到第 1 页 ——
+   * `teamPlanPage` 是**搜索过滤之后**那一段的页码（1 起）。搜索词一变就回到第 1 页 ——
    * 否则「搜索一个只在第 3 页才出现的角色」会先落到一个空页上。
+   *
+   * ⚠️ 2026-10-20（v4.6.133）起**切页不是纯前端动作**：服务端只回当前页，所以翻页
+   *    也要发一次请求（带上 `page`）。服务端会把越界页码夹回来，`fetchPlan()` 以它为准。
    */
   teamPlanPage: 1,
   /**
@@ -325,12 +328,18 @@ const state = {
    * 全在里面，前端**不重算**（重算就是第二份加权实现，而 2026-10 修的每一个
    * 「两个榜对不上」都源于此）。
    *
-   * `planKey` 是请求时用的输入签名（`planInputsKey()`）：签名没变就不再请求。
-   * 翻页 / 搜索根本不走这里 —— 它们只重画当前页那 20 张卡。
+   * ⚠️ 2026-10-20 起 `plan.rows` 只是**当前页**的 20 条（服务端分页 + 全量搜索），
+   *    全池规模在 `plan.total` / `plan.lineups` / `plan.submissions` 上。
+   *    `planKey` 是「输入 + 搜索词 + 页码」的完整签名（`planRequestKey()`）：
+   *    签名没变就不再请求；变了就请求（服务端有整池缓存，实测 4~30 ms）。
    */
   plan: null,
   planKey: '',
   planError: '',
+  /** 上一次请求用的**输入**签名（不含搜索词 / 页码）：它一变就把页码归 1。 */
+  planInputsKey: '',
+  /** 正在取方案（翻页 / 搜索 / 改权重）：界面据此把「正在查找…」印在状态行上。 */
+  planPending: false,
   /**
    * 三个分项的归一上下限，**当结论还没加载过时**由 `/api/archive/packs` 随包带回
    * （角色面板那条路：用户可能直接在「角色信息」页点开一张卡）。
@@ -2049,12 +2058,13 @@ const UNIT_ROWS_MAX = 80;
 /**
  * **抽卡方案每页显示多少支队伍**（用户 2026-10-18：「每页显示 20 个配队」）。
  *
- * ⚠️ 它是**展示层**的常量，与 `SCORING.teamPlanMaxRows`（下发上限）是两件事：
- *    后者决定 `teamPlan()` 回多少条（现在是全池，兜底 500），这个决定一次画几张卡。
- *    一页 20 张卡按结构数是**几百个 DOM 节点**（每卡 4 个位置 + 3 条分项条 + 补金顺序
- *    + 过渡行），全池 284 张就是**近万个节点** —— 那一下重建是肉眼可见的卡顿，
- *    而 20 张这一档在正常机器上感觉不到。⚠️ 这里**不写具体毫秒数**：本机起不了浏览器
- *    （`bin/serve.mjs` 的 DPAPI 要 spawn 系统命令行进程，沙箱拦下），没有实测数据就不编。
+ * ⚠️ 2026-10-20（v4.6.133）起它是**请求参数**（`pageSize`），服务端按它切页 ——
+ *    所以「一页几张卡」只有这一处定义，服务端夹 1~200（`plan-index.js` 的
+ *    `PLAN_PAGE_SIZE_MAX`）。改之前服务端一次发整池、这里决定切哪一段；现在反过来。
+ * ⚠️ 20 这个数不只是排版：一页 20 张卡按结构数是**几百个 DOM 节点**（每卡 4 个位置 +
+ *    3 条分项条 + 补金顺序 + 过渡行），而服务端也只物化这 20 行的补金明细。
+ * ⚠️ 这里**不写具体毫秒数**：本机沙箱起不了 `bin/serve.mjs`（DPAPI 要 spawn 系统
+ *    命令行进程），没有实测数据就不编。
  */
 const TEAM_PLAN_PAGE_SIZE = 20;
 
@@ -4640,13 +4650,24 @@ const planRecommendation = (row) => {
 };
 
 // ------------------------------------------------- 抽卡方案：缓存 / 搜索 / 分页
+//
+// ⚠️ 2026-10-20（v4.6.133）：**搜索与分页都搬到服务端了**。
+//
+// 改之前：服务端只回前 20 条（`maxRows` 默认 20），这里再对那 20 条做过滤 / 切片 ——
+// 于是「搜得到」= 「它恰好在前 20 名」，翻页也只有 1 页。用户要的是「展示所有投稿、
+// 能搜到所有投稿」，而真实数据 1066 条投稿 → 267 个角色组合。
+//
+// 现在：服务端回**当前页**的 20 条 + `total` / `pages` / `page` / 全池规模；
+// 搜索词与页码进请求（`planRequestKey()`），命中数、次选命中数、真实名次都由服务端给。
+// 这里**不再做任何过滤或切片** —— 前端只画拿到的那 20 张卡，口径只有服务端一份。
 
 /**
  * 抽卡方案的**输入签名**（决定要不要重新请求 `/api/archive/plan`）。
  *
  * 只有这几样东西会改变方案：账号的三份持有规模、**抽卡权重**、**隐金设置**、
  * **版本权重**，以及**关卡**（这是 2026-10-18 新加的：方案现在只看一个关卡）。
- * 其余状态（翻页、搜索词、滚动位置）一律不该触发重算。
+ * 搜索词与页码**不在**这里（它们是 `planRequestKey()` 的第二段）—— 分开的理由是：
+ * 输入一变要回第 1 页，而纯粹翻页不该重置页码。
  *
  * ⚠️ 签名只用于「同一份输入不重复请求」，**不再参与算分** —— 算分全在服务端。
  *    所以这里允许比服务端的归一化口径粗一点：签名相同而口径不同只会导致
@@ -4664,48 +4685,49 @@ const planInputsKey = () => JSON.stringify([
 ]);
 
 /**
- * 一支队伍的可搜索文本：四个成员的**角色名 + 光锥名**（中文名与英文键都进）。
+ * 一次请求的完整签名 = 输入签名 + 归一化后的搜索词 + 页码。
  *
- * 用户 2026-10-18 的原话是「能够根据角色或光锥名称进行搜索」，所以光锥也必须能搜 ——
- * 「我想找用某某专锥的那支队」是真实需求。搜索**只看成员**，不看关卡名：
- * 那是筛选条件不是队伍身份。
+ * 三级缓存都认这个键：本地的 `state.planKey`、服务端的整池缓存（忽略后两段）、
+ * 以及服务端「同一个词翻页不重算」的那份 `lastQuery`。
  */
-const teamPlanRowText = (row) => searchTextOf((row.members || []).flatMap(
-  (m) => [m.char, m.charCn, m.lc, m.lcCn],
-));
-
-/**
- * 这一行的**次选配队**里出现的角色名（2026-10-20）。
- *
- * 用户报的缺陷：「不支持搜索次选结果」—— 原先搜索只看本队那四个人，于是「砂金」
- * 只在某支方案的第 2 支次选里出现时，搜「砂金」**搜不到那一行**。
- *
- * ⚠️ 两组文本分开留着、不合并成一个串：合并之后没法区分「本队命中」与「只在次选里
- *    命中」，界面也就没法说清「这 N 条是靠次选匹配上的」—— 而这两类结果的可信度不同
- *    （本队出现 = 照抄就能打；只在次选出现 = 得换人）。
- */
-const teamPlanAltText = (row) => searchTextOf((row.alternatives || []).flatMap(
-  (alt) => (alt.members || []).flatMap((m) => [m.char, m.charCn]),
-));
+const planRequestKey = () => `${planInputsKey()}|${queryOf(state.teamPlanQuery)}|${state.teamPlanPage}`;
 
 /** 正在请求的那一次的签名（并发时只认最后一次，见 `fetchPlan()` 的竞态防护）。 */
 let planFetchKey = '';
 
 /**
- * 取抽卡方案 —— 服务端算，前端只缓存**最近一次**的返回。
+ * 取抽卡方案 —— 服务端算**全池**，只回当前页（2026-10-20）。
  *
  * 为什么不像旧版那样在浏览器里算：旧版 `teamPlan()` 读的是服务端下发的
  * `frontierTiers` 再自己加权，于是「总榜的分」与「方案的分」各有一份加权实现，
  * 2026-10 反复修的「两个榜对不上」都是这么来的。现在只有一份（`gacha-plan.js`）。
  *
- * 缓存策略：签名（`planInputsKey()`）没变就直接返回上一份；变了才请求。
- * 翻页 / 搜索完全不走这里 —— 它们只重画当前页那 20 张卡。
+ * 缓存策略：`planRequestKey()`（输入 + 搜索词 + 页码）没变就直接用上一份。
+ * 变了才请求 —— 服务端侧整池按输入签名缓存，所以翻页 / 搜索实测只有 4~30 ms。
+ *
+ * ⚠️ **输入变了要回第 1 页**：换关卡 / 改权重之后原来那页可能已经不存在（池子换了），
+ *    停在旧页码会看到一段毫无意义的位置。搜索词变了同理（由调用方重置）。
+ * ⚠️ 竞态：`planFetchKey` 只认最后一次请求，避免慢的旧结果覆盖新结果。
+ *    页码以**服务端回显**为准（它会把越界页码夹回来）。
  */
 const fetchPlan = async () => {
-  const key = planInputsKey();
+  // 输入（关卡 / 账号 / 三类权重）变了 → 页码归 1。不这样做的话「在 267 支的第 9 页
+  // 切到一个只有 3 支的关卡」会先请求第 9 页，再被服务端夹回来，白跑一次。
+  const inputs = planInputsKey();
+  if (state.planInputsKey && state.planInputsKey !== inputs) state.teamPlanPage = 1;
+  state.planInputsKey = inputs;
+
+  // ⚠️ 页码与搜索词必须**当场抄下来**：下面为了「正在查找…」会先重画一次，而
+  //    `renderTeamPlan()` 会用**上一份**结果里的页码回写 `state.teamPlanPage` ——
+  //    不抄走的话，第 2 页的请求会带着被回写成的 1 发出去（第一版就这么翻不动页）。
+  const requested = { page: state.teamPlanPage, query: state.teamPlanQuery };
+  const key = planRequestKey();
   if (state.plan && state.planKey === key) { renderTeamPlan(); return state.plan; }
   planFetchKey = key;
   state.planError = '';
+  state.planPending = true;
+  // 先把「正在查找…」画出来（保留旧卡片，不清空 —— 本地服务很快，清空只会闪）。
+  renderTeamPlan();
   try {
     const res = await fetch('/api/archive/plan', {
       method: 'POST',
@@ -4717,6 +4739,10 @@ const fetchPlan = async () => {
         drawWeights: { ...(state.drawWeights || {}) },
         hiddenCosts: { ...(state.hiddenCosts || {}) },
         versionWeights: [...(state.versionWeights || [])],
+        // 搜索与分页（2026-10-20）：`query` 在**全池**上筛，`page` 只决定回哪 20 条。
+        query: requested.query,
+        page: requested.page,
+        pageSize: TEAM_PLAN_PAGE_SIZE,
       }),
     });
     const data = await res.json().catch(() => null);
@@ -4728,17 +4754,21 @@ const fetchPlan = async () => {
         : (data?.error || `HTTP ${res.status}`);
       throw new Error(message);
     }
-    // 期间账号 / 权重 / 关卡又变了就以最新那一次为准，避免旧结果覆盖新结果。
+    // 期间账号 / 权重 / 关卡 / 搜索词又变了就以最新那一次为准，避免旧结果覆盖新结果。
     if (planFetchKey !== key) return state.plan;
     state.plan = data;
-    state.planKey = key;
-    state.teamPlanPage = 1;
+    // 页码以服务端为准：搜索把 267 支缩到 3 支时，用户可能还停在第 9 页。
+    state.teamPlanPage = Math.max(1, Number(data.page) || 1);
+    // 夹过页之后的键才是「这份结果对应的键」，否则下次进来会白请求一次。
+    state.planKey = planRequestKey();
   } catch (err) {
     if (planFetchKey === key) {
       state.plan = null;
       state.planKey = '';
       state.planError = err.message;
     }
+  } finally {
+    if (planFetchKey === key) state.planPending = false;
   }
   renderTeamPlan();
   return state.plan;
@@ -4752,6 +4782,11 @@ const fetchPlan = async () => {
  * 挂在不同位置 —— 不做第二套逻辑，否则「上面能点到第 7 页、下面不能」这种事早晚出现。
  *
  * 只有一页时整条**隐藏**（`hidden`），免得一块没有信息量的按钮占着版面。
+ *
+ * ⚠️ 2026-10-20：`total` / `pages` 现在是**服务端给的**（搜索命中数 / 总页数）。
+ *    切页不是纯前端动作 —— 服务端只下发当前页，所以 `go()` 要重新请求。
+ *    加载期间按钮不禁用（本地服务 4~30 ms，禁用反而会打断连点），`planPending`
+ *    会把状态行改成「正在查找…」。
  */
 const renderTeamPlanPager = (total, pages) => {
   const show = pages > 1;
@@ -4765,8 +4800,8 @@ const renderTeamPlanPager = (total, pages) => {
       const next = clampPage(target, pages);
       if (next === state.teamPlanPage) return;
       state.teamPlanPage = next;
-      // 只重画这一块：翻页不是计算动作，数据早在 `state.plan` 里。
-      renderTeamPlan();
+      // 切页要**重新取**（服务端只回当前页），取回来再重画。
+      void fetchPlan();
       // 翻页后回到列表顶部 —— 否则人还停在上一页的末尾，看到的是新一页的后半截。
       if (el.teamPlanPager) el.teamPlanPager.scrollIntoView({ block: 'start', inline: 'nearest' });
     };
@@ -4817,8 +4852,10 @@ const renderTeamPlanPager = (total, pages) => {
  * 权重旋钮，但**分项名**必须各叫各的。⚠️ 抽卡权重那三个**输入框**不改名（用户确认）。
  * ⚠️ **2026-10-18**：列表从「最多 15 条」改成**整池 + 每页 20 支**（用户：「提供尽可能多的
  * 配队，为此可以进行分页显示配队，每页显示 20 个配队」），并加了按角色 / 光锥名的搜索框。
- * 三件展示层的事各归各：`planWithCache()` 管**算一次**、`pageSliceOf()` 管**切哪一段**、
- * `renderTeamPlanPager()` 管**画翻页条**。卡片构建只跑「当前这一页」的 20 条。
+ * 三件展示层的事各归各：`fetchPlan()` 管**取一次**、`renderTeamPlanPager()` 管**画翻页条**、
+ * 本函数管**画当前页的卡片**。卡片构建只跑「当前这一页」的 20 条。
+ * ⚠️ **2026-10-20（v4.6.133）**：过滤与切片都搬到了服务端（`plan-index.js`）——
+ * 「切哪一段」不再是前端的活，`plan.rows` 拿到手就是这一页。
  */
 /**
  * ② 抽卡方案（**队伍口径**，2026-10-18 重构后由服务端算）。
@@ -4842,8 +4879,8 @@ const renderTeamPlanPager = (total, pages) => {
  *    所以这里**没有** `strengthPct / gapPct / versatilityPct` 那三个 0~100 的百分数 ——
  *    新口径下强度是小数量（≤ ws），再乘个 100 反而误导。
  *
- * 展示层的三件事各归各：`fetchPlan()` 管**取一次**（带缓存）、`pageSliceOf()` 管
- * **切哪一段**、`renderTeamPlanPager()` 管**画翻页条**。卡片构建只跑当前这一页。
+ * 展示层的三件事各归各：`fetchPlan()` 管**取一次**（带缓存）、`plan-index.js` 在服务端
+ * 决定**哪一页**、`renderTeamPlanPager()` 管**画翻页条**。卡片构建只跑当前这一页。
  */
 /**
  * 一排**只读的小头像**（2026-10-20）。
@@ -4948,73 +4985,71 @@ const renderTeamPlan = () => {
   const ws = formatShare(plan.drawWeights?.strength ?? 0.5);
   const wc = formatShare(plan.drawWeights?.cost ?? 0.5);
 
-  // ---- 搜索 + 分页 -----------------------------------------------------------
+  // ---- 搜索 + 分页（2026-10-20：**全部由服务端做**）---------------------------
   //
-  // 搜索只筛**已经下发的那批行**（不重算分数）：命中的行仍按补金推荐分排，
-  // 名次沿用它在完整列表里的序号 —— 「我搜出来的这支队是第 12 名」要有意义。
-  const query = queryOf(state.teamPlanQuery);
-  const terms = queryTermsOf(state.teamPlanQuery);
-  // ⚠️ 2026-10-20（用户：「不支持搜索次选结果」）：本队命中 **或** 次选配队里命中都算。
-  //    但两类分开计数 —— 卡片上会给「只在次选里出现」的那几条加标记（见下面 `isAltHit`），
-  //    因为它意味着「照抄这队打不了，得换人」。
-  const mainHitOf = (row) => matchesQuery(teamPlanRowText(row), terms);
-  const altHitOf = (row) => matchesQuery(teamPlanAltText(row), terms);
-  const matched = terms.length
-    ? rows.filter((row) => mainHitOf(row) || altHitOf(row))
-    : rows;
-  const altOnlyCount = terms.length
-    ? matched.filter((row) => !mainHitOf(row)).length
-    : 0;
-  // 页码越界（搜索把结果缩短了 / 换账号后池子变小）时夹回最后一页。
-  const { rows: pageRows, start, page, pages } = pageSliceOf(
-    matched, state.teamPlanPage, TEAM_PLAN_PAGE_SIZE,
-  );
-  state.teamPlanPage = page;
-  // ⚠️ 卡片上的名次必须是**完整列表**里的名次，不是「筛选后第几条」
-  //    （用户 2026-10-18：「搜索到的结果应当显示其真实的排名」）。
-  const pageRanked = withRealRank(rows, pageRows);
+  // `plan.rows` 就是**当前页**那 20 条，不再在这里过滤或切片：
+  //   * 搜索在全池上做（多关键词 AND、含次选配队），命中数在 `plan.query.hits`；
+  //   * 每张卡的名次是它在**整池**里的真实名次（`row.rank`），不是「本页第几张」；
+  //   * `plan.total` = 命中数，`plan.pages` / `plan.page` = 总页数 / 当前页。
+  // 页码以服务端为准（它会把越界页码夹回来），所以这里只回写不回算。
+  const found = plan.query || {};
+  const terms = Array.isArray(found.terms) ? found.terms : [];
+  const total = Math.max(0, Number(plan.total ?? rows.length));
+  const pages = Math.max(1, Number(plan.pages) || 1);
+  const page = Math.max(1, Number(plan.page) || 1);
+  const start = Math.max(0, Number(plan.start) || 0);
+  // ⚠️ 只在**没有请求在飞**时回写页码：加载中这块画的是上一份结果，把它回写进
+  //    `state.teamPlanPage` 会把「刚点下去的第 2 页」冲回第 1 页（踩过）。
+  if (!state.planPending) state.teamPlanPage = page;
 
   const hit = terms.length
     ? ` · 搜索「${terms.join(' + ')}」${terms.length > 1 ? '（同时包含）' : ''}`
-      + `命中 ${matched.length} 支`
-      + (altOnlyCount ? `（其中 ${altOnlyCount} 支只在次选里含这些角色）` : '')
+      + `命中 ${Number(found.hits ?? total)} 支`
+      + (Number(found.altOnly) > 0
+        ? `（其中 ${Number(found.altOnly)} 支只在次选里含这些角色）` : '')
+      // 池子太大时服务端不建次选索引（见 `plan-index.js`），这里必须说清楚 ——
+      // 否则用户会以为「这些队的次选里确实没有」。
+      + (found.altSearch === false ? '（投稿量过大，本次只匹配本队四个位置）' : '')
     : '';
-  // 2026-10-19：原来写 `· 20 支队伍 · 第 1–20 条 / 共 20 条` ——「20 支队伍」与「共 20 条」
-  // 是同一个数，一页装得下时「第 1–20 条」又是废话（整页就 20 条）。现在只在**真的
-  // 分了页**时才报区间，否则一个「N 支」就够。
-  const range = matched.length
-    ? (pages > 1
-      ? ` · 第 ${start + 1}–${start + pageRows.length} / 共 ${matched.length} 支`
-      : ` · ${matched.length} 支`)
+  // 全池规模：`lineups` = 角色组合数（能翻到的总条数），`submissions` = 真实投稿条数。
+  // 用户 2026-10-20 的要求是「展示所有的投稿」，所以这两个数要印出来。
+  const poolText = `共 ${Number(plan.lineups ?? total)} 支`
+    + (Number(plan.submissions) > 0 ? ` · 来自 ${Number(plan.submissions)} 条投稿` : '');
+  const range = total
+    ? (pages > 1 ? ` · 第 ${start + 1}–${start + rows.length} / ${total} 支` : '')
     : '';
+  const pendingText = state.planPending ? ' · 正在查找…' : '';
   setMeta(rows.length
-    ? `${plan.envLabel || plan.env}` + hit + range
-      + (pages > 1 ? ` · 第 ${page}/${pages} 页` : '')
-    : `${plan.envLabel || plan.env} · 没有可用配队`);
+    ? `${plan.envLabel || plan.env}` + hit + ` · ${poolText}` + range
+      + (pages > 1 ? ` · 第 ${page}/${pages} 页` : '') + pendingText
+    : `${plan.envLabel || plan.env} · 没有可用配队` + pendingText);
 
-  renderTeamPlanPager(matched.length, pages);
+  renderTeamPlanPager(total, pages);
 
-  if (!matched.length) {
-    el.teamPlanBody.appendChild(text('p', 'muted small', query
+  if (!total || !rows.length) {
+    el.teamPlanBody.appendChild(text('p', 'muted small', terms.length
       ? (terms.length > 1
         ? `没有配队**同时**包含「${terms.join(' + ')}」这些角色或光锥`
           + '（多个关键词用空格分隔，结果要全都出现在同一支队伍里）。'
         : `没有配队包含「${state.teamPlanQuery.trim()}」这个角色或光锥。`)
-        + '（搜索只在这批配队里找 —— 想换人或换队，看上面的角色总榜。）'
+        + `本关卡一共 ${Number(plan.lineups) || 0} 支配队，全部都在搜索范围内 ——`
+        + '想换人或换队，看上面的角色总榜。'
       : '这个关卡下没有可用的配队（该关卡的投稿里没有可评成绩）。'));
     return;
   }
 
-  pageRows.forEach((row, i) => {
+  rows.forEach((row, i) => {
     const card = text('div', 'advice-plan-team');
     const head = text('div', 'advice-plan-team-head');
-    // 名次 = **完整列表**里的真实名次（搜索 / 翻页都只是视图，不许改写名次）。
-    head.appendChild(text('span', 'advice-unit-rank', `#${pageRanked[i].rank || start + i + 1}`));
-    // 「这条是靠次选命中的」标记（2026-10-20）：搜索时本队四个人没有关键词，
+    // 名次 = **整池**里的真实名次（搜索 / 翻页都只是视图，不许改写名次）。
+    // 服务端给 `rank`；万一缺了就按「本页起点 + 序号」兜底（本地服务不该缺）。
+    head.appendChild(text('span', 'advice-unit-rank',
+      `#${Number(row.rank) || start + i + 1}`));
+    // 「这条是靠次选命中的」标记（2026-10-20）：本队四个人没有关键词，
     // 只有它下面那几支次选配队里有。不加标记的话，用户会以为「照抄这队就能用上这个角色」。
-    if (terms.length && !mainHitOf(row)) {
+    if (row.altOnly) {
       const altMark = text('span', 'advice-plan-alt-hit', '次选命中');
-      altMark.title = '本队里没有你搜的角色，是它下面的「次选配队」里有';
+      altMark.title = '本队四个位置里没有你搜的角色/光锥，是它下面的「次选配队」里有';
       head.appendChild(altMark);
     }
     // 分数保留两位：补金推荐分的量纲是 0~ws+wc ≈ 0~1.5（版本权重最大 6 时到 6+），
@@ -5808,14 +5843,17 @@ export const mountAdviceView = (options = {}) => {
     },
   });
   // 抽卡方案：换词就**回第 1 页** —— 否则「搜一个只在第 4 页出现的角色」会先落在空页上。
+  //
+  // ⚠️ 2026-10-20：搜索现在是**服务端**动作（全池匹配），所以这里要重新请求，
+  //    不再是「只重画当前页」。防抖仍在（`SEARCH_DEBOUNCE` = 120 ms），
+  //    服务端命中整池缓存时一次 4~30 ms，连打不会排队。
   wireSearchInput(el.teamPlanSearch, {
     timerKey: 'teamPlanQueryTimer',
     onQuery: (value) => {
       if (value === state.teamPlanQuery) return;
       state.teamPlanQuery = value;
       state.teamPlanPage = 1;
-      // 搜索是纯展示层动作：不重新请求，只重画当前页。
-      renderTeamPlan();
+      void fetchPlan();
     },
   });
 
