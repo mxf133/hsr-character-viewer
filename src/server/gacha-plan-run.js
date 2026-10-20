@@ -10,7 +10,7 @@
  *   * 逐版本取**最大值**（不是版本加权平均），版本权重乘进每一版的分；
  *   * Δgold = 0（账号已齐）照样进榜，性价比得分' = 1。
  *
- * ⚠️ **2026-10-20（v4.6.133）：全量 + 分页 + 全量可搜。**
+ * ⚠️ **2026-10-20（v4.6.134）：全量 + 分页 + 全量可搜。**
  *    改之前这里 `maxRows` 默认 20、上限 200，搜索与分页都在浏览器里对那 20 条做 ——
  *    「搜得到」= 「它恰好在前 20 名」。现在两层缓存（关卡数据 / 整池）+ 服务端搜索，
  *    浏览器每次只收当前页的 20 条。缓存的淘汰与签名见 `plan-index.js` 与下面三个
@@ -177,7 +177,7 @@ const rowOf = (r) => ({
   season: r.season,
   c: Number(r.cost) || 0,
   a: r.actionValue === null || r.actionValue === undefined ? null : Number(r.actionValue),
-  // ⚠️ v4.6.133 起用**真实投稿数**（`archive.js` 新带出的 `submissions`），不再是写死的 1：
+  // ⚠️ v4.6.134 起用**真实投稿数**（`archive.js` 新带出的 `submissions`），不再是写死的 1：
   //    「这一行被几个人投过」是状态行里「来自 M 条投稿」的唯一来源。
   n: Math.max(1, Number(r.submissions) || 1),
   m: (r.members || []).map((m) => `${m.char}|${m.eidolon}|${m.lc || '-'}|${m.superimp || 1}`),

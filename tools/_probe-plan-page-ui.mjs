@@ -1,4 +1,4 @@
-// 抽卡方案「全量搜索 + 分页」的**真浏览器探针**（2026-10-20，v4.6.133）。
+// 抽卡方案「全量搜索 + 分页」的**真浏览器探针**（2026-10-20，v4.6.134）。
 //
 //   node tools/cdp-serve.mjs --port=8361 --accounts=1        # 另开一个窗口
 //   msedge --remote-debugging-port=9222 --headless=new --user-data-dir=<临时目录> about:blank
