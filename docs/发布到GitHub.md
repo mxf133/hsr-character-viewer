@@ -99,10 +99,29 @@ git log --name-only --pretty=format: origin/main..HEAD | sort -u   # 复核
 > 摘除后记得删掉 `refs/original/refs/heads/main` 与临时备份分支，并把其它含该图的分支
 > 重置到新 `main`（`git reset --mixed main` 不会动工作区里未提交的数据文件）。
 
+### 已经推上去过怎么办（2026-10-20 实例）
+
+首次公开时 `tools/` 下约 20 个探针脚本把真实 UID 与小号 UID 写死在常量里，**已经随
+`Initial public release` 推上去了**。用户要求彻底抹掉，做法是整段历史重写 + 强推：
+
+```bash
+git bundle create <备份>.bundle --all           # 先留一份全量备份，别省
+python -m git_filter_repo --force --replace-text <替换表>.txt
+#   替换表每行一条：  <旧串>==><新串>
+#   （filter-repo 会把 origin 移除，重写完成后 git remote add origin <url> 加回来）
+git push --force-with-lease=main:<旧 sha> origin main
+git push --force origin "refs/tags/*:refs/tags/*"   # 旧 tag 全部指向旧提交，必须一起重指
+```
+
+⚠️ 强推后**所有提交与 tag 的哈希都变了**：已有 Release 的 tag 会被重指（同名 Release 仍在，
+但里面的 commit 链接换成了新哈希）。本仓库 130 个提交、41 个 tag，重写耗时约 9 秒。
+⚠️ 替换表里 `C:\Users\<用户名>` 这类路径也要一并替换 —— 它们同样暴露本机用户名。
+
 ## 5. 已发布记录
 
 | 版本 | Release | 附件 |
 | --- | --- | --- |
+| v4.6.135 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.135> | `hsr-character-viewer-v4.6.135.zip`（5.29 MB，`git archive` 生成，不含 `data/`；发布说明汇总 v4.6.109→135，README 重写为四张虚拟账号截图） |
 | v4.6.108 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.108> | `hsr-character-viewer-v4.6.108.zip`（4.33 MB，`git archive` 生成，不含 `data/`；发布说明汇总 v4.6.105→108） |
 | v4.6.104 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.104> | `hsr-character-viewer-v4.6.104.zip`（4.18 MB，`git archive` 生成，不含 `data/`） |
 | v4.6.103 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.103> | `hsr-character-viewer-v4.6.103.zip`（4.17 MB，`git archive` 生成，不含 `data/`） |
