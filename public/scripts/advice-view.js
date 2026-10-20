@@ -3098,7 +3098,9 @@ const teamSlot = (members, video = null) => {
  *    `videoUrlOf()` 已经统一挡掉了。这里仍然对 `new URL()` 失败做兜底：拿到坏地址时
  *    **不画图标**，绝不留一个点了没反应的东西。
  */
-const VIDEO_PLATFORM_LABEL = { bilibili: 'bilibili', youtube: 'YouTube', video: '第三方视频站' };
+// 2026-10-20：`bilibili` 的显示名改成官方写法「BiliBili」（原来是小写 bilibili，
+// 与 YouTube 并排时大小写不统一、看着像两个不同层级的站）。
+const VIDEO_PLATFORM_LABEL = { bilibili: 'BiliBili', youtube: 'YouTube', video: '第三方视频站' };
 
 /** 视频地址 → 平台键（`bilibili` / `youtube` / `video`）；地址非法时返回 null。 */
 const videoPlatformOf = (url) => {
@@ -3161,7 +3163,15 @@ const videoLink = (url) => {
   a.href = String(url);
   a.target = '_blank';
   a.rel = 'noopener noreferrer';
-  const title = `来源视频 · ${VIDEO_PLATFORM_LABEL[platform]}（在新标签页打开）`;
+  // 2026-10-20（用户要求）：按钮上**印出站名**，不再只有一个图标 —— 一排视频图标
+  // 长得一样，读者分不出点下去会去 B 站还是 YouTube。
+  //
+  // ⚠️ 为什么印的是站名而不是**视频标题**：数据集里只有 `video_url` 与 `video_date`
+  //    （`tools/herta-build.mjs` 的 `sample` 就这两项），源头没有标题字段；而在线取
+  //    （YouTube oEmbed）在国内不可达、且跨域抓回来的东西还可能是空壳，比站名更糟。
+  //    这是用户给的备选方案原话：「不能显示标题（例如国内访问不了油管）则显示来源」。
+  const label = VIDEO_PLATFORM_LABEL[platform];
+  const title = `来源视频 · ${label}（在新标签页打开）`;
   a.title = title;
   a.setAttribute('aria-label', title);
 
@@ -3169,8 +3179,10 @@ const videoLink = (url) => {
   // ⚠️ 走 `innerHTML` 时浏览器会把 `<svg>` 放进 **SVG 命名空间**（HTML 解析器对
   //    `svg` 这个标签名有特例），所以不必自己写 createElementNS —— 纯静态字符串，
   //    没有任何用户数据进来，不存在注入面。
+  // ⚠️ `innerHTML` 会**清空**已有子节点，所以站名必须在它之后再 append。
   if (icon) a.innerHTML = icon;
   else a.appendChild(text('span', 'advice-team-video-glyph', '▶'));
+  a.appendChild(text('span', 'advice-team-video-label', label));
 
   return a;
 };
@@ -4662,6 +4674,20 @@ const teamPlanRowText = (row) => searchTextOf((row.members || []).flatMap(
   (m) => [m.char, m.charCn, m.lc, m.lcCn],
 ));
 
+/**
+ * 这一行的**次选配队**里出现的角色名（2026-10-20）。
+ *
+ * 用户报的缺陷：「不支持搜索次选结果」—— 原先搜索只看本队那四个人，于是「砂金」
+ * 只在某支方案的第 2 支次选里出现时，搜「砂金」**搜不到那一行**。
+ *
+ * ⚠️ 两组文本分开留着、不合并成一个串：合并之后没法区分「本队命中」与「只在次选里
+ *    命中」，界面也就没法说清「这 N 条是靠次选匹配上的」—— 而这两类结果的可信度不同
+ *    （本队出现 = 照抄就能打；只在次选出现 = 得换人）。
+ */
+const teamPlanAltText = (row) => searchTextOf((row.alternatives || []).flatMap(
+  (alt) => (alt.members || []).flatMap((m) => [m.char, m.charCn]),
+));
+
 /** 正在请求的那一次的签名（并发时只认最后一次，见 `fetchPlan()` 的竞态防护）。 */
 let planFetchKey = '';
 
@@ -4819,6 +4845,75 @@ const renderTeamPlanPager = (total, pages) => {
  * 展示层的三件事各归各：`fetchPlan()` 管**取一次**（带缓存）、`pageSliceOf()` 管
  * **切哪一段**、`renderTeamPlanPager()` 管**画翻页条**。卡片构建只跑当前这一页。
  */
+/**
+ * 一排**只读的小头像**（2026-10-20）。
+ *
+ * 用在「次选配队」「其它配装」「过渡档位」这三种折叠 / 摘要行上 —— 它们此前只印
+ * 角色名字串（`砂金•戏浪 / 不死途 / 缇宝 / 知更鸟•晴歌`），四支次选并排时读者得逐字
+ * 比对才能看出「差的是哪一个人」（用户报的缺陷：「过渡和次选配队都没有图标和视频」）。
+ *
+ * ⚠️ 与四个位置的卡片（`.advice-plan-team-slot`）**不是一回事**：那张卡片带 E 档、
+ *    光锥、叠影和「已有 / 缺」徽章，这里是纯标识，20px 见方、挂了 `title` 供悬停看全名。
+ * ⚠️ 图标表里没有这个键（新角色 / 译名差异）时 `iconUrlOf()` 返回 null，这一格**直接
+ *    不画** —— 宁可少一个头像，也不留一个空框（那会被读成「这个位置没人」）。
+ */
+const planMemberIcons = (members, className = 'advice-plan-variant-icon') => {
+  const wrap = text('span', 'advice-plan-variant-icons');
+  for (const member of members || []) {
+    const url = iconUrlOf('char', member.char);
+    if (!url) continue;
+    const label = member.charCn || cn(member.char);
+    wrap.appendChild(iconImg(url, className, label));
+  }
+  return wrap;
+};
+
+/**
+ * 方案卡片的「这个分数怎么来的」（2026-10-20）。
+ *
+ * 用户报的缺陷：「无法显示队伍强度得分的详情」—— 卡片上那行
+ * `= 队伍强度 0.938 × 0.5 + 性价比 0.308 × 0.5（行动值口径）` 此前是**死文本**，
+ * 一个数都点不开。两个原因叠在一起：
+ *   ① 分数那一行根本没建 `.advice-value-tip`（浮层内容）；
+ *   ② `wireValueTips()` 只对总榜容器调过 —— 方案那块从来没绑过点击委托，
+ *      所以就算建了 tip 也不会响应。
+ *
+ * 这里补上 ①，`renderTeamPlan()` 末尾补 ②。表格一行一个版本（该关卡在这个窗口里
+ * 有几版投稿就列几行），读者能直接看出「这个分是哪一版挣的、别的版差多少」。
+ */
+const planScoreTip = (row, plan, ws, wc) => {
+  const isTurn = plan.kind === 'turn';
+  const bestSeason = String(row.bestSeason ?? '');
+  const best = (row.seasons || []).find((s) => String(s.season) === bestSeason)
+    || (row.seasons || [])[0] || null;
+  const rows = (row.seasons || []).map((s) => [
+    `${s.season}${String(s.season) === bestSeason ? ' ·最佳' : ''}`,
+    isTurn ? `${s.score} 轮` : `行动值 ${s.score}`,
+    Number(s.strengthPart ?? 0).toFixed(3),
+    `补 ${row.gap} 金｜该版最低 ${s.baseline} 金`,
+    Number(s.costPart ?? 0).toFixed(3),
+    `×${Number(s.versionWeight ?? 1)}`,
+    Number(s.planScore ?? 0).toFixed(2),
+  ]);
+  return tipBox({
+    head: `补金推荐分 ${Number(row.score).toFixed(2)}`,
+    // ⚠️ 等式里的乘数写**实际生效的那两个权重**（ws / wc），不是默认的 0.5 ——
+    //    用户把强度拉满时这里要跟着变，写死就等于骗人。
+    eq: `（队伍强度 × ${ws} + 性价比 × ${wc}）× 版本权重，逐版本取最大值`,
+    headers: ['版本', isTurn ? '轮次' : '行动值', '队伍强度', '金数', '性价比', '版本权重', '这一版的分'],
+    rows,
+    notes: [
+      isTurn
+        ? '队伍强度 = ws ÷（轮次 + 1），0 轮最高。'
+        : '队伍强度 = ws ×（1 − 行动值 ÷ 500），行动值越低越高。',
+      `性价比 =（该版本投档里最低的金数）÷（你还要补的金）。现在是补 ${Number(row.gap)} 金`
+      + `${best ? `、该版最低 ${best.baseline} 金` : ''}；已齐时取 1（最高）。`,
+      '版本权重只决定「哪一版的分更高」，不改变队伍强度本身；同一套四人只占一行，'
+      + '换光锥 / 叠影的变体收在下面的「其它配装」里。',
+    ],
+  });
+};
+
 const renderTeamPlan = () => {
   if (!el.teamPlanBody) return;
   el.teamPlanBody.innerHTML = '';
@@ -4859,9 +4954,17 @@ const renderTeamPlan = () => {
   // 名次沿用它在完整列表里的序号 —— 「我搜出来的这支队是第 12 名」要有意义。
   const query = queryOf(state.teamPlanQuery);
   const terms = queryTermsOf(state.teamPlanQuery);
+  // ⚠️ 2026-10-20（用户：「不支持搜索次选结果」）：本队命中 **或** 次选配队里命中都算。
+  //    但两类分开计数 —— 卡片上会给「只在次选里出现」的那几条加标记（见下面 `isAltHit`），
+  //    因为它意味着「照抄这队打不了，得换人」。
+  const mainHitOf = (row) => matchesQuery(teamPlanRowText(row), terms);
+  const altHitOf = (row) => matchesQuery(teamPlanAltText(row), terms);
   const matched = terms.length
-    ? rows.filter((row) => matchesQuery(teamPlanRowText(row), terms))
+    ? rows.filter((row) => mainHitOf(row) || altHitOf(row))
     : rows;
+  const altOnlyCount = terms.length
+    ? matched.filter((row) => !mainHitOf(row)).length
+    : 0;
   // 页码越界（搜索把结果缩短了 / 换账号后池子变小）时夹回最后一页。
   const { rows: pageRows, start, page, pages } = pageSliceOf(
     matched, state.teamPlanPage, TEAM_PLAN_PAGE_SIZE,
@@ -4874,6 +4977,7 @@ const renderTeamPlan = () => {
   const hit = terms.length
     ? ` · 搜索「${terms.join(' + ')}」${terms.length > 1 ? '（同时包含）' : ''}`
       + `命中 ${matched.length} 支`
+      + (altOnlyCount ? `（其中 ${altOnlyCount} 支只在次选里含这些角色）` : '')
     : '';
   // 2026-10-19：原来写 `· 20 支队伍 · 第 1–20 条 / 共 20 条` ——「20 支队伍」与「共 20 条」
   // 是同一个数，一页装得下时「第 1–20 条」又是废话（整页就 20 条）。现在只在**真的
@@ -4906,13 +5010,32 @@ const renderTeamPlan = () => {
     const head = text('div', 'advice-plan-team-head');
     // 名次 = **完整列表**里的真实名次（搜索 / 翻页都只是视图，不许改写名次）。
     head.appendChild(text('span', 'advice-unit-rank', `#${pageRanked[i].rank || start + i + 1}`));
+    // 「这条是靠次选命中的」标记（2026-10-20）：搜索时本队四个人没有关键词，
+    // 只有它下面那几支次选配队里有。不加标记的话，用户会以为「照抄这队就能用上这个角色」。
+    if (terms.length && !mainHitOf(row)) {
+      const altMark = text('span', 'advice-plan-alt-hit', '次选命中');
+      altMark.title = '本队里没有你搜的角色，是它下面的「次选配队」里有';
+      head.appendChild(altMark);
+    }
     // 分数保留两位：补金推荐分的量纲是 0~ws+wc ≈ 0~1.5（版本权重最大 6 时到 6+），
     // 一位小数会把 6.55 与 6.52 压成同一个 6.5，相邻名次看着像同分。
-    head.appendChild(text('strong', 'advice-plan-team-score', Number(row.score).toFixed(2)));
-    head.appendChild(text('span', 'advice-plan-team-eq',
+    //
+    // ⚠️ 2026-10-20：分数 + 等式外包一层 `.advice-value-wrap` —— 那是浮层的点击入口
+    //    （`wireValueTips()` 的委托按这个 class 找）。没有它，这行就是死文本，
+    //    用户点不出「队伍强度怎么算的」（报的缺陷原话）。
+    const scoreWrap = text('span', 'advice-value-wrap advice-plan-score-wrap');
+    scoreWrap.tabIndex = 0;
+    scoreWrap.setAttribute('role', 'button');
+    scoreWrap.setAttribute('aria-expanded', 'false');
+    scoreWrap.setAttribute('aria-haspopup', 'true');
+    scoreWrap.title = '点击查看这个分数怎么来的';
+    scoreWrap.appendChild(text('strong', 'advice-plan-team-score', Number(row.score).toFixed(2)));
+    scoreWrap.appendChild(text('span', 'advice-plan-team-eq',
       `= 队伍强度 ${Number(row.strengthPart).toFixed(3)} × ${ws}`
       + ` + 性价比 ${Number(row.costPart).toFixed(3)} × ${wc}`
       + `（${plan.kind === 'turn' ? '轮次' : '行动值'}口径）`));
+    scoreWrap.appendChild(lazyTip(() => planScoreTip(row, plan, ws, wc)));
+    head.appendChild(scoreWrap);
     card.appendChild(head);
 
     // ---- 四个位置 ------------------------------------------------------------
@@ -4995,9 +5118,15 @@ const renderTeamPlan = () => {
     }
 
     // ---- 过渡档位 ------------------------------------------------------------
+    // 2026-10-20：加一排**这一档成型的四个人**的小头像（用户：「过渡…没有图标」）。
+    // 过渡档位是「先把前 N 笔补掉」的中间形态，它自己的 `members` 由服务端给出
+    // （`midOf()` 里带着 pending 标记），所以这里只画标识、不重复算成本。
     if (row.mid) {
-      card.appendChild(text('p', 'advice-plan-team-mid muted small',
-        `过渡：先补前 ${row.mid.items} 笔（${row.mid.gold} 金），再补 ${row.mid.rest} 金到本方案`));
+      const mid = text('div', 'advice-plan-team-mid muted small');
+      mid.appendChild(text('span', '', `过渡：先补前 ${row.mid.items} 笔（${row.mid.gold} 金）`));
+      mid.appendChild(planMemberIcons(row.mid.members));
+      mid.appendChild(text('span', '', `再补 ${row.mid.rest} 金到本方案`));
+      card.appendChild(mid);
     }
 
     // ---- 逐版本成绩（多版本时才画，单版本是多一行废话）-----------------------
@@ -5026,16 +5155,22 @@ const renderTeamPlan = () => {
         const line = text('div', 'advice-plan-variant');
         line.appendChild(text('span', 'advice-plan-variant-score', Number(v.score).toFixed(2)));
         line.appendChild(text('span', 'advice-plan-variant-gap', `补 ${v.gap} 金`));
+        // 同一套四人、只是光锥 / 叠影不同 —— 头像完全一样，所以这里**不画头像**
+        // （四个一样的图连排四次，看着像坏了）。差异在下面的名字串里（带光锥名）。
         line.appendChild(text('span', 'advice-plan-variant-members',
           (v.members || []).map((m) => (m.lc
             ? `${m.charCn || m.char}·${m.lcCn || m.lc}S${m.superimp || 1}`
             : `${m.charCn || m.char}`)).join(' / ')));
+        const vv = videoLink(v.video);
+        if (vv) line.appendChild(vv);
         details.appendChild(line);
       }
       card.appendChild(details);
     }
 
     // ---- 次选配队 ------------------------------------------------------------
+    // 2026-10-20（用户：「次选配队没有图标和视频」）：每支加**四个头像 + 来源视频**。
+    // 次选的价值就是「换掉一两个人也能打」，所以是谁很关键 —— 纯名字串看不出差别。
     if ((row.alternatives || []).length) {
       const details = document.createElement('details');
       details.className = 'advice-plan-team-alts';
@@ -5045,8 +5180,11 @@ const renderTeamPlan = () => {
         line.appendChild(text('span', 'advice-plan-variant-score', Number(alt.score).toFixed(2)));
         line.appendChild(text('span', 'advice-plan-variant-gap',
           `共享 ${alt.shared} 人 · 补 ${alt.gap} 金`));
+        line.appendChild(planMemberIcons(alt.members));
         line.appendChild(text('span', 'advice-plan-variant-members',
           (alt.members || []).map((m) => m.charCn || m.char).join(' / ')));
+        const av = videoLink(alt.video);
+        if (av) line.appendChild(av);
         details.appendChild(line);
       }
       card.appendChild(details);
@@ -5070,6 +5208,12 @@ const renderTeamPlan = () => {
     + '补金推荐分 = 队伍强度 × ' + ws + ' + 性价比 × ' + wc + '（抽卡权重，上面可调）。'
     + '补金顺序按每抽收益从高到低，光锥一定排在它自己的角色之后；'
     + '「其它配装」是同一套四人换了光锥 / 叠影的变体（按角色组合折叠，只展示分最高的那套）。'));
+
+  // ⚠️ 2026-10-20：**必须给方案容器也绑一次浮层委托**（用户报「无法显示队伍强度得分的
+  //    详情」）。`wireValueTips()` 此前只对总榜容器调过，所以方案卡片里就算建了
+  //    `.advice-value-tip` 也没人接点击 —— 表现为「点了没反应」。
+  //    幂等靠容器上的 `dataset.tipsWired`（见 `wireValueTips()` 开头），重复调用无副作用。
+  wireValueTips(el.teamPlanBody);
 };
 
 // ------------------------------------------------------- 跨模式综合结论（渲染）
@@ -5103,9 +5247,19 @@ const renderUnits = () => {
   // ⚠️ 2026-10-18：多关键词**同时包含**（AND），与抽卡方案同一把尺子
   //    （`matchesQuery` + `queryTermsOf` 都在 advice-paging.js）。
   const terms = queryTermsOf(state.unitQuery);
-  const matched = terms.length
+  const matchedAll = terms.length
     ? list.filter((unit) => matchesQuery(unitSearchText(unit), terms))
     : list;
+  // ⚠️ 2026-10-20（用户：「角色总榜搜索框不能支持多个角色的搜索」）：
+  //    总榜**一行 = 一个单位**（一个角色 + 它那件光锥），所以「砂金 缇宝」用 AND 去搜
+  //    永远是 0 条 —— 没有哪一行会同时出现两个角色名。这里在 AND 落空时退到
+  //    **任一命中**（OR），于是搜多个角色 = 把他们各自那一行列出来。
+  //    顺序仍是「先 AND 后 OR」：AND 能命中的情况（`砂金 向浪花掷下盛夏` 这种
+  //    「角色 + 它的光锥」）仍然走精确匹配，不会因为退让而变宽。
+  const matchedAny = terms.length > 1 && !matchedAll.length;
+  const matched = matchedAny
+    ? list.filter((unit) => terms.some((term) => unitSearchText(unit).includes(term)))
+    : matchedAll;
   const filtered = matched.filter((unit) => !state.onlyMissing || ownedStateOf(unit) !== 'have');
   const rows = filtered.slice(0, UNIT_ROWS_MAX);
   // ⚠️ 2026-10-18（用户：「搜索到的结果应当显示其真实的排名，而不是重新开始算」）：
@@ -5121,8 +5275,12 @@ const renderUnits = () => {
     // 搜索状态**必须印出来**：否则「榜上只剩 3 条」看着像数据丢了（搜索词在工具条里，
     // 而工具条可能已经滚出屏幕）。命中数按「搜索后、只筛匹配前」数 —— 那才是搜索的答案。
     // ⚠️ 同抽卡方案那边：多词要印「同时包含」，否则读者以为是在搜一个长名字。
+    //    但总榜会因为「一行只有一个单位」退到 OR，那时必须改口说「任一」——
+    //    否则用户看到「砂金 + 缇宝 命中 2 条」会以为这两条能同时出现这两个角色。
     const hit = terms.length
-      ? `搜索「${terms.join(' + ')}」${terms.length > 1 ? '（同时包含）' : ''}命中 ${matched.length} 条`
+      ? `搜索「${terms.join(' + ')}」${terms.length > 1
+        ? (matchedAny ? '（任一命中）' : '（同时包含）')
+        : ''}命中 ${matched.length} 条`
       : '';
     const tail = rows.length < filtered.length
       ? `只显示前 ${rows.length} 条（${scope}，筛后 ${filtered.length} 条）`

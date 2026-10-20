@@ -352,9 +352,13 @@
                    角色或光锥名称进行搜索」）：只过滤**当前星魂档**那一份榜，不重排、
                    不重算分数。中英名与光锥名都认（见 advice-view.js 的 unitSearchText）。
                    `type="search"` 是为了那一颗自带的清除按钮。 -->
+              <!-- ⚠️ 2026-10-20（用户：「搜索框的『空格分隔多个』字体显示不全」）：placeholder
+                   缩到 15 个字符 —— 原先那句 25 个字符约 250px，而输入框只有 200px，
+                   尾部「= 都要有」被裁掉一半。完整规则挪进 `title`（悬停可看）。 -->
               <input id="adviceUnitSearch" class="advice-search-input" type="search"
                      autocomplete="off" spellcheck="false"
-                     placeholder="搜索角色 / 光锥（空格分隔多个 = 都要有）"
+                     placeholder="角色 / 光锥（空格分隔多个）"
+                     title="多个关键词用空格分隔，结果需同时包含（例如「砂金 缇宝」只列这两人同时在场的位置）"
                      aria-label="按角色或光锥名称搜索角色总榜（多个关键词用空格分隔，结果需同时包含）">
               <span class="muted small" id="adviceUnitMeta"></span>
             </div>
@@ -383,7 +387,8 @@
             <div id="adviceTeamPlanPager" class="advice-pager" hidden></div>
             <input id="adviceTeamPlanSearch" class="advice-search-input" type="search"
                    autocomplete="off" spellcheck="false"
-                   placeholder="搜索角色 / 光锥（空格分隔多个 = 都要有）"
+                   placeholder="角色 / 光锥（空格分隔多个）"
+                   title="多个关键词用空格分隔，结果需同时包含（例如「砂金 缇宝」只列这两人同时在场的队伍）"
                    aria-label="按角色或光锥名称搜索抽卡方案（多个关键词用空格分隔，结果需同时包含）">
           </div>
           <div id="adviceTeamPlanBody" class="advice-team-plan"></div>

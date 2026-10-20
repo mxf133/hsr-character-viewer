@@ -155,7 +155,8 @@ const main = async () => {
   });
   await sleep(1200);
 
-  if (!exprs.length) {
+  // 有 --js 也照拍（早先「只量不拍」的互斥没有理由，反而挡住了「先展开再拍」）。
+  {
     const shot = await send('Page.captureScreenshot', {
       format: 'png',
       captureBeyondViewport: flag('full'),

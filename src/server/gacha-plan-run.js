@@ -37,6 +37,43 @@ export const planEnvList = () => PLAN_ENVS.map((env) => ({ ...env }));
 const envOf = (key) => PLAN_ENVS.find((env) => env.key === key)
   || PLAN_ENVS.find((env) => env.key === DEFAULT_PLAN_ENV);
 
+// ------------------------------------------------------------------ 账号持有情况归一
+//
+// ⚠️ **这里必须转一次类型**（2026-10-20 修的 bug：抽卡方案里「我自己的角色从来没参与
+// 计算」，所有成员都印成「缺」、Δgold 恒等于整队金数）：
+//
+//   前端 `accountPayload()` 发的是 JSON —— `owned` 是**数组**、`eidolons` / `cones` 是
+//   **普通对象**；而下游两处都用 `instanceof` 判类型后直接 `.has()` / `.get()`：
+//     * `advice.js` 的 `marginalCostOf()`  —— 算 Δgold（要补几金）与补金顺序；
+//     * `gacha-plan.js` 的 `buildPlan()`  —— 印每个位置的「已有 / 缺」徽章。
+//   所以 JSON 一进来 `owned instanceof Set` 就是 false，函数退回一个**空** Set：
+//   明明有 E6 阿格莱雅，界面也只会说「缺」。类型不匹配不抛错，只会安静地算错。
+//
+// 三种形状都要认（HTTP 数组 / 服务端内部 Set / 老存档的对象表），因为 `runPlan()` 既被
+// 路由调用（JSON），也会被 `tools/` 下的探针直接喂内存里的 Set（合成夹具）。
+const asNameSet = (value) => {
+  if (value instanceof Set) return value;
+  if (Array.isArray(value)) return new Set(value.filter(Boolean));
+  // `{ 名字: true }` 这种「持有表」：只收值为真的键
+  if (value && typeof value === 'object') {
+    return new Set(Object.keys(value).filter((key) => value[key]));
+  }
+  return new Set();
+};
+
+const asNameMap = (value) => {
+  if (value instanceof Map) return value;
+  if (value && typeof value === 'object') return new Map(Object.entries(value));
+  return new Map();
+};
+
+/** 把 HTTP 来的 `{ owned: [], eidolons: {}, cones: {} }` 归一成成本模型要的 Set / Map。 */
+export const accountOf = (raw) => ({
+  owned: asNameSet(raw?.owned),
+  eidolons: asNameMap(raw?.eidolons),
+  cones: asNameMap(raw?.cones),
+});
+
 /**
  * frontier 行 → `scoreEnvRows()` 要的形状。
  *
@@ -142,7 +179,9 @@ export const runPlan = async (options = {}) => {
 
   const videos = videoIndexOf(f.frontierRows || []);
   const plan = buildPlan(scored, {
-    account: options.account || {},
+    // ⚠️ 必须过 `accountOf()`：它把 JSON 的数组/对象转成成本模型要的 Set / Map。
+    //    直接透传 `options.account` 会让 `owned.has()` 永远 false（见上面那段注释）。
+    account: accountOf(options.account),
     availability: index.availability || index.refs?.availability || {},
     hiddenCosts: options.hiddenCosts,
     wc,
