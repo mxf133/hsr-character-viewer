@@ -172,6 +172,11 @@ export const runPlan = async (options = {}) => {
   const draw = normalizeDrawWeights(options.drawWeights);
   // 方案里的 wc 用**归一后的性价比系数**：用户把强度拉满（cost=0）时方案也不该再算性价比。
   const wc = Number.isFinite(draw.cost) ? draw.cost : 1;
+  // ⚠️ 2026-10-20：ws 也进方案（用户确认两个旋钮地位对称）。它**不能**传给
+  //    `scoreEnvRows()` —— 那里必须是 `ws: 1`，让 `strengthPart` 保持裸强度
+  //    （`1 − 行动值/500`）；乘权重的动作只发生在 `buildPlan()` 的 `planScoreAt()` 里，
+  //    两处都乘就等于把强度平方了一次。
+  const ws = Number.isFinite(draw.strength) ? draw.strength : 1;
 
   const scored = scoreEnvRows(rows, {
     mode: picked.mode, stage: picked.stage, ws: 1, wc, versionWeightOf,
@@ -184,6 +189,7 @@ export const runPlan = async (options = {}) => {
     account: accountOf(options.account),
     availability: index.availability || index.refs?.availability || {},
     hiddenCosts: options.hiddenCosts,
+    ws,
     wc,
     maxRows: Math.max(1, Math.min(Number(options.maxRows) || 20, 200)),
     videoOf: (rosterKey, season) => {

@@ -163,9 +163,22 @@ const gapItemsOf = (entry, costOfMember) => {
   return items;
 };
 
-/** 某个版本的补金推荐分。**只返回数字**，不建中间对象 —— 这一趟要对几千个候选跑。 */
-const planScoreAt = (row, wc, gap) => (
-  ((row.strengthPart ?? 0) + wc * planCostPartOf(gap)) * (row.versionWeight ?? 1)
+/**
+ * 某个版本的补金推荐分。**只返回数字**，不建中间对象 —— 这一趟要对几千个候选跑。
+ *
+ * ⚠️ 2026-10-20（用户确认「可以」）：**强度项也乘强度权重 `ws`**，两个旋钮地位对称：
+ *
+ *   ( ws × 强度得分 + wc × 性价比项 ) × 版本权重
+ *
+ * 在此之前的几小时里只有 `wc` 被乘（`ws` 仅通过归一化改变 `wc`），而卡片上却印着
+ * `队伍强度 × ws` —— 等式在骗人（见 v4.6.133 的 §4.2BC ③）。现在等式、脚注、实现三者一致。
+ *
+ * ⚠️ `row.strengthPart` 是**裸强度**（`1 − 行动值/500`，0~1）：`runPlan()` 给
+ * `scoreEnvRows()` 传的是 `ws: 1`，所以这里乘 `ws` 不会重复加权。**别把 `scoreEnvRows`
+ * 的 ws 也改成用户值** —— 那样强度会被乘两次。
+ */
+const planScoreAt = (row, ws, wc, gap) => (
+  (ws * (row.strengthPart ?? 0) + wc * planCostPartOf(gap)) * (row.versionWeight ?? 1)
 );
 
 /**
@@ -174,10 +187,10 @@ const planScoreAt = (row, wc, gap) => (
  * 为什么并列还要挑：不挑的话结果取决于 Map 的插入顺序，同一份输入换个读取顺序
  * 就换一行；而 Map 的插入顺序由上游给了哪些行决定，那是**数据顺序**不是语义。
  */
-const bestSeasonOf = (entry, wc, gap) => {
+const bestSeasonOf = (entry, ws, wc, gap) => {
   let best = null;
   for (const [season, row] of entry.bySeason) {
-    const planScore = planScoreAt(row, wc, gap);
+    const planScore = planScoreAt(row, ws, wc, gap);
     if (!best || planScore > best.planScore
       || (planScore === best.planScore
         && String(season).localeCompare(String(best.season), undefined, { numeric: true }) > 0)) {
@@ -194,7 +207,7 @@ const bestSeasonOf = (entry, wc, gap) => {
  * （成绩 `a`、用金 `cost`、该版基准 `baseline`、版本权重、投稿数 `n`）——
  * UI 展开那一版时要能解释「这个分是怎么来的」。
  */
-const seasonsDetailOf = (entry, wc, gap) => [...entry.bySeason]
+const seasonsDetailOf = (entry, ws, wc, gap) => [...entry.bySeason]
   .map(([season, row]) => ({
     season,
     // 成绩：行动值型是行动值、轮次型是轮次，语义由调用方按 `envKindOf` 决定。
@@ -203,7 +216,7 @@ const seasonsDetailOf = (entry, wc, gap) => [...entry.bySeason]
     strengthPart: row.strengthPart ?? 0,
     costPart: planCostPartOf(gap),
     versionWeight: row.versionWeight ?? 1,
-    planScore: planScoreAt(row, wc, gap),
+    planScore: planScoreAt(row, ws, wc, gap),
     cost: row.c,
     baseline: row.baseline,
     submissions: Math.max(1, finiteOf(row.n) ?? 1),
@@ -384,6 +397,7 @@ export const alternativesOf = (row, ranked, rankOf, byMember, limit = 3,
  * @param options.account       `{ owned:Set, eidolons:Map, cones:Map }`
  * @param options.availability  服务端下发的 `{characters, lightCones}`
  * @param options.hiddenCosts   隐金五项开关（未经 normalize 也行）
+ * @param options.ws            强度权重（2026-10-20 起乘在强度项上；缺省 1 = 不加权）
  * @param options.wc            性价比权重
  * @param options.maxRows       下发条数
  * @param options.maxAlternatives
@@ -396,6 +410,7 @@ export const buildPlan = (scored, options = {}) => {
     account = {},
     availability = {},
     hiddenCosts = null,
+    ws = 1,
     wc = 1,
     maxRows = 20,
     maxAlternatives = 3,
@@ -438,7 +453,7 @@ export const buildPlan = (scored, options = {}) => {
     for (let i = 0; i < entry.members.length; i += 1) {
       gold += goldOfMember(entry.members[i], entry.packKeys[i]);
     }
-    const best = bestSeasonOf(entry, wc, gap);
+    const best = bestSeasonOf(entry, ws, wc, gap);
 
     pool.push({
       key: entry.key,
@@ -518,7 +533,7 @@ export const buildPlan = (scored, options = {}) => {
     row.cuts = hiddenReductionOf(row.members, availability, hidden, 'dataset');
     row.hiddenCut = row.cuts.team ?? 0;
     row.displayGold = Math.max(1, row.gold - row.hiddenCut);
-    row.seasons = seasonsDetailOf(row.entry, wc, row.gap);
+    row.seasons = seasonsDetailOf(row.entry, ws, wc, row.gap);
     row.gapItems = gapItemsOf(row.entry, costOfMember);
     row.fill = fillOf(row, { availability, cuts: row.cuts, charScoreOf, isOwned });
     row.pullsExpected = row.fill.reduce((n, it) => n + (it.pullsExpected || 0), 0);

@@ -4889,10 +4889,10 @@ const planScoreTip = (row, plan, ws, wc) => {
   const costPartNow = 1 - Math.max(0, Number(row.gap) || 0) / 10;
   return tipBox({
     head: `补金推荐分 ${Number(row.score).toFixed(2)}`,
-    // ⚠️ 2026-10-20：等式按**服务端实际算的**写 —— `(强度 + wc × 性价比) × 版本权重`。
-    //    强度项不乘 ws（见 `renderTeamPlan()` 里 `advice-plan-team-eq` 那段注释），
-    //    所以这里只出现 wc；写 `强度 × ws` 会让读者按错误的式子验算。
-    eq: `（队伍强度 + 性价比 × ${wc}）× 版本权重，逐版本取最大值`,
+    // ⚠️ 等式必须与 `gacha-plan.js` 的 `planScoreAt()` 逐项对应：
+    //    `(ws × 强度 + wc × 性价比) × 版本权重`。两个权重都写**实际生效的值**，
+    //    不写死 0.5 —— 用户拉满某一项时这里要跟着变。
+    eq: `（队伍强度 × ${ws} + 性价比 × ${wc}）× 版本权重，逐版本取最大值`,
     headers: ['版本', isTurn ? '轮次' : '行动值', '队伍强度', '补金', '性价比', '版本权重', '这一版的分'],
     rows,
     notes: [
@@ -5023,15 +5023,15 @@ const renderTeamPlan = () => {
     scoreWrap.setAttribute('aria-haspopup', 'true');
     scoreWrap.title = '点击查看这个分数怎么来的';
     scoreWrap.appendChild(text('strong', 'advice-plan-team-score', Number(row.score).toFixed(2)));
-    // ⚠️ 2026-10-20 修：原来写的是 `队伍强度 X × ws + 性价比 Y × wc`，但服务端算的是
-    //    `(强度 + wc × 性价比) × 版本权重` —— **强度项没有乘 ws**（`runPlan()` 给
-    //    `scoreEnvRows()` 传的是 `ws: 1`，`strengthPart` 就是 `1 − 行动值/500`）。
-    //    等式与分数因此对不上：实测 #2 印 `0.902 × 0.5 + (−0.7) × 0.5` 像是 0.1，
-    //    可卡片上的分是 `(0.902 − 0.35) × 5 = 2.76`。
-    //    `ws` 仍然起着作用 —— 但它通过**归一化**改变的是 `wc`（强度权重给得越大、
-    //    wc 越小、性价比项越轻），不是直接乘在强度项上。所以这里只印 wc。
+    // ⚠️ 2026-10-20 演进（两步，别只看一半）：
+    //    ① 先发现这行印的 `强度 × ws` 是**假话** —— 当时服务端算的是
+    //       `(强度 + wc × 性价比) × 版本权重`，强度项压根没乘 ws（`runPlan()` 给
+    //       `scoreEnvRows()` 传的是 `ws: 1`），等式与分数对不上；
+    //    ② 用户确认「两个旋钮要对称」之后，服务端 `planScoreAt()` 改成
+    //       `(ws × 强度 + wc × 性价比) × 版本权重` —— 现在这行才真的是对的。
+    //    改这一行前先确认 `gacha-plan.js` 的 `planScoreAt()` 还是不是这个式子。
     scoreWrap.appendChild(text('span', 'advice-plan-team-eq',
-      `= 队伍强度 ${Number(row.strengthPart).toFixed(3)}`
+      `= 队伍强度 ${Number(row.strengthPart).toFixed(3)} × ${ws}`
       + ` + 性价比 ${Number(row.costPart).toFixed(3)} × ${wc}`
       + `（${plan.kind === 'turn' ? '轮次' : '行动值'}口径）`));
     scoreWrap.appendChild(lazyTip(() => planScoreTip(row, plan, ws, wc)));
@@ -5208,9 +5208,8 @@ const renderTeamPlan = () => {
       ? '队伍强度 = ws ÷ (轮次 + 1)，0 轮最高；'
       : '队伍强度 = ws × (1 − 行动值 ÷ 500)，行动值越低越高；')
     + '性价比 = 1 − 补金 ÷ 10（补得越少越高，补满 10 金归零、再多转负）；'
-    + '补金推荐分 = （队伍强度 + 性价比 × ' + wc + '）× 版本权重。'
-    + '强度权重 ' + ws + ' 不直接乘在强度项上 —— 它与性价比权重归一后决定的就是上面那个 '
-    + wc + '，所以把强度权重调大等于压低性价比项的分量。'
+    + '补金推荐分 = （队伍强度 × ' + ws + ' + 性价比 × ' + wc + '）× 版本权重，'
+    + '两个系数由上面的抽卡权重归一而来（默认 1 : 1 → 各 0.5）。'
     + '补金顺序按每抽收益从高到低，光锥一定排在它自己的角色之后；'
     + '「其它配装」是同一套四人换了光锥 / 叠影的变体（按角色组合折叠，只展示分最高的那套）。'));
 

@@ -377,18 +377,26 @@ console.log('\n[buildPlan — 方案分 / 逐版本取最大 / 分页]');
 }
 
 {
-  // 性价比权重不是 1 的时候，只作用在成本项上。
+  // 两个权重各自作用在自己的分项上。
   const rows = [{ season: '4.5', c: 9, a: 100, n: 1, t: 2, m: ROSTER_MAIN },
     { season: '4.5', c: 4, a: 200, n: 1, t: 3, m: ['Zed|0||0', 'Mage|0||0', 'Free|6|FreeLC|5', 'Stan|0||0'] }];
   const scored = scoreEnvRows(rows, { mode: 'aa', stage: 'plight', versionWeightOf }).scored;
-  const mainRow = (wc) => buildPlan(scored, { availability: AVAIL, wc, maxRows: 5 })
+  // ⚠️ 默认 `ws = 1` —— 所以下面三条 wc 的断言与「强度项不乘 ws」时逐值相同，
+  //    正因为如此，**必须**再单独加一条 ws ≠ 1 的断言（见最后那条），否则这个改动
+  //    在测试里是完全隐形的。
+  const mainRow = (wc, ws = 1) => buildPlan(scored, { availability: AVAIL, ws, wc, maxRows: 5 })
     .rows.find((r) => r.key === keyA).score;
   // ⚠️ 2026-10-20：成本项换成 `1 − gap/10`。这套 fixture 的 gap = 7（见上面
   //    「Δgold = 缺本体的那段要算 +1」那条），所以成本项是 0.3，不再是 `4/7`。
   const costTerm = 1 - 7 / 10;
-  near('wc = 1', mainRow(1), (1 - 100 / 500 + costTerm) * 5, 1e-4);
-  near('wc = 2：只有成本项翻倍', mainRow(2), (1 - 100 / 500 + 2 * costTerm) * 5, 1e-4);
-  near('wc = 0：退化成纯强度', mainRow(0), (1 - 100 / 500) * 5, 1e-4);
+  const strength = 1 - 100 / 500;
+  near('wc = 1', mainRow(1), (strength + costTerm) * 5, 1e-4);
+  near('wc = 2：只有成本项翻倍', mainRow(2), (strength + 2 * costTerm) * 5, 1e-4);
+  near('wc = 0：退化成纯强度', mainRow(0), strength * 5, 1e-4);
+  // 2026-10-20（用户确认两个旋钮对称）：ws 也乘在**强度项**上，不是只用来改 wc。
+  near('ws = 0.5 时强度项打对折（0.8 → 0.4）', mainRow(0, 0.5), (0.5 * strength) * 5, 1e-4);
+  near('ws / wc 同时给 0.5：两项各取一半',
+    mainRow(0.5, 0.5), (0.5 * strength + 0.5 * costTerm) * 5, 1e-4);
 }
 
 // ---- ⑧ 真实数据集冒烟 -------------------------------------------------------
