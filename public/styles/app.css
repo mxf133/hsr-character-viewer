@@ -4359,3 +4359,458 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
 .usage-legend-item.is-other .usage-legend-name {
   color: var(--text-muted);
 }
+
+/* ==========================================================================
+   界面精修层 v2（2026-10-20 · 分支 feat/ui-polish）
+   --------------------------------------------------------------------------
+   与文件开头那一层「界面美化层（2026-10-18）」是同一个思路：**只做观感**，
+   不动 flex/grid 结构、不动被 CDP 布局套件盯着的尺寸与几何。
+
+   这一轮解决的问题，按页面从上往下：
+
+   ① **权重区的控件「不是一套东西」**：同一行里，关卡是一个 42px 高的裸
+      `<select>`（2026-10-20 为了修「框套框」把它的外壳归零了），右边却是带深底与
+      描边的字段卡 —— 左边像按钮、右边像表单，横着一排看过去像没对齐。这里把 select
+      换成与字段卡同一套皮肤（同底、同边、同圆角），并自绘下拉箭头（原生箭头在深色
+      主题里是灰白的系统样式，与青色描边不是一套语言）。
+   ② **三组小标题只有圆点有色**，文字一律灰，读者要读完才知道哪组是哪组。改成标题
+      本身跟着圆点上色。
+   ③ **数据状态三格看不出「哪份数据要紧」**：三格同为灰底，只有 3px 左条区别。改成
+      状态色渗进整格背景（新鲜=极淡绿、旧=极淡金、过期=极淡红），并把「接口未提供：
+      fetchedAt、expiresAt…」这类契约术语压成更弱的一档 —— 它是给排查用的，不该和
+      「最后抓取」抢同一档注意力。
+   ④ **分节标题（①②）的编号是裸文字**，在深底上很轻。做成描边圆徽标，整页的节拍就
+      出来了（① 战斗记录 / ② 角色和配队 / 环境统计）。
+   ⑤ **总榜行与方案卡没有悬停反馈**：一屏十几行，鼠标扫过时没有任何「我在读这一行」
+      的确认。加极轻的上浮 + 描边提亮（`translateY` 不参与文档流，不动布局）。
+   ⑥ **次要文字偏灰**：`--text-muted` 原值 #6d7d9c 在面板底 #12182b 上只有约 3.9:1，
+      低于 WCAG AA 的 4.5:1，而抽卡推荐页大量正文（方案卡脚注、数据状态明细）都用它。
+      提到 #8494b3（约 5.4:1），仍是「弱于正文」的一档，但不再糊成一片。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- 令牌补强 */
+:root {
+  /* 见上方 ⑥。只调明度，色相与饱和度贴着原值，深空主题的冷调不变。 */
+  --text-muted: #8494b3;
+
+  /* 精修层专用：三档「面」与两档「线」，供下面各块统一调用。
+     刻意与新令牌分开命名 —— 既有令牌的数值有历史注释与实测记录撑着，不再动。 */
+  --surface-sunken: rgba(5, 9, 20, 0.5);
+  --surface-raised: rgba(255, 255, 255, 0.045);
+  --hairline: rgba(255, 255, 255, 0.075);
+  --hairline-strong: rgba(255, 255, 255, 0.14);
+
+  /* 原生控件（下拉框展开的列表、滚动条、日期选择器）也跟着走深色，
+     否则点开「关卡」下拉会弹出一块刺眼的系统白底面板。 */
+  color-scheme: dark;
+}
+
+/* ------------------------------------------------------------------ 顶栏 */
+/* 版本号原先是裸文字，和「检查更新」按钮并排时看不出主次。做成一枚细 pill：
+   深底 + 发丝边，让它读起来是「元信息」而不是「一个可点的东西」。 */
+.topbar-version-text:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+/* 有新版本时它由 app.js 加 `is-outdated`：这时 pill 要变成「提醒」，用金色。 */
+.topbar-version-text.is-outdated {
+  border-color: rgba(240, 198, 116, 0.45);
+  background: rgba(240, 198, 116, 0.1);
+  color: var(--gold-bright);
+}
+
+/* ------------------------------------------------------------ 权重 · 设置区 */
+/* 「关卡」那个 select：换成与 `.advice-weight-field` 同一套皮肤。
+   ⚠️ 只改颜色 / 圆角 / 箭头，**不动 height(42px) 与 width(100%)** —— 那一格的高度
+   决定了第一行两列的对齐，动它会让「抽卡权重」那一列跟着塌。 */
+.advice-weights .advice-env-select {
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  background-color: var(--surface-sunken);
+  /* 自绘箭头：原生箭头在深色主题里是系统灰白三角，与青色描边不是一套语言。 */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.6 6 6.4 11 1.6' fill='none' stroke='%236fd3e8' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 10px 7px;
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 30px;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-out),
+    background-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+.advice-weights .advice-env-select:hover { border-color: rgba(111, 211, 232, 0.5); }
+.advice-weights .advice-env-select:focus-visible {
+  border-color: var(--cyan);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(103, 232, 249, 0.14);
+}
+
+/* 字段卡：统一深底 + 发丝边 + 悬停 / 聚焦反馈。
+   ⚠️ `:not(.advice-env-field)` 是必须的：关卡那一格的外壳已经归零（见 app.css
+   第 3578 行的注释），给它加回边框就是重犯「框套框」那个 bug。 */
+.advice-weights .advice-weight-field:not(.advice-env-field) {
+  border-color: var(--hairline);
+  background: var(--surface-sunken);
+  transition: border-color var(--dur-base) var(--ease-out),
+    background var(--dur-base) var(--ease-out);
+}
+.advice-weights .advice-weight-field:not(.advice-env-field):hover {
+  border-color: var(--hairline-strong);
+  background: rgba(9, 14, 27, 0.6);
+}
+/* 聚焦时整格亮起来（不只是里面的输入框）：告诉用户「现在在改的是这一项」。 */
+.advice-weights .advice-weight-field:not(.advice-env-field):focus-within {
+  border-color: rgba(103, 232, 249, 0.45);
+  background: rgba(103, 232, 249, 0.07);
+}
+
+/* 三组小标题跟着自己的圆点上色（青 / 紫 / 金）。
+   只用颜色，不改字号与字重 —— 那两项决定三列标题的行高。 */
+.advice-weights .advice-weights-group:nth-child(1) .advice-weights-subtitle { color: #8fd9e9; }
+.advice-weights .advice-weights-group:nth-child(2) .advice-weights-subtitle { color: #b9abf8; }
+.advice-weights .advice-weights-group:nth-child(3) .advice-weights-subtitle { color: #f2cf8e; }
+
+/* 组间那条竖虚线（≤1100px 是横虚线）：原值 0.1 的白几乎看不见，提一点。 */
+.advice-weights-group { border-left-color: rgba(255, 255, 255, 0.13); }
+
+/* ------------------------------------------------------- 数据状态（三格） */
+/* 整块往下沉一档：它是「元信息」，不该和 ①② 那两张内容卡抢同样的表面。 */
+.data-status {
+  border-color: var(--hairline);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.012));
+}
+
+.data-status .data-freshness {
+  border-color: var(--hairline);
+  border-left-width: 3px;
+  background: var(--surface-sunken);
+  transition: border-color var(--dur-base) var(--ease-out);
+}
+/* 状态色渗进整格：只给 3~8% 的透明度，够让三格「一眼分得出绿 / 青 / 金」，
+   又不至于把 12px 的正文压得难读。 */
+.data-status .data-freshness.is-fresh {
+  background: linear-gradient(180deg, rgba(110, 231, 168, 0.07), rgba(255, 255, 255, 0.015));
+}
+.data-status .data-freshness.is-cached {
+  background: linear-gradient(180deg, rgba(111, 211, 232, 0.07), rgba(255, 255, 255, 0.015));
+}
+.data-status .data-freshness.is-partial {
+  background: linear-gradient(180deg, rgba(240, 198, 116, 0.08), rgba(255, 255, 255, 0.015));
+}
+.data-status .data-freshness.is-expired {
+  background: linear-gradient(180deg, rgba(255, 122, 138, 0.08), rgba(255, 255, 255, 0.015));
+}
+/* 状态词 pill：给一点深底，让它在任何状态底色上都立得住。 */
+.data-status .freshness-status { background: rgba(0, 0, 0, 0.22); }
+/* 「接口未提供：fetchedAt、expiresAt…」是排查用的契约术语（`renderDataStatusCell()`
+   在 `contractGaps` 非空时追加），不该和「最后抓取」抢同一档注意力 —— 压到 0.62 的
+   不透明度，读得到、但不抢读。 */
+.data-status .freshness-contract-gap {
+  opacity: 0.62;
+  line-height: 1.45;
+}
+/* 「原因：…」是解释性文字，给一条暖色左线，与明细区分开。 */
+.data-status .freshness-reason {
+  padding-left: 8px;
+  border-left: 2px solid rgba(240, 198, 116, 0.35);
+}
+
+/* --------------------------------------------------------- 分节标题（①②） */
+/* 编号做成描边圆徽标：整页有 ①② 两个数字节拍，做成徽标后扫读时能直接落到节首。
+   ⚠️ 18px 是「15px 标题字」的行内上限；再大就会把 `.advice-h3` 那一行顶高，
+   而它上面挂着 `.advice-section-head` 的 `align-items: baseline`。 */
+.record-no {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-right: 7px;
+  border: 1px solid rgba(111, 211, 232, 0.36);
+  border-radius: 50%;
+  background: rgba(111, 211, 232, 0.12);
+  color: var(--cyan);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  align-self: center;
+}
+/* 「② 角色和配队」那节是紫色卡，徽标跟着换紫 —— 否则一个青色徽标落在一张紫卡里，
+   像从别处粘过来的。按 `#adviceConclusion` 这条 id 点名，与 `#advicePlanWeights`
+   的点名方式保持一致。 */
+#adviceConclusion .record-no {
+  border-color: rgba(157, 140, 245, 0.4);
+  background: rgba(157, 140, 245, 0.13);
+  color: #b9abf8;
+}
+
+/* 分节大标题加一道极轻的底部渐变发丝线，让「标题」和它下面那一大坨内容有个明确的开始。 */
+.advice-section-head .advice-h3 {
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* 「角色总榜」「抽卡方案」两个 h4 小节：各自带工具条（筛选 / 搜索），
+   原来与标题只隔 2px，挤在一起分不清谁是谁的控件。 */
+.advice-conclusion > .advice-section-head + .advice-unit-toolbar,
+.advice-conclusion > .advice-section-head + .advice-plan-toolbar {
+  margin-top: 4px;
+}
+
+/* --------------------------------------------------------- 角色总榜的行 */
+/* 悬停：极轻的上浮 + 描边提亮。`translateY(-1px)` 不参与文档流，不改变任何
+   被断言的高度。 */
+.advice-unit {
+  border-top-color: var(--border);
+  border-right-color: var(--border);
+  border-bottom-color: var(--border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.042), rgba(255, 255, 255, 0.018));
+  transition: border-top-color var(--dur-base) var(--ease-out),
+    border-right-color var(--dur-base) var(--ease-out),
+    border-bottom-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+.advice-unit:hover {
+  /* 三边提亮，左边那道金色序号条**不动**（它是这一节的记号，不是悬停提示）。 */
+  border-top-color: rgba(150, 185, 255, 0.3);
+  border-right-color: rgba(150, 185, 255, 0.3);
+  border-bottom-color: rgba(150, 185, 255, 0.3);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  transform: translateY(-1px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .advice-unit:hover { transform: none; }
+}
+
+/* 名次 `#1`：等宽数字 + 更低存在感，让「角色名」保持在第一眼位置。 */
+.advice-unit-rank {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+/* ------------------------------------------------------- 抽卡方案（队伍卡） */
+.advice-plan-team {
+  border-color: var(--hairline);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.014));
+  transition: border-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+.advice-plan-team:hover {
+  border-color: rgba(150, 185, 255, 0.26);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.26);
+}
+/* 分数是每张卡的「结论」，给它最大的视觉权重：加粗 + 提亮 + 等宽数字，
+   下面的等式自然成为「依据」。只改颜色与字重，不改字号（字号决定头部行高）。 */
+.advice-plan-team-score {
+  color: var(--gold-bright);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+/* 队伍里「还缺这一位」：从红色虚线改成琥珀虚线。红色在这套界面里的语义是
+   「出错 / 过期」（见 .error-box / .is-expired），而这里的含义是「该抽的就是他」，
+   是正向提示，用金色更贴合，也不再和顶上的错误条撞色。 */
+.advice-plan-team-slots > .advice-plan-team-slot.is-missing {
+  border-color: rgba(240, 198, 116, 0.45);
+  background: rgba(240, 198, 116, 0.06);
+}
+
+/* 方案卡里「账面 26 金 / 全缺 / 最低版本 4.6」那条事实行：
+   各项之间原来只靠 10px 间隙分隔，一眼看过去是一串字。用极轻的竖线断句。 */
+.advice-plan-team-facts > * + * {
+  padding-left: 9px;
+  border-left: 1px solid var(--hairline);
+}
+
+/* ------------------------------------------------------------ 环境统计 */
+/* 分组标题（副本名 + 口径）与上面的「环境统计 · 上场率」形成两级，
+   给一条与分组等宽的发丝线，五组之间就不会糊成一整片。 */
+.usage-group-head {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* 环形图卡片：与总榜行同一档的表面（悬停的位移已在上面定义，这里只补表面层次）。 */
+.usage-donut-card {
+  border-color: var(--hairline);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.014));
+}
+
+/* -------------------------------------------------------------------------
+   契约字段折叠（配套 advice-view.js 2026-10-20 的改动）
+   「N 项契约字段未提供」默认只有一行小字，点开才是原始字段名。
+   折叠三角自绘：`<summary>` 在深色主题里的默认标记是系统样式，颜色对不上。
+   ------------------------------------------------------------------------- */
+.data-status .freshness-contract-gap {
+  font-size: 11px;
+  line-height: 1.5;
+}
+.data-status .freshness-contract-gap > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-muted);
+  transition: color var(--dur-base) var(--ease-out);
+}
+.data-status .freshness-contract-gap > summary::-webkit-details-marker { display: none; }
+.data-status .freshness-contract-gap > summary::before {
+  content: '▸';
+  font-size: 9px;
+  line-height: 1;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.data-status .freshness-contract-gap[open] > summary::before { transform: rotate(90deg); }
+.data-status .freshness-contract-gap > summary:hover { color: var(--text-dim); }
+.data-status .freshness-contract-gap[open] > summary { margin-bottom: 3px; }
+.data-status .freshness-contract-body {
+  padding-left: 13px;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+/* -------------------------------------------------------------------------
+   「关卡」那一列只有 1 个下拉框，而右列有 2 个字段 + 摘要，两列等高之后
+   左列下方空出一大块。垂直居中让这块空白上下对称 —— 读起来是「留白」，
+   不是「表单没填完」。
+   ⚠️ 只在宽屏（两列并排）时这么做；≤1100px 是竖排三组，那一列本来就顶着
+   自己的标题，居中反而会把它推离标题。
+   ------------------------------------------------------------------------- */
+@media (min-width: 1101px) {
+  .advice-weights-group:nth-child(1) { justify-content: center; }
+  /* 居中的是「下拉框 + 摘要」这一整组，摘要不再需要 `margin-top: auto`。 */
+  .advice-weights.is-compact .advice-weights-group:nth-child(1) > .advice-weights-meta {
+    margin-top: 0;
+  }
+}
+
+/* -------------------------------------------------------------------------
+   环境统计：图例里的角色名与百分比，原来只用 5px 间隙分隔，两列排开时
+   容易把「名字 3.5%」读成一个整体。给百分比一点左内边距并压暗，
+   数字仍然清楚，但排在名字之后。
+   ------------------------------------------------------------------------- */
+.usage-legend-share {
+  padding-left: 2px;
+  opacity: 0.92;
+}
+
+/* -------------------------------------------------------------------------
+   顶栏底边：一条从中心向两侧淡出的金色发丝线。
+   作用是把顶栏与内容区分开，又不用加粗边框 —— 原来的 1px 实线在滚动时
+   和下面的卡片边框挤在一起，看不出哪条是「栏」。
+   ⚠️ 绝对定位 + `pointer-events: none`，不占高度、不拦点击。
+   ------------------------------------------------------------------------- */
+.topbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 4%,
+    rgba(240, 198, 116, 0.42) 32%,
+    rgba(255, 217, 138, 0.6) 50%,
+    rgba(240, 198, 116, 0.42) 68%,
+    transparent 96%
+  );
+}
+
+/* -------------------------------------------------------------------------
+   角色信息页的总览卡（开拓等级 / 已解锁角色 / 总成本 …）
+   原来每格是一条渐变底 + 描边，六格并排时像一张没画完的表格。
+   加一道顶部内高光（inset），卡面就有了「厚度」；悬停只提亮描边、不位移
+   （这一页六格是并列读数，跟着鼠标动反而干扰）。
+   ------------------------------------------------------------------------- */
+.stat {
+  border-color: var(--hairline);
+  background: linear-gradient(150deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.012));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.055);
+  transition: border-color var(--dur-base) var(--ease-out),
+    box-shadow var(--dur-base) var(--ease-out);
+}
+.stat:hover {
+  border-color: rgba(150, 185, 255, 0.28);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.075), 0 6px 16px rgba(0, 0, 0, 0.22);
+}
+/* 数值是这一格的结论：给一点字距，让「Lv.70」「31」在 21px 下不至于挤成一坨。 */
+.stat-value { letter-spacing: 0.01em; }
+
+/* -------------------------------------------------------------------------
+   弹窗（角色面板 / 验证码 / 隐金设置共用 `.modal-card`）
+   加一层外发光描边：深色页面上弹窗原本只是一块比背景亮一点的矩形，
+   边界靠一条 1px 灰边，关掉再看会「糊进」页面里。
+   ⚠️ 只加阴影，不改尺寸与定位 —— 角色面板的几何有 CDP 断言。
+   ------------------------------------------------------------------------- */
+.modal-card {
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(150, 185, 255, 0.09),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* -------------------------------------------------------------------------
+   翻页条（抽卡方案 · 每页 20 支）
+   页码按钮原来没有任何过渡，点下去是「瞬变」；补齐与其它控件一致的
+   动效，并让当前页多一层内高光，扫一眼就能找到自己在第几页。
+   ------------------------------------------------------------------------- */
+.advice-page-btn {
+  transition: color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+.advice-page-btn.is-active {
+  box-shadow: inset 0 0 0 1px rgba(111, 211, 232, 0.18),
+    0 0 0 3px rgba(111, 211, 232, 0.08);
+  font-weight: 600;
+}
+
+/* -------------------------------------------------------------------------
+   输入类控件的统一悬停：除权重区之外，搜索框（`.advice-search-input`）是
+   抽卡推荐页另一处高频交互，它原来只有聚焦态。
+   ------------------------------------------------------------------------- */
+.advice-search-input:hover:not(:focus) { border-color: var(--hairline-strong); }
+
+/* -------------------------------------------------------------------------
+   抽卡推荐面板顶部的一道金色发丝线：与顶栏底边那条同语言（金色 = 品牌），
+   作用是给这张大面板一个「开始」，否则它和背景只靠 1px 灰边区分。
+   ⚠️ `position: relative` 只是为了给 `::before` 定位，不改变面板尺寸；
+   `pointer-events: none` 保证它不会拦到面板第一行按钮的点击。
+   ------------------------------------------------------------------------- */
+.panel-advice { position: relative; }
+.panel-advice::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(240, 198, 116, 0.35) 22%,
+    rgba(255, 217, 138, 0.55) 50%,
+    rgba(240, 198, 116, 0.35) 78%,
+    transparent
+  );
+}
+/* 面板主标题：21px 在 1600 宽下略散，收紧字距并抬一档字重。 */
+.panel-advice .dash-head h2 { letter-spacing: -0.01em; }

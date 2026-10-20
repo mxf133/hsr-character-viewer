@@ -911,8 +911,21 @@ const renderDataStatusCell = ({ container, label, freshness, empty, hint }) => {
   // 想更新只有一个动作，就是点「刷新米游社战绩」。
   // `sections` 仍然在 `normalizeFreshness` 里算，因为它还参与 `partial` 判定
   // （有分区抓失败时那条提示是有用的，见上面的 `freshness-reason`）。
+  // 2026-10-20（外观精修）：这一行原来是一整句直接摊在三格里 ——
+  // 「接口未提供：fetchedAt、expiresAt、partial、sectionFreshness。当前按整体状态兼容解析。」
+  // 对用户来说它是**纯噪音**（这些是数据契约的字段名，只有排查时才看），而它恰好是
+  // 三格里最长的一行，把真正有用的「最后抓取」挤成了小字。
+  // 现在收进 `<details>`：默认只留一句「N 项契约字段未提供」，想深挖的可以点开。
+  // ⚠️ `textContent` 仍包含全文（`<details>` 折叠不影响 DOM 文本），
+  // `tools/_probe-data-status.mjs` 读的就是 textContent，所以它不受影响。
   if (freshness.contractGaps?.length) {
-    container.appendChild(text('div', 'freshness-contract-gap', `接口未提供：${freshness.contractGaps.join('、')}。当前按整体状态兼容解析。`));
+    const gap = document.createElement('details');
+    gap.className = 'freshness-contract-gap';
+    gap.appendChild(text('summary', 'freshness-contract-summary',
+      `${freshness.contractGaps.length} 项契约字段未提供`));
+    gap.appendChild(text('div', 'freshness-contract-body',
+      `${freshness.contractGaps.join('、')}。当前按整体状态兼容解析。`));
+    container.appendChild(gap);
   }
 };
 
