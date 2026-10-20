@@ -4,22 +4,25 @@
  * 这一份是 §二「抽卡方案」的**唯一实现**。输入是 `scoreEnvRows()` 打过分的行，
  * 输出是排好序、带补金明细的方案行；不碰 IO，浏览器端不再自己抄一遍。
  *
- * 公式（需求文档 §二.2 + 用户 2026-10-18 的两个口径决策）：
+ * 公式（用户 2026-10-20 的口径，取代 2026-10-18 那版的 `baseline / Δgold`）：
  *
- *   补金推荐分(某版本) = ( 强度得分 + 性价比权重 × 性价比得分' ) × 版本权重
- *   性价比得分'       = baseline(该版本) / Δgold          Δgold = 0 时取 1
+ *   补金推荐分(某版本) = ( 强度得分 + 性价比权重 × ( 1 − Δgold / 10 ) ) × 版本权重
+ *   Δgold = 账号与这套配队的**差额金数**（还要补几金）；Δgold = 0 → 那一项取 1
  *   补金推荐分        = max{ 补金推荐分(某版本) }           ← 决策：**取最高值**，不是加权平均
  *
- * ⚠️ 三个容易「顺手改错」的地方，改之前先看这里：
+ * ⚠️ 四个容易「顺手改错」的地方，改之前先看这里：
  *
- *   1. 这里的性价比项用的是 **Δgold（你还要补几金）**，而 §一投稿得分用的是**队伍自己的金数 `c`**。
- *      两处的分子都是 `baseline`，分母不同 —— 这是刻意的：§一衡量「这队划不划算」，
- *      §二衡量「补到这队划不划算」。
- *   2. 跨版本**取最大值**而不是像 §一那样做版本加权平均（用户决策）。版本权重仍然乘进每一版的
+ *   1. 性价比项是 **1 − Δgold/10**（线性扣分，**Δgold > 10 会转负**，没有封底）。
+ *      换掉旧口径 `baseline / Δgold` 的原因：旧式夹在 (0,1] 里，补 26 金与补 3 金
+ *      只差 0.4 分，「补得越多越不划算」几乎看不出来（用户 2026-10-20 的原话）。
+ *      详见 `planCostPartOf()` 上的表。
+ *   2. 这里的 Δgold 是**「你还要补几金」**，而 §一投稿得分用的是**队伍自己的金数 `c`**
+ *      —— 两个数在一张卡上都会印（账面 N 金 / 补金 M 金），别弄混。
+ *   3. 跨版本**取最大值**而不是像 §一那样做版本加权平均（用户决策）。版本权重仍然乘进每一版的
  *      `补金推荐分(某版本)`，所以它照样起作用：最近一期权重 6，会把当期成绩顶上来。
  *      同一套阵容因此只占一行，但 `seasons[]` 里**列出所有版本的成绩**供 UI 展开。
- *   3. **Δgold = 0（阵容已齐）照样进列表**，性价比得分' = 1（用户决策：「账号已有金数 / 此配队
- *      金数 = 1」）。它不会霸榜 —— 名次仍然由强度项继续拉开。
+ *   4. **Δgold = 0（阵容已齐）照样进列表**，性价比项 = 1。它不会霸榜 —— 名次仍然由强度项
+ *      继续拉开。
  *
  * 成本模型（谁要金、几金、隐金怎么减）不在这里，复用 `public/scripts/advice.js` 里那套
  * 已验证的纯函数 —— 仓库的既有约定就是这样（`src/server/app.js` 已经在 import 它们），
@@ -60,20 +63,47 @@ export const lineupKeyOf = (members) => [...members].map((m) => m.char).sort().j
 // ------------------------------------------------------------------ 性价比项（方案专用）
 
 /**
- * 方案的性价比分量 = `baseline / Δgold`，∈ (0, 1]。
+ * 性价比项的**刻度**：补多少金把这一项扣到 0。
  *
- * ⚠️ 两个特殊值，顺序不能调换：
- *   * **Δgold = 0（已齐）→ 1**。这时 `baseline / 0` 是 Infinity，必须先在头上截住。
- *     「账号已有金数 / 此配队金数」= 1，这是用户要的答案。
- *   * **baseline = 0（该版本一个达标投稿都没有）→ 0**，且**只在 Δgold > 0 时才轮到它**。
- *     取不到基准就不要假装能算。
+ * 用户 2026-10-20 给的公式是 `1 − 差额金数 / 10`，所以刻度就是 10。
+ * 抽成常量是因为它会和 `SCORING` 里那批一起被调（`1 − gap/10` 的 10 一旦改成 8 或 12，
+ * 整张榜的陡缓就变了）；写成字面量会散落到注释、测试和界面文案三处。
  */
-export const planCostPartOf = (gapGold, baseline) => {
+export const PLAN_GAP_SCALE = 10;
+
+/**
+ * 方案的性价比分量 = `1 − Δgold / 10`。
+ *
+ * **2026-10-20 换的口径**（用户原话：「抽卡方案的性价比得分有问题，是补金数越多性价比
+ * 越低，因此算法为 补金推荐分 =（强度得分 + 性价比权重 ×（1 − 账号和此配队的差额金数 / 10））
+ * × 投稿的版本权重」）：
+ *
+ * | Δgold（还要补几金） | 这一项 |
+ * | --- | --- |
+ * | 0（已齐） | **1** |
+ * | 5 | 0.5 |
+ * | 10 | **0** |
+ * | 26 | **−1.6** |
+ * | 40 | −3 |
+ *
+ * ⚠️ **Δgold > 10 会转负，这是刻意的、没有封底**：
+ *   * 旧口径 `baseline / Δgold` 是**夹在 (0, 1]** 的（补 26 金仍有 0.31 分），
+ *     于是「补 26 金」和「补 3 金」只差 0.4 分 —— 用户说的「补金数越多性价比越低」
+ *     在旧口径里几乎看不出来，这才是他要换公式的原因；
+ *   * 新口径是**线性扣分**，补到 10 金就把性价比这一项扣光，再多就是负贡献。
+ *     排序上表现为「补金多的队一路沉底」，与「这队要补的东西太多、不划算」一致。
+ *   * 一整套四人要补 20+ 金的情况在绝境很常见（实测榜首 `gap = 26`），所以负分
+ *     不是极端个例 —— 卡片上会如实印出负数，别在界面层偷偷夹到 0（那会把
+ *     「补 11 金」和「补 40 金」又拉成同一个数，回到老问题）。
+ *
+ * ⚠️ `baseline`（该版本最低金）**不再参与这一项**，但字段仍在下发 ——
+ * 详情窗口要用它解释「这一版的金数基准是多少」，只是不再进公式。
+ */
+export const planCostPartOf = (gapGold) => {
   const gap = finiteOf(gapGold);
+  // 算不出差额（null）或已经齐了：两项都按「最高性价比」处理。
   if (gap === null || gap <= 0) return 1;
-  const base = finiteOf(baseline);
-  if (!(base > 0)) return 0;
-  return Math.min(1, base / gap);
+  return 1 - gap / PLAN_GAP_SCALE;
 };
 
 // ------------------------------------------------------------------ 按阵容聚合
@@ -135,7 +165,7 @@ const gapItemsOf = (entry, costOfMember) => {
 
 /** 某个版本的补金推荐分。**只返回数字**，不建中间对象 —— 这一趟要对几千个候选跑。 */
 const planScoreAt = (row, wc, gap) => (
-  ((row.strengthPart ?? 0) + wc * planCostPartOf(gap, row.baseline)) * (row.versionWeight ?? 1)
+  ((row.strengthPart ?? 0) + wc * planCostPartOf(gap)) * (row.versionWeight ?? 1)
 );
 
 /**
@@ -171,7 +201,7 @@ const seasonsDetailOf = (entry, wc, gap) => [...entry.bySeason]
     score: row.a,
     postScore: row.score ?? 0,          // §一那条链上的投稿得分（未乘版本权重），供对照
     strengthPart: row.strengthPart ?? 0,
-    costPart: planCostPartOf(gap, row.baseline),
+    costPart: planCostPartOf(gap),
     versionWeight: row.versionWeight ?? 1,
     planScore: planScoreAt(row, wc, gap),
     cost: row.c,
@@ -419,7 +449,7 @@ export const buildPlan = (scored, options = {}) => {
       score: best ? best.planScore : 0,
       bestSeason: best ? best.season : null,
       strengthPart: best ? best.row.strengthPart ?? 0 : 0,
-      costPart: best ? planCostPartOf(gap, best.row.baseline) : 0,
+      costPart: best ? planCostPartOf(gap) : 0,
       gap,
       gold,
       video: videoOf ? (videoOf(entry.key, best?.season) ?? null) : null,

@@ -16,14 +16,17 @@
 // 差距榜 / 星魂榜，那三者都已不在界面上。副本权重因此收敛成单 scope
 // （`WEIGHT_SCOPE = 'frontier'`）。
 //
-// ⚠️ **抽卡权重（强度 / 性价比 / 泛用性）是第二类权重**（用户 2026-10-12 第 2、3、4 条 +
+// ⚠️ **抽卡权重（强度 / 性价比）是第二类权重**（用户 2026-10-12 第 2、3、4 条 +
 // 2026-10-13 第 1、2 条）：
-//   * **强度 / 性价比** —— 既进角色总榜的两个分项，也进浏览器里 `teamPlan()` 的加权
-//     （方案里这两项再两两归一，所以泛用性旋钮不动方案）；
-//   * **泛用性** —— 只进角色总榜的第三个分项。
+//   * **强度 / 性价比** —— 既进角色总榜的两个分项，也进服务端的补金推荐分
+//     （方案里两项再两两归一，归一后的性价比权重 `wc` 乘在性价比项上）。
+//
+// ⚠️ 2026-10-20：**泛用性已从角色得分里删除**（用户：「角色得分仍然有泛用性，删除此
+// 功能」）。所以这里只剩两个旋钮、两个分项。`versatilityScore` / `versatilityRaw`
+// 服务端仍会投影出来（老接口兼容、探针还在读），但**不进任何分数、界面也不展示**。
 //
 // ⚠️ 因此它**从 v4.6.95 起必须进服务端请求**（v4.6.94 那版刻意不进，因为它当时只服务
-// 抽卡方案）：角色得分 = 三个分项按它加权，而总榜「每角色只留一条」的**收敛**发生在
+// 抽卡方案）：角色得分 = 两个分项按它加权，而总榜「每角色只留一条」的**收敛**发生在
 // 服务端的 `buildConclusion` 里 —— 只在浏览器里加权会让收敛选错代表整包。
 // 所以改它要重算结论（与关卡权重、隐金设置同一条路），见输入框的接线。
 //
@@ -1352,8 +1355,8 @@ const renderWeightRows = (scope = 'frontier') => {
 
 /**
  * 抽卡权重的**比例写法**：归一化之后印成 `0.5` / `0.75` 这种系数（界面那句
- * 「= 队伍强度 … × ws + 队伍性价比 … × wc + 队伍泛用性 … × wv」要把它直接写出来；
- * 角色总榜那边同一句写的是「角色强度 / 角色性价比 / 角色泛用性」—— 2026-10-17 改名）。
+ * 「= 队伍强度 … + 队伍性价比 … × wc」要把它直接写出来；角色总榜那边同一句写的是
+ * 「角色强度 / 角色性价比」—— 2026-10-17 改名，2026-10-20 去掉了泛用性那一项）。
  *
  * ⚠️ 归一化**只**由 `advice.js` 的 `normalizeDrawWeights()` 负责 —— 这里只是显示。
  */
@@ -2562,9 +2565,11 @@ const wireValueTips = (container) => {
     const envsHere = unit.envs || [];
     const needEnvs = Number(unit.envCount) > envsHere.length
       || envsHere.some((env) => !Array.isArray(env.members));
-    const needVersatility = !Array.isArray(unit.versatilityMembers);
     const needVideo = envsHere.some((env) => !env.video);
-    if (!needEnvs && !needVersatility && !needVideo) return;
+    // ⚠️ 2026-10-20：「泛用性名单」不再是这里要补的东西（该分项已从界面上删除，见
+    //    `scoreBreakdownTable()` 那段注释）。按需取数现在只服务两件事：补齐关卡明细、来源视频。
+    //    载荷里 `versatilityByTier` 仍会下发，只是没人读了。
+    if (!needEnvs && !needVideo) return;
     const hit = await fetchPacks(unit.name);
     // ⚠️ **取过就记一笔**（`frontierTip` 的「未展开队友名单」脚注要看它）：
     //    `/conclusion` 2026-10-17 起只给头条那一支带 `members`，未补齐的窗口里
@@ -2576,21 +2581,6 @@ const wireValueTips = (container) => {
       // 面板这条路可能没加载过结论 —— 记下来，`scoreBreakdownTable()` 会读它。
       state.packsFrontierExtents = hit.frontierExtents;
       learned = true;
-    }
-    if (needVersatility) {
-      // ⚠️ **按档取名单**（用户 2026-10-14 第 1 条）：`versatilityByTier` 是这个角色的
-      //    四份名单（按星魂目标档索引），窗口要用**这个整包自己那一档**那份。
-      //    取不到该档时才退回老字段 `versatilityMembers`（老服务端 / 只有一个档的载荷）。
-      if (hit.versatilityByTier) unit.versatilityByTier = hit.versatilityByTier;
-      const mine = hit.versatilityByTier?.[String(eidolonTierOf(unit.eidolon))];
-      if (Array.isArray(mine?.members)) {
-        // 挂回整包对象上：`frontierTip()` 是从 `unit` 渲染的（与上面补 `envs` 同一条路）。
-        unit.versatilityMembers = mine.members;
-        learned = true;
-      } else if (Array.isArray(hit.versatilityMembers)) {
-        unit.versatilityMembers = hit.versatilityMembers;
-        learned = true;
-      }
     }
     const match = (needEnvs || needVideo)
       ? (hit.packs || []).find((p) => p.key === unit.key) || null
@@ -3446,9 +3436,10 @@ const tipInlineDetailBlock = ({ id, node }) => {
 
 const scoreBreakdownTable = (unit) => {
   const w = normalizeDrawWeights(state.conclusion?.drawWeights ?? state.drawWeights ?? {});
+  // ⚠️ 2026-10-20：守卫里**去掉** `versatilityScore` —— 分项表只剩强度 / 性价比两项，
+  //    再要求第三项存在的话，老载荷（这回反而是**新**载荷没那个字段了）整张表都不画。
   if (!Number.isFinite(Number(unit.strengthScore))
-    || !Number.isFinite(Number(unit.costScore))
-    || !Number.isFinite(Number(unit.versatilityScore))) return null;
+    || !Number.isFinite(Number(unit.costScore))) return null;
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
   const pct = (v) => `${(num(v) * 100).toFixed(0)}%`;
   const one = (v) => num(v).toFixed(1);
@@ -3479,16 +3470,12 @@ const scoreBreakdownTable = (unit) => {
   /**
    * 取一个分项的归一上下限。
    *
-   * ⚠️ **泛用性要按整包自己的星魂档取**（用户 2026-10-14 第 1 条「不同星魂需要各自比较
-   *    泛用性」）：算分用的是 `versatility.byTier[档]`，界面这里也必须取同一把尺子，
-   *    否则窗口里写出来的 `得分 = 100 × (原始量 − 最小) / (最大 − 最小)` 与榜上的分对不上。
-   *    取不到该档（老载荷 / 合成夹具）才退回整榜那一份。
+   * ⚠️ 2026-10-20：原来这里对 `versatility` 有一个「按整包星魂档取 byTier」的特判
+   *    （用户 2026-10-14 第 1 条），泛用性从分项表里删掉之后那个分支不会再被走到，一并移除。
+   *    载荷里的 `extents.versatility.byTier` 仍然下发（老接口兼容），只是界面不读了。
    */
-  const extentOf = (key, unit) => {
-    let e = extents?.[key];
-    if (key === 'versatility') {
-      e = e?.byTier?.[String(eidolonTierOf(unit?.eidolon))] ?? e;
-    }
+  const extentOf = (key) => {
+    const e = extents?.[key];
     if (!e || !Number.isFinite(Number(e.lo)) || !Number.isFinite(Number(e.hi))) return null;
     return e;
   };
@@ -3528,14 +3515,18 @@ const scoreBreakdownTable = (unit) => {
    */
   // ⚠️ 2026-10-17（用户第 2 条：「角色总榜的强度/性价比/泛用性更名为角色强度/角色性价比/
   //    角色泛用性」）：这三个名字在**本窗口**里必须带「角色」前缀 —— 补金推荐那一侧
-  //    已经改成「队伍强度 / 队伍性价比 / 队伍泛用性」，两个榜的分项**同名又会让人以为
-  //    是同一个数**（它们确实是同一把尺子，但取的是不同的对象：整包 vs 一支队）。
+  //    已经改成「队伍强度 / 队伍性价比」，两个榜的分项**同名又会让人以为是同一个数**
+  //    （它们确实是同一把尺子，但取的是不同的对象：整包 vs 一支队）。
   //    `title` 只进按钮的 `title` / `aria-label`（`查看角色强度来源`），跟着一起改。
+  //
+  // ⚠️ 2026-10-20（用户：「角色得分仍然有泛用性，删除此功能」）：**泛用性那一项整条删掉**，
+  //    分项表从三项变两项。`characterScore` 的公式里也已经没有它（见 `advice.js` 的
+  //    `frontierBoard`）。`versatilitySourceBlock()` 函数仍留在文件里但**不再被调用** ——
+  //    保留是因为 `conclusion.js` 的按需接口还在下发 `versatilityByTier`（老载荷兼容），
+  //    真要清干净得连那条接口一起删，那是另一轮的事。
   const partSources = [
     { key: 'strength', label: '角色强度', title: '角色强度来源', block: strengthSourceBlock(unit) },
     { key: 'cost', label: '角色性价比', title: '角色性价比来源', block: costSourceBlock(unit) },
-    { key: 'versatility', label: '角色泛用性', title: '角色泛用性来源',
-      block: versatilitySourceBlock(unit) },
   ];
   // 主表（下面那张 `.is-source`）由 `frontierTip()` 用 `tipBox.tableClass` 打上；
   // 三个分项行与它们各自的来源块只在这里、也只建一次 —— 各分项之间不再有第二份抄写。
@@ -3553,13 +3544,8 @@ const scoreBreakdownTable = (unit) => {
     ['角色强度', '各关卡取该队自己的行动值 → 按关卡权重加权平均', unit.strengthTotal, unit.strengthScore,
       w.strength, 'strength', false],
     ['角色性价比', '同成绩下金数越少越高', unit.total, unit.costScore, w.cost, 'cost', false],
-    // ⚠️ 2026-10-16 第 3 条之后这个「为什么」必须写成**角色级的一个数**：
-    //    「只看 E0/E1/E2、取平均、固定给所有档位」—— 改前写的是「本星魂档」（2026-10-14
-    //    的「不同星魂各自比较」已被第 3 条推翻）。
-    // ⚠️ 原始量仍是**双重加权**的（关卡权重 × 版本权重，缺投稿版本计 0），不再是整数并集
-    //    —— 那份并集名单在「泛用性来源」折叠块里（`versatilityMembers`）。
-    ['角色泛用性', 'E0/E1/E2 平均（限定的不同队友数，按关卡与版本权重加权，只算有投稿的副本）',
-      unit.versatilityRaw, unit.versatilityScore, w.versatility, 'versatility', false],
+    // ⚠️ 2026-10-20：这里原来还有第三行「角色泛用性」（`unit.versatilityRaw` /
+    //    `unit.versatilityScore` / `w.versatility`），已随用户「删除此功能」的要求移除。
   ]) {
     const e = extentOf(key, unit);
     // ⚠️ 强度是**绝对刻度**（0~100 就是原始量本身），没有榜内归一那一步 —— 对它写
@@ -3586,15 +3572,12 @@ const scoreBreakdownTable = (unit) => {
         return cell;
       })(),
       // 原始量那一格带出归一区间（见上面 `extents` 的注释）；强度那行写绝对刻度。
-      // ⚠️ 泛用性的端点 2026-10-17 起是**组内 p5 / p95**（`versatilityExtentOf`），
-      //    所以它不能写「榜内」—— 那三个字在这里是「全榜最小 / 最大」的意思，
-      //    而这两个数已经不是极值了（照旧写会让读者验算出 >100 的分）。
+      // ⚠️ 2026-10-20：原来这里还有 `key === 'versatility'` 的分支（「组内 5%~95% 分位」），
+      //    泛用性那一行删掉之后走不到，一并去掉。
       tipFactor(rawText(raw, integer),
         isAbsolute ? '（绝对刻度 0~100）'
           : (e
-            ? (key === 'versatility'
-              ? `（组内 5%~95% 分位 ${rawText(e.lo, integer)} ~ ${rawText(e.hi, integer)}）`
-              : `（${key === 'cost' ? costScaleText() : ''}榜内 ${rawText(e.lo, integer)} ~ ${rawText(e.hi, integer)}）`)
+            ? `（${key === 'cost' ? costScaleText() : ''}榜内 ${rawText(e.lo, integer)} ~ ${rawText(e.hi, integer)}）`
             : '')),
       one(score),
       pct(weight),
@@ -3610,14 +3593,15 @@ const scoreBreakdownTable = (unit) => {
   }
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
-    // ⚠️ 三个分项名带「角色」前缀（用户 2026-10-17 第 2 条）：与上面三行的分项名、
-    //    与补金推荐那三行（「队伍×」）都要能一眼分开。
-    '角色得分 = 角色强度 × 权重 + 角色性价比 × 权重 + 角色泛用性 × 权重'
+    // ⚠️ 分项名带「角色」前缀（用户 2026-10-17 第 2 条）：与下面的分项行、
+    //    与补金推荐那两行（「队伍×」）都要能一眼分开。
+    // ⚠️ 2026-10-20：**去掉「+ 角色泛用性 × 权重」那一段**（那一项已从角色得分里删除）。
+    //    标题句是读者验算的起点，留着就等于告诉人家「这里还有第三项」。
+    '角色得分 = 角色强度 × 权重 + 角色性价比 × 权重'
     // ⚠️ 强度**不再榜内归一**（用户 2026-10-14 的口径）：它本来就是 0~100 的绝对刻度。
     //    这里必须分开说，否则读者会拿 min-max 那条式子去验算强度，永远对不上。
     + '（角色强度 = 绝对刻度 0~100；角色性价比：得分 = 100 ×（' + costValueText()
-    + ' − 榜内最小）/（榜内最大 − 榜内最小）；'
-    + '角色泛用性同式，但尺子取**所在组**（E6 组 / 低档组）的 5%~95% 分位，超出按 0 / 100 夹逼）'));
+    + ' − 榜内最小）/（榜内最大 − 榜内最小））'));
   const table = tipTable(
     ['分项', '原始量', '得分', '权重', '贡献'],
     rows,
@@ -4142,11 +4126,9 @@ const frontierTip = (unit) => {
     '同队成员必然同分（分子分母都只来自队伍）；投稿条数不累加；与你的角色池无关。',
     // ⚠️ 用户 2026-10-13 第 1、2 条之后，这个窗口里有**两类**权重同时在起作用，
     // 所以这句必须说清分工（改前只说「这里的权重是关卡权重那一类」）。
-    '关卡权重决定哪些副本算数；抽卡权重决定三个分项怎么加权。',
-    // 泛用性的口径（用户 2026-10-13 第 1 条 + **2026-10-14 第 1 条改口径**）。
-    // ⚠️ 它现在是**按星魂档**算的：同一个角色的 E0 包与 E6 包拿到的是两个不同的数，
-    //    而且各自在**本档**的区间里归一到 0~100（用户原话：「不同星魂需要各自比较泛用性」）。
-    '泛用性 = **本档星魂**在能通关的队伍里出现过的不同队友数（各星魂档各自排名）。',
+    // ⚠️ 2026-10-20：「三个分项」→「两个分项」—— 泛用性已从角色得分里删掉，
+    //    再写三个就是假话（读者会去找第三个分项在哪）。
+    '关卡权重决定哪些副本算数；抽卡权重决定两个分项怎么加权。',
   ];
   // 「最佳证据的队伍」那一块**已删除**（用户 2026-10-11 第 5 条「图标都放进表格内」）：
   // 队伍卡片现在长在表格第一格里（见 `costSourceBlock()` 的 `labelCell`），关卡信息因此
@@ -4264,6 +4246,14 @@ const planTipTeam = (members, className = '') => {
  * 我只想保留性价比的得分」）之后，这里**只剩两行**：中间那层「性价比得分」已删除
  * （它曾 = 性价比 与 压金度 各半）。别再把它加回来 —— 同一个数套两个名字正是
  * 用户说的「重叠」。
+ *
+ * ⚠️⚠️ **2026-10-20：这个函数已经没有任何调用点了**（`grep teamPlanTip` 只有这一处定义）。
+ *    v4.6.130 把抽卡方案换成服务端内核之后，卡片改走 `planScoreTip()`，这一份是**旧口径**
+ *    的浮层（`plan.gapMax` / `gapCapPct` / 1.5 次幂曲线 / 「队伍泛用性」分项），而新接口
+ *    `/api/archive/plan` 根本不下发那些字段 —— 真被调用起来会印出一堆 `undefined`。
+ *    它的口径与现在的 `1 − 补金/10` 完全对不上，**别拿它当参考**。
+ *    真要清理得单独一轮（310 行，且 `fillItemText` / `fillItemName` 夹在它和
+ *    `planRecommendation()` 之间，切除时容易带上它们）。
  */
 const teamPlanTip = (row, plan) => {
   const num = (v) => Number(v || 0).toFixed(1);
@@ -4884,30 +4874,33 @@ const planMemberIcons = (members, className = 'advice-plan-variant-icon') => {
 const planScoreTip = (row, plan, ws, wc) => {
   const isTurn = plan.kind === 'turn';
   const bestSeason = String(row.bestSeason ?? '');
-  const best = (row.seasons || []).find((s) => String(s.season) === bestSeason)
-    || (row.seasons || [])[0] || null;
   const rows = (row.seasons || []).map((s) => [
     `${s.season}${String(s.season) === bestSeason ? ' ·最佳' : ''}`,
     isTurn ? `${s.score} 轮` : `行动值 ${s.score}`,
     Number(s.strengthPart ?? 0).toFixed(3),
-    `补 ${row.gap} 金｜该版最低 ${s.baseline} 金`,
+    `补 ${row.gap} 金`,
     Number(s.costPart ?? 0).toFixed(3),
     `×${Number(s.versionWeight ?? 1)}`,
     Number(s.planScore ?? 0).toFixed(2),
   ]);
+  // ⚠️ 2026-10-20：性价比换成新口径 `1 − 补金/10`（用户给的公式），
+  //    所以「该版最低金」**不再进公式**，不能继续写在「金数」那一列里当依据
+  //    （旧表的「补 X 金｜该版最低 Y 金」是 `baseline / gap` 时代的写法）。
+  const costPartNow = 1 - Math.max(0, Number(row.gap) || 0) / 10;
   return tipBox({
     head: `补金推荐分 ${Number(row.score).toFixed(2)}`,
-    // ⚠️ 等式里的乘数写**实际生效的那两个权重**（ws / wc），不是默认的 0.5 ——
-    //    用户把强度拉满时这里要跟着变，写死就等于骗人。
-    eq: `（队伍强度 × ${ws} + 性价比 × ${wc}）× 版本权重，逐版本取最大值`,
-    headers: ['版本', isTurn ? '轮次' : '行动值', '队伍强度', '金数', '性价比', '版本权重', '这一版的分'],
+    // ⚠️ 2026-10-20：等式按**服务端实际算的**写 —— `(强度 + wc × 性价比) × 版本权重`。
+    //    强度项不乘 ws（见 `renderTeamPlan()` 里 `advice-plan-team-eq` 那段注释），
+    //    所以这里只出现 wc；写 `强度 × ws` 会让读者按错误的式子验算。
+    eq: `（队伍强度 + 性价比 × ${wc}）× 版本权重，逐版本取最大值`,
+    headers: ['版本', isTurn ? '轮次' : '行动值', '队伍强度', '补金', '性价比', '版本权重', '这一版的分'],
     rows,
     notes: [
       isTurn
         ? '队伍强度 = ws ÷（轮次 + 1），0 轮最高。'
         : '队伍强度 = ws ×（1 − 行动值 ÷ 500），行动值越低越高。',
-      `性价比 =（该版本投档里最低的金数）÷（你还要补的金）。现在是补 ${Number(row.gap)} 金`
-      + `${best ? `、该版最低 ${best.baseline} 金` : ''}；已齐时取 1（最高）。`,
+      `性价比 = 1 − 补金 ÷ 10：补得越少越高，补满 10 金归零、再多转负。`
+      + `这套要补 ${Number(row.gap)} 金 → ${costPartNow.toFixed(2)}（已齐时取 1）。`,
       '版本权重只决定「哪一版的分更高」，不改变队伍强度本身；同一套四人只占一行，'
       + '换光锥 / 叠影的变体收在下面的「其它配装」里。',
     ],
@@ -5030,8 +5023,15 @@ const renderTeamPlan = () => {
     scoreWrap.setAttribute('aria-haspopup', 'true');
     scoreWrap.title = '点击查看这个分数怎么来的';
     scoreWrap.appendChild(text('strong', 'advice-plan-team-score', Number(row.score).toFixed(2)));
+    // ⚠️ 2026-10-20 修：原来写的是 `队伍强度 X × ws + 性价比 Y × wc`，但服务端算的是
+    //    `(强度 + wc × 性价比) × 版本权重` —— **强度项没有乘 ws**（`runPlan()` 给
+    //    `scoreEnvRows()` 传的是 `ws: 1`，`strengthPart` 就是 `1 − 行动值/500`）。
+    //    等式与分数因此对不上：实测 #2 印 `0.902 × 0.5 + (−0.7) × 0.5` 像是 0.1，
+    //    可卡片上的分是 `(0.902 − 0.35) × 5 = 2.76`。
+    //    `ws` 仍然起着作用 —— 但它通过**归一化**改变的是 `wc`（强度权重给得越大、
+    //    wc 越小、性价比项越轻），不是直接乘在强度项上。所以这里只印 wc。
     scoreWrap.appendChild(text('span', 'advice-plan-team-eq',
-      `= 队伍强度 ${Number(row.strengthPart).toFixed(3)} × ${ws}`
+      `= 队伍强度 ${Number(row.strengthPart).toFixed(3)}`
       + ` + 性价比 ${Number(row.costPart).toFixed(3)} × ${wc}`
       + `（${plan.kind === 'turn' ? '轮次' : '行动值'}口径）`));
     scoreWrap.appendChild(lazyTip(() => planScoreTip(row, plan, ws, wc)));
@@ -5198,14 +5198,19 @@ const renderTeamPlan = () => {
   //    上面那一大段（是什么 / 队伍来源 / 三项加权 / 1.5 次幂）确实删了，
   //    这里只留三句「怎么算」的定量口径 —— 没有它，`= 队伍强度 0.412 × 0.5`
   //    对读者就是一组没有单位的数字。用户要删的是**推荐语气的长段落**，不是公式说明。
+  // ⚠️ 2026-10-20：性价比那句换成新口径 `1 − 补金/10`（用户给的公式）。原来写的是
+  //    「（该版本最低金）÷（本队补到成型所需金）」—— 那个 `baseline / Δgold` 已经不用了，
+  //    留着会让读者按一个失效的式子去验算卡片上的数。
   el.teamPlanBody.appendChild(text('p', 'muted small advice-plan-team-foot',
     `口径：只算「${plan.envLabel || plan.env}」这一个关卡，逐版本取**最大值**`
     + `（版本窗口 ${plan.window} 期，评分时乘版本权重）；`
     + (plan.kind === 'turn'
       ? '队伍强度 = ws ÷ (轮次 + 1)，0 轮最高；'
       : '队伍强度 = ws × (1 − 行动值 ÷ 500)，行动值越低越高；')
-    + '性价比 = （该版本**最低金**）÷（本队补到成型所需金），你已齐时取 1（最高）；'
-    + '补金推荐分 = 队伍强度 × ' + ws + ' + 性价比 × ' + wc + '（抽卡权重，上面可调）。'
+    + '性价比 = 1 − 补金 ÷ 10（补得越少越高，补满 10 金归零、再多转负）；'
+    + '补金推荐分 = （队伍强度 + 性价比 × ' + wc + '）× 版本权重。'
+    + '强度权重 ' + ws + ' 不直接乘在强度项上 —— 它与性价比权重归一后决定的就是上面那个 '
+    + wc + '，所以把强度权重调大等于压低性价比项的分量。'
     + '补金顺序按每抽收益从高到低，光锥一定排在它自己的角色之后；'
     + '「其它配装」是同一套四人换了光锥 / 叠影的变体（按角色组合折叠，只展示分最高的那套）。'));
 
