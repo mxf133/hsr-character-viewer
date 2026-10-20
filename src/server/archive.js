@@ -131,7 +131,19 @@ const state = {
   cache: null,
   i18n: null,
   i18nPromise: null,
+  /**
+   * 档案「第几代」。
+   *
+   * 用途只有一个：给下游那些**按输入签名缓存整池**的模块（`gacha-plan-run.js` 的
+   * 关卡层 / 整池层）做失效标记。数据集重新采集时 `reloadArchive()` 换掉内存里的
+   * 档案，但进程不重启 —— 缓存键里不带上这一代号，界面就会一直显示上一份档案的分。
+   * 只往上加，不回绕；换目录（测试）也算一代。
+   */
+  epoch: 0,
 };
+
+/** 档案代数。见 `state.epoch`。 */
+export const archiveEpoch = () => state.epoch;
 
 /** Point the reader at a different directory (tests, or a moved dataset). */
 export const setArchiveDir = (dir) => {
@@ -140,6 +152,7 @@ export const setArchiveDir = (dir) => {
   state.cache = null;
   state.i18n = null;
   state.i18nPromise = null;
+  state.epoch += 1;
 };
 
 export const archivePath = () => join(state.dir, 'archive.json');
@@ -327,6 +340,8 @@ export const loadArchive = async () => {
 export const reloadArchive = () => {
   state.promise = null;
   state.cache = null;
+  // 让按签名缓存的整池一起过期（见 `state.epoch` 的注释）。
+  state.epoch += 1;
 };
 
 /**
@@ -737,6 +752,15 @@ export const archiveFrontier = async (mode, options = {}) => {
       season: r.season,
       seasonWeight: Number(r.w) || 1,
       members,
+      /**
+       * 这一行代表的**真实投稿数**（建库侧 `n`，同一配装 + 成本去重合并后的 count）。
+       *
+       * ⚠️ 2026-10-20 新增（v4.6.134）：改之前这个字段在映射时被丢掉了，下游
+       * （`gacha-plan-run.js` 的 `rowOf`）只好写死 `n: 1`，于是「这次搜索覆盖了多少条
+       * 投稿」只能报**行数**。实测绝境 4.5：421 行 = 512 条投稿（一行常被 2~3 个人投过）。
+       * 现在带出来，抽卡方案的状态行能如实印「共 N 支 · 来自 M 条投稿」。
+       */
+      submissions: Math.max(1, Number(r.n) || 1),
       // `videoUrlOf` 把 `douyin:<id>` / `tiktok:<id>` 那 31 条伪串挡在外面（见它的注释）。
       video: videoUrlOf(sample?.video),
       // 投稿 run id：也留着 —— 它是这条证据**唯一**的稳定标识（`sample.id` 全局不重复），
