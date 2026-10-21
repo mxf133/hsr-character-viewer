@@ -4389,6 +4389,163 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
   color: var(--text-muted);
 }
 
+/* 「其它」是中性灰的合计项，不与某个角色并列，所以不抢小数点后那一位的注意力。 */
+.usage-legend-item.is-other .usage-legend-name {
+  color: var(--text-muted);
+}
+
+/* --------------------------------------------------------------------------
+   上场率 · 头像 + 排行榜（2026-10-21 · 分支 feat/usage-rankboard）
+
+   ① 图例头像：在色点旁加一枚 18px 头像，让读者不用看名字就能认出角色。
+      头像地址由服务端下发（`item.icon`），缺图退化成 `is-empty` 色点占位 ——
+      与总榜行 `advice-unit-avatar` 同一套「留空位、不摘节点」的思路。
+   ② 通关榜：每个副本组顶部一张横向排名条，名次徽标 + 头像 + 中文名 +
+      百分比进度条。这是整块「上场率」里最显眼的一处 —— 环形图多、信息碎，
+      一张大榜让「谁最火」一眼可读。
+   -------------------------------------------------------------------------- */
+
+/* 图例头像：固定 18px，圆角 4px（与角色头像的方形卡片感一致，不做正圆——
+   星铁角色头像是方形立绘，裁成正圆会切掉太多）。 */
+.usage-legend-avatar {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: cover;
+  background: var(--surface-raised, rgba(255, 255, 255, 0.045));
+}
+/* 缺图时占位成一个小色块，与色点同排不塌。 */
+.usage-legend-avatar.is-empty {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--surface-raised, rgba(255, 255, 255, 0.045));
+}
+.usage-legend-avatar.is-missing {
+  opacity: 0.25;
+}
+
+/* 通关榜：卡片底 + 发丝边，与环形图卡片同一套皮肤，但横向更宽（独占一行）。 */
+.usage-rankboard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+.usage-rankboard-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 2px 8px;
+}
+.usage-rankboard-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 0.02em;
+}
+.usage-rankboard-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 榜单：两列自适应（窄屏一列）。 */
+.usage-rankboard-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 6px 18px;
+}
+.usage-rankboard-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 名次徽标：前三名金银铜（JS 写 inline 背景色），其余中性底。 */
+.usage-rankbadge {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #0b0f1a;
+  font-variant-numeric: tabular-nums;
+}
+.usage-rankbadge:not(.is-top) {
+  background: var(--surface-raised, rgba(255, 255, 255, 0.045));
+  color: var(--text-muted);
+}
+
+/* 排行榜头像：比图例头像大一号（22px），它是这张榜的主角。 */
+.usage-rankavatar {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  object-fit: cover;
+  background: var(--surface-raised, rgba(255, 255, 255, 0.045));
+}
+.usage-rankavatar.is-empty {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: var(--surface-raised, rgba(255, 255, 255, 0.045));
+}
+.usage-rankavatar.is-missing {
+  opacity: 0.25;
+}
+
+.usage-rankname {
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* 进度条：以第一名 share 为满宽（见 renderRankboard 里 `max`），
+   轨道是发丝底，填充色与环形图同色环（按名次分配）。 */
+.usage-rankbar {
+  flex: 1 1 auto;
+  min-width: 40px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-raised, rgba(255, 255, 255, 0.045));
+  overflow: hidden;
+}
+.usage-rankfill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s var(--ease-out, ease);
+}
+
+.usage-rankshare {
+  flex: none;
+  min-width: 42px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ==========================================================================
    界面精修层 v2（2026-10-20 · 分支 feat/ui-polish）
    --------------------------------------------------------------------------

@@ -1351,6 +1351,10 @@ export const archiveUsage = async (options = {}) => {
   // 角色中文名在这里补（下面的 item.charCn）：前端那条路是「英文键 → 界面自己查 i18n」，
   // 但上场率这一节不属于总榜 / 方案那几条链，单独走查表只会多一个会分叉的来源。
   const i18n = await loadI18n();
+  // 角色头像也在这里补（下面的 item.icon）：与 charCn 同一条「服务端查表」路径，
+  // 前端 advice-usage.js 只读不查，避免再复制一份四级兜底（与 advice-view.js 的
+  // iconUrlOf 同一套规则，见本文件 iconResolver / resolveIcon）。
+  const iconMaps = iconResolver(i18n);
   const { envs, skipped, window } = await conclusionEnvs(index, {
     window: options.window,
     versionWeights: options.versionWeights,
@@ -1396,6 +1400,7 @@ export const archiveUsage = async (options = {}) => {
         items: band.items.map((it) => ({
           ...it,
           charCn: it.other ? null : (zhName(i18n, 'characters', it.char) || null),
+          icon: it.other ? null : resolveIcon(iconMaps, 'char', it.char),
         })),
       })),
     });
