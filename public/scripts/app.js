@@ -2154,3 +2154,10 @@ const main = async () => {
 };
 
 main();
+
+// ------------------------------------------------------------------ PWA ---
+// 安卓「添加到主屏幕」后的离线壳（public/sw.js）。注册失败静默：SW 只是增强，
+// 不注册网页功能完全正常（e2e 断言 index.html 无内联脚本，所以注册放这里）。
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}); });
+}

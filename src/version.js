@@ -2585,6 +2585,15 @@
 //            `_probe-strength-gap.mjs`（90 天花板 / 缺副本 / 覆盖率修正）、
 //            `_probe-strength-why.mjs`（单角色逐副本 / 逐版本对比「现状行 vs 最快行」）、
 //
+//   v4.6.143 2026-10-21：**安卓端 PWA**（分支 `feat/android-client`，原登 4.6.141；
+//             合并时 4.6.141 已被 `feat/character-detail-algo-fix` 占用并打 tag、
+//             4.6.142 已被 `feat/plan-best-season-score` 占用，按「跳过被并行分支
+//             占用的号」惯例改登 4.6.143）。离线壳（manifest + sw.js 静态壳
+//             stale-while-revalidate、导航 network-first、/api/* 与 /icons/* 绝不缓存）、
+//             登录二维码框 304px 撑溢出的修复（min(304px,100%) + aspect-ratio:1）、
+//             Termux 一键脚本（termux/start.sh + README）。调研与方案见流水账
+//             4.2BM~4.2BQ（原 4.2BF~4.2BJ，与 main 已占节号撞车，按版本顺序重排）。
+//
 //   v4.6.142 2026-10-21：**抽卡方案「最佳版本」旁边印具体成绩**（分支
 //             `feat/plan-best-season-score`，用户：「最佳版本 x.x 旁边，需要有具体的
 //             成绩，例如 0T 或者行动值 xx」）。卡片事实行从「最佳版本 4.6」改成
@@ -3687,7 +3696,7 @@
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.142';
+export const PROGRAM_VERSION = '4.6.143';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';
