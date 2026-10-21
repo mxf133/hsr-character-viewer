@@ -19,7 +19,7 @@
 //     用它验「本队命中」与 AND 语义，结果不含任何次选噪声。
 //   * `BRANCHED` —— 一号队与二号队共享 2 人、三号队彻底孤立 ⇒ 次选关系可控。
 //     用它验「次选命中」与徽章不说谎。
-import {
+import { mergePlanEntries, tierRankOf, 
   PLAN_ALT_INDEX_MAX_LINEUPS, PLAN_PAGE_SIZE_MAX, altTokensOf, createPlanCache, hashOf,
   planPageOf, planTokensOf, searchPlanIndex, tokenIndexOf,
 } from '../src/server/plan-index.js';
@@ -101,6 +101,14 @@ const poolOf = (rows) => {
 
 const FLAT = poolOf(DISJOINT);
 const BRANCH = poolOf(BRANCHED);
+
+// 2026-10-21：搜索层吃的是「条目表」（满分在前、非满分在后，见 plan-index.js 的
+// `mergePlanEntries()`），不再是裸池。夹具只有一份池，用这个适配器包一层 ——
+// 每一行的 `state` 就是池本身（次选就在这份池里找）。
+const asIndex = (pool) => ({
+  entries: pool.lineups.map((row) => ({ row, state: pool })),
+  nameOf,
+});
 const ranksOf = (result) => result.ids.map((id) => id + 1);
 const charsAt = (pool, id) => pool.lineups[id].members.map((m) => m.char).sort().join('/');
 const altsOf = (pool, id) => alternativesOf(pool.lineups[id], pool.pool, pool.rankOf, pool.byMember, 3);
@@ -130,7 +138,7 @@ console.log('\n[可搜索词元]');
 // ------------------------------------------------------------------ 次选索引
 console.log('\n[次选词元：必须与 alternativesOf() 实际输出一致]');
 {
-  const alts = altTokensOf(BRANCH);
+  const alts = altTokensOf(asIndex(BRANCH));
   check('建得出来（池子远小于上限）', Array.isArray(alts) && alts.length === BRANCH.lineups.length);
   const topAlts = altsOf(BRANCH, 0);
   const altChars = new Set(topAlts.flatMap((a) => a.members.map((m) => m.char)));
@@ -144,7 +152,8 @@ console.log('\n[次选词元：必须与 alternativesOf() 实际输出一致]');
   eq('孤立队没有次选词元', alts[2], []);
 
   // 超限：伪造一个 4001 行的索引，`altTokensOf()` 必须直接放弃（不逐行算次选）。
-  const big = { lineups: new Array(PLAN_ALT_INDEX_MAX_LINEUPS + 1).fill(null), nameOf };
+  const big = { entries: new Array(PLAN_ALT_INDEX_MAX_LINEUPS + 1).fill(null), nameOf };
+  const bigIndex = { entries: new Array(PLAN_ALT_INDEX_MAX_LINEUPS + 1).fill(null), nameOf };
   check('超过上限时不建次选索引', altTokensOf(big) === null);
   check('超限时不懒建次选倒排', tokenIndexOf(big, 'alt') === null);
 }
@@ -152,52 +161,56 @@ console.log('\n[次选词元：必须与 alternativesOf() 实际输出一致]');
 // ------------------------------------------------------------------ 搜索（无次选干扰）
 console.log('\n[搜索 · 互不共享的三支队伍：只认本队]');
 {
-  const all = searchPlanIndex(FLAT, '');
+  const all = searchPlanIndex(asIndex(FLAT), '');
   eq('空词 = 整池', ranksOf(all), [1, 2, 3]);
   eq('空词没有次选命中', all.altOnly, 0);
 
-  const a1 = searchPlanIndex(FLAT, '甲一');
+  const a1 = searchPlanIndex(asIndex(FLAT), '甲一');
   eq('中文名命中', ranksOf(a1), [1]);
   eq('孤立阵容没有次选命中', a1.altOnly, 0);
 
-  eq('英文键、大小写不敏感', ranksOf(searchPlanIndex(FLAT, 'A1')), [1]);
-  eq('首尾空格不影响', ranksOf(searchPlanIndex(FLAT, '  甲一   ')), [1]);
+  eq('英文键、大小写不敏感', ranksOf(searchPlanIndex(asIndex(FLAT), 'A1')), [1]);
+  eq('首尾空格不影响', ranksOf(searchPlanIndex(asIndex(FLAT), '  甲一   ')), [1]);
 
-  eq('同一支队伍的第二个词也命中', ranksOf(searchPlanIndex(FLAT, '甲一 甲二')), [1]);
-  eq('跨队伍的两个词 → 无结果（AND 不是 OR）', ranksOf(searchPlanIndex(FLAT, '甲一 乙一')), []);
-  eq('光锥名能搜', ranksOf(searchPlanIndex(FLAT, '英雄专武')), [1]);
-  eq('搜不到就是空', searchPlanIndex(FLAT, '查无此人').ids, []);
-  eq('搜不到时页数也要有 1 页', planPageOf(searchPlanIndex(FLAT, '查无此人').ids, 1).pages, 1);
-  eq('只记得中间一段也命中（子串，不是前缀）', ranksOf(searchPlanIndex(FLAT, '一')), [1, 2, 3]);
-  eq('同一支队伍的四个词元都命中同一行', ranksOf(searchPlanIndex(FLAT, '甲四')), [1]);
+  eq('同一支队伍的第二个词也命中', ranksOf(searchPlanIndex(asIndex(FLAT), '甲一 甲二')), [1]);
+  eq('跨队伍的两个词 → 无结果（AND 不是 OR）', ranksOf(searchPlanIndex(asIndex(FLAT), '甲一 乙一')), []);
+  eq('光锥名能搜', ranksOf(searchPlanIndex(asIndex(FLAT), '英雄专武')), [1]);
+  eq('搜不到就是空', searchPlanIndex(asIndex(FLAT), '查无此人').ids, []);
+  eq('搜不到时页数也要有 1 页', planPageOf(searchPlanIndex(asIndex(FLAT), '查无此人').ids, 1).pages, 1);
+  eq('只记得中间一段也命中（子串，不是前缀）', ranksOf(searchPlanIndex(asIndex(FLAT), '一')), [1, 2, 3]);
+  eq('同一支队伍的四个词元都命中同一行', ranksOf(searchPlanIndex(asIndex(FLAT), '甲四')), [1]);
 }
 
 // ------------------------------------------------------------------ 搜索（含次选）
 console.log('\n[搜索 · 次选命中：算「搜到」，但单独计数]');
 {
-  const hero = searchPlanIndex(BRANCH, '英雄');
+  // 缓存挂在**索引对象**上（真实服务里索引随整池缓存、长期存活）。夹具这里
+  // 也建一份共享索引 —— 上一次实现挂在池对象上，适配器化之后每次调用都是新对象，
+  // 身份比较就必须用同一份索引才有意义。
+  const branchIdx = asIndex(BRANCH);
+  const hero = searchPlanIndex(branchIdx, '英雄');
   eq('本队命中排在前面，次选命中的那支跟在后面', ranksOf(hero), [1, 2]);
   eq('其中 1 支是次选命中', hero.altOnly, 1);
   check('孤立队不会被误判成次选命中', !ranksOf(hero).includes(3), ranksOf(hero).join(','));
   eq('本队命中数不含次选', hero.ownCount, 1);
 
-  const zed = searchPlanIndex(BRANCH, '载德');
+  const zed = searchPlanIndex(branchIdx, '载德');
   eq('只在次选里出现的角色也能搜到', ranksOf(zed), [1, 2]);
   eq('它算次选命中', zed.altOnly, 1);
   // 翻页就是「同一个词、另一页」——这一步必须命中 `lastQuery`，不重算。
   check('同一个词连续两次复用上一次的结果（翻页不重算）',
-    searchPlanIndex(BRANCH, '载德') === zed);
+    searchPlanIndex(branchIdx, '载德') === zed);
 
-  const both = searchPlanIndex(BRANCH, '英雄 载德');
+  const both = searchPlanIndex(branchIdx, '英雄 载德');
   eq('A 在本队、B 在次选 → 命中并标次选', ranksOf(both), [1]);
   eq('全部算次选命中', both.altOnly, 1);
 
-  const cone = searchPlanIndex(BRANCH, 'freelc');
+  const cone = searchPlanIndex(asIndex(BRANCH), 'freelc');
   check('折叠进 variants 的光锥也能搜到（本队命中，不是靠次选）',
     cone.ids[0] === 0 && cone.ownCount >= 1, `ids ${ranksOf(cone)} own ${cone.ownCount}`);
 
   // 徽章不说谎：次选命中的那一行，它的次选里确实有该角色。
-  const altHitRow = BRANCH.lineups[zed.altOnlyIds[0]];
+  const altHitRow = asIndex(BRANCH).entries[zed.altOnlyIds[0]].row;
   const altChars = altsOf(BRANCH, zed.altOnlyIds[0])
     .flatMap((a) => a.members.map((m) => m.char));
   check('次选命中那一行的本队里没有该角色', !altHitRow.members.some((m) => m.char === 'Zed'));
@@ -206,15 +219,16 @@ console.log('\n[搜索 · 次选命中：算「搜到」，但单独计数]');
   check('结果按名次升序', ranksOf(zed).join(',') === [...ranksOf(zed)].sort((a, b) => a - b).join(','));
 
   // 超限索引：没有次选索引时，`altSearch` 必须如实说 false。
-  const big = {
-    lineups: Array.from({ length: PLAN_ALT_INDEX_MAX_LINEUPS + 1 }, () => ({
-      members: [{ char: 'Hero', lc: null }], variants: [],
+  const bigIndex = {
+    entries: Array.from({ length: PLAN_ALT_INDEX_MAX_LINEUPS + 1 }, () => ({
+      row: { members: [{ char: 'Hero', lc: null }], variants: [] },
+      state: null,
     })),
     nameOf,
   };
-  const bigHit = searchPlanIndex(big, '英雄');
+  const bigHit = searchPlanIndex(bigIndex, '英雄');
   eq('池子过大时 altSearch = false', bigHit.altSearch, false);
-  eq('池子过大时仍能按本队搜到', bigHit.ids.length, big.lineups.length);
+  eq('池子过大时仍能按本队搜到', bigHit.ids.length, bigIndex.entries.length);
   eq('池子过大时不会假装有次选命中', bigHit.altOnly, 0);
 }
 
@@ -281,6 +295,47 @@ console.log('\n[签名哈希]');
   check('同输入同输出', hashOf('abc') === hashOf('abc'));
   check('不同输入不同输出', hashOf('abc') !== hashOf('abd'));
   check('空值不炸', typeof hashOf(undefined) === 'string');
+}
+
+// -------------------------------------------------- 全档位合并（2026-10-21）
+console.log('\n[合并：满分在前、非满分按档位分组、同一套人不重复]');
+{
+  const mk = (key, lineup, tier, score) => ({
+    key, lineup, tier, score, members: [], entry: { key }, variants: [],
+  });
+  const board = {
+    lineups: [mk('p1', 'A/B/C/D', 'perfect', 9), mk('p2', 'E/F/G/H', 'perfect', 8)],
+    pool: [], rankOf: null, byMember: null,
+  };
+  const extra = {
+    lineups: [
+      mk('t1', 'I/J/K/L', 'target', 5),   // 只有非满分有的阵容
+      mk('t2', 'A/B/C/D', 'target', 6),   // 与满分重复的阵容 → 必须被丢掉
+      mk('s1', 'M/N/O/P', 'pass', 4),
+      mk('b1', 'Q/R/S/T', 'below', 3),
+      mk('x1', 'U/V/W/X', 'unknown', 2),  // 未知档位 → 按 below 处理
+    ],
+    pool: [], rankOf: null, byMember: null,
+  };
+  const merged = mergePlanEntries(board, extra);
+  eq('总条数 = 满分 2 + 非满分 4（重复阵容被丢）', merged.entries.length, 6);
+  eq('满分段在前且保序', merged.entries.slice(0, 2).map((e) => e.row.key).join(','), 'p1,p2');
+  eq('非满分按档位分组（target → pass → below）',
+    merged.entries.slice(2).map((e) => e.row.key).join(','), 't1,s1,b1,x1');
+  eq('boardCount 记录满分段长度', merged.boardCount, 2);
+  eq('档位计数', JSON.stringify(merged.tierCounts),
+    JSON.stringify({ perfect: 2, target: 1, pass: 1, below: 2 }));
+  check('档位排序权重未知值落最低', tierRankOf('nonsense') === tierRankOf('below'));
+
+  // 搜索名次的连续性：合并表上搜索返回的是全表行号，满分段仍是 1~N。
+  const idx = {
+    entries: merged.entries.map(({ row, state }) => ({ row, state })),
+    nameOf: () => null,
+  };
+  const all = searchPlanIndex(idx, '');
+  eq('不搜索 = 全表按名次', all.ids.length, 6);
+  check('非满分行的 state 就是那份池（次选从自己池里找，不跨池）',
+    merged.entries[2].state === extra);
 }
 
 // ------------------------------------------------------------------ 物化

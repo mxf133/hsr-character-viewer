@@ -68,6 +68,55 @@ export const PLAN_INDEX_ROW_BUDGET = 140000;
 export const PLAN_ALT_INDEX_MAX_LINEUPS = 1500;
 
 /**
+ * 非满分档的**展示顺序**（越大越靠后）。
+ *
+ * 2026-10-21：抽卡方案把「差一档 / 通关 / 未达标」也收进可搜索池（用户：「必须确保
+ * 所有投稿都能被搜到」），但它们**排在满分之后**，且组内按各自的分排序 ——
+ * 榜面前 N 名的口径一个字都不变。
+ * ⚠️ 这里只决定「组与组的先后」。档位名来自 `archive.js` 的 `frontierTierOf()`。
+ */
+export const PLAN_TIER_ORDER = Object.freeze({ perfect: 0, target: 1, pass: 2, below: 3 });
+
+/** 档位 → 排序权重（未知档位按「未达标」处理，宁可排最后也不冒充满分）。 */
+export const tierRankOf = (tier) => PLAN_TIER_ORDER[tier] ?? PLAN_TIER_ORDER.below;
+
+/**
+ * 把「满分池」与「非满分池」合成一份**可翻可搜的条目表**（2026-10-21）。
+ *
+ * 用户的原话是「必须确保所有投稿都能被搜到」—— 改之前方案池只收满分档
+ * （`tier === 'perfect'`），差一档 / 通关 / 未达标的投稿在建池前就被丢掉了，
+ * 于是「某个角色只出现在差一档的队伍里」时怎么搜都搜不到。
+ *
+ * 两条硬规则（改之前先看清）：
+ *   1. **满分永远在前**：`entries` 的前 `boardCount` 个就是榜面那批，名次 = 下标 + 1
+ *      ⇒ 「第 1~267 名」的口径一个字都没变（对拍见 `_probe-plan-board-parity.mjs`）。
+ *   2. **非满分不覆盖满分**：同一套四人（`lineup` 键）若已有满分行，非满分那条直接丢掉 ——
+ *      满分那条已经能搜到它，重复出现只会让人以为有两支不同的队。
+ *
+ * 非满分内部按档位分组（差一档 → 通关 → 未达标），组内保持池子的分降序
+ * （`Array#sort` 稳定，所以只按档位排序即可）。
+ *
+ * @param board 满分池（`buildPlanPool()` 的返回值）
+ * @param extra 非满分池；没有非满分投稿时传 `null`
+ */
+export const mergePlanEntries = (board, extra = null) => {
+  const boardLineups = new Set(board.lineups.map((row) => row.lineup));
+  const extras = (extra?.lineups || [])
+    .filter((row) => !boardLineups.has(row.lineup))
+    .sort((a, b) => tierRankOf(a.tier) - tierRankOf(b.tier));
+  const entries = [
+    ...board.lineups.map((row) => ({ row, state: board })),
+    ...extras.map((row) => ({ row, state: extra })),
+  ];
+  const tierCounts = { perfect: 0, target: 0, pass: 0, below: 0 };
+  for (const { row } of entries) {
+    const tier = row.tier in tierCounts ? row.tier : 'below';
+    tierCounts[tier] += 1;
+  }
+  return { entries, tierCounts, boardCount: board.lineups.length };
+};
+
+/**
  * FNV-1a（32 位）→ base36 短串。
  *
  * 用途只有一个：把「账号持有 + 三套权重 + 隐金开关」压成一个短 cache key。
@@ -176,13 +225,17 @@ export const planTokensOf = (row, nameOf = () => null) => {
  */
 export const altTokensOf = (index) => {
   if (index.altTokens !== undefined) return index.altTokens;
-  if (index.lineups.length > PLAN_ALT_INDEX_MAX_LINEUPS) {
+  if (index.entries.length > PLAN_ALT_INDEX_MAX_LINEUPS) {
     index.altTokens = null;
     return null;
   }
   const limit = Number(index.maxAlternatives) || 3;
-  index.altTokens = index.lineups.map((row) => {
-    const alternatives = alternativesOf(row, index.pool, index.rankOf, index.byMember, limit);
+  // ⚠️ 次选必须用**这一行自己那份池**算：满分池与非满分池是两套 `byMember` / 名次表，
+  //    拿错了会算出「别的榜里的邻队」（`entry.state` 就是那一行的池）。
+  index.altTokens = index.entries.map(({ row, state }) => {
+    const alternatives = alternativesOf(
+      row, state.pool, state.rankOf, state.byMember, limit,
+    );
     const tokens = [];
     const seen = new Set();
     const push = (value) => {
@@ -223,7 +276,7 @@ export const tokenIndexOf = (index, which = 'own') => {
   if (index[slot]) return index[slot];
   const rowsOf = which === 'alt'
     ? altTokensOf(index)
-    : index.lineups.map((row) => planTokensOf(row, index.nameOf));
+    : index.entries.map(({ row }) => planTokensOf(row, index.nameOf));
   if (!rowsOf) return null;
   const map = new Map();
   rowsOf.forEach((tokens, i) => {
@@ -259,7 +312,7 @@ const flagsOf = (tokens, size, term) => {
  */
 export const searchPlanIndex = (index, rawQuery) => {
   const terms = queryTermsOf(rawQuery);
-  const size = index.lineups.length;
+  const size = index.entries.length;
   if (!terms.length) {
     // 不搜索 = 整池按名次。这份「0..N-1」是**静态**的，挂在索引上复用（10 万行的
     // 数组每次请求都新建一遍是白扔内存）。

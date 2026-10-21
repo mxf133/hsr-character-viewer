@@ -25,7 +25,7 @@ import { archiveEpoch, archiveFrontierAll, archiveIndex, loadI18n, zhName } from
 import { envKindOf, scoreEnvRows } from './gacha-score.js';
 import { buildPlanPool, materializePlanRow } from './gacha-plan.js';
 import {
-  createPlanCache, hashOf, planPageOf, searchPlanIndex,
+  createPlanCache, hashOf, mergePlanEntries, planPageOf, searchPlanIndex,
 } from './plan-index.js';
 import { normalizeDrawWeights, normalizeHiddenCosts } from '../../public/scripts/advice.js';
 
@@ -204,13 +204,20 @@ const rowOf = (r) => ({
  * ⚠️ 同一个键可能有多条（同阵容不同配装），取**第一条非空**即可：它们指向的都是
  *    「这套阵容的某条投稿」，界面文案写「来源视频」而不是「这条成绩的视频」。
  */
+
 const videoIndexOf = (frontierRows) => {
   const map = new Map();
-  for (const r of frontierRows) {
+  // 同一个阵容 + 版本可能既有满分投稿也有差一档投稿、都带视频。先扫满分，再扫其余
+  // —— 满分那条排在前面就永远轮不到低档位顶替它；低档位只做「满分没有时的兜底」
+  // （这也是 minTier 放开到 0 之后视频列反而变多的唯一来源）。
+  const rows = [...frontierRows].sort(
+    (a, b) => (a.tier === 'perfect' ? 0 : 1) - (b.tier === 'perfect' ? 0 : 1),
+  );
+  for (const r of rows) {
     if (!r.video) continue;
     const roster = (r.members || []).map((m) => m.char).sort().join(' + ');
     if (!roster) continue;
-    const key = `${r.season}|${roster}`;
+    const key = r.season + '|' + roster;
     if (!map.has(key)) map.set(key, r.video);
   }
   return map;
@@ -272,11 +279,17 @@ export const runPlan = async (options = {}) => {
   const env = await cachedAsync(FRONTIER_CACHE, envKey, (value) => value.poolRows, async () => {
     // ⚠️ 不传 `weights`：方案只看这一个关卡，「副本权重」这个概念在方案里不存在
     //    （它决定的是总榜里各副本怎么加权）。传了反而会让用户没选的副本变成 0 权重。
+    //
+    // ⚠️ v4.6.136：`minTier: 0` —— **四个档位全要**（perfect / target / pass / below）。
+    //    改之前默认 `minTier: 2`，差一档和通关的投稿在建池前就被丢掉了，于是用户搜
+    //    某个只在「差一档」队伍里出现过的角色，一条都搜不到（他报的「会错过投稿」）。
+    //    现在非满分行进**另一个池**，排在满分之后（见下面 ②）。
     const [f] = await archiveFrontierAll([{
       id: picked.key, mode: picked.mode, stage: picked.stage,
     }], {
       window,
       versionWeights: options.versionWeights,
+      minTier: 0,
     });
     if (!f?.ok) {
       return { ok: false, error: f?.error || '该关卡暂无投稿数据' };
@@ -290,14 +303,41 @@ export const runPlan = async (options = {}) => {
       return Number.isFinite(Number(w)) ? Number(w) : 1;
     };
 
-    const rows = (f.frontierRows || [])
-      .filter((r) => r.tier === 'perfect' && Number.isFinite(Number(r.actionValue)) !== false)
+    const usable = (f.frontierRows || [])
+      .filter((r) => Number.isFinite(Number(r.actionValue)) !== false)
       .map(rowOf)
       .filter((r) => r.m.length);
 
-    const scored = scoreEnvRows(rows, {
+    // 满分池（榜面口径，**与改之前逐字节一致**）与非满分池（只做召回，排在后面）。
+    const perfectRows = usable.filter((r) => r.tier === 'perfect');
+    const otherRows = usable.filter((r) => r.tier !== 'perfect');
+
+    const board = scoreEnvRows(perfectRows, {
       mode: picked.mode, stage: picked.stage, ws: 1, wc, versionWeightOf,
-    }).scored;
+    });
+    const extra = otherRows.length
+      ? scoreEnvRows(otherRows, {
+        mode: picked.mode, stage: picked.stage, ws: 1, wc, versionWeightOf,
+      })
+      : { scored: [], baselines: new Map() };
+
+    // 性价比那一栏的「该版最低金」统一用**满分池**的基准：非满分行的 `seasonsDetailOf`
+    // 里那列「该版最低 N 金」要是另一把尺子，同一个弹窗里两行会没法比。
+    // （注：v4.6.135 起性价比是 `1 − 补金/10` 的线性扣分，`baseline` 已不进分数，
+    //   这里纯粹是为了弹窗里那个数说的是同一件事。）
+    const extraScored = extra.scored.map((row) => {
+      const base = board.baselines.get(row.season);
+      return Number.isFinite(base) && base > 0 ? { ...row, baseline: base } : row;
+    });
+
+    // 各档位的**真实投稿数**（Σn）：状态行那句「来自 M 条投稿」按全档位算，
+    // 并把满分那部分单独报出来，用户才能看出「1356 条满分 / 另有 629 条差一档」。
+    // ⚠️ 这里只统计**投稿条数**；「池子里有几支」由 `mergePlanEntries()` 按角色组合数。
+    const tierSubmissions = { perfect: 0, target: 0, pass: 0, below: 0 };
+    for (const r of f.frontierRows || []) {
+      const tier = r.tier in tierSubmissions ? r.tier : 'below';
+      tierSubmissions[tier] += Math.max(1, Number(r.submissions) || 1);
+    }
 
     return {
       ok: true,
@@ -305,10 +345,13 @@ export const runPlan = async (options = {}) => {
       seasonWeights,
       versionWeightOf,
       videos: videoIndexOf(f.frontierRows || []),
-      scored,
-      poolRows: scored.length,
+      scored: board.scored,
+      extraScored,
+      poolRows: board.scored.length + extraScored.length,
       // 窗口内**真实投稿数**（Σ 每行的 `n`）：一行常被 2~3 个人投过，所以它 ≥ `poolRows`。
-      submissions: rows.reduce((sum, row) => sum + (Number(row.n) || 1), 0),
+      submissions: perfectRows.concat(otherRows).reduce((sum, row) => sum + (Number(row.n) || 1), 0),
+      perfectSubmissions: perfectRows.reduce((sum, row) => sum + (Number(row.n) || 1), 0),
+      tierSubmissions,
     };
   });
   if (!env.ok) {
@@ -327,8 +370,8 @@ export const runPlan = async (options = {}) => {
     ws,
     account: accountOf(options.account),
   });
-  const poolState = await cachedAsync(POOL_CACHE, planKey, (value) => value.lineups.length, async () => {
-    const pool = buildPlanPool(env.scored, {
+  const poolState = await cachedAsync(POOL_CACHE, planKey, (value) => value.rowCount, async () => {
+    const buildOptions = {
       // ⚠️ 必须过 `accountOf()`：它把 JSON 的数组/对象转成成本模型要的 Set / Map。
       //    直接透传 `options.account` 会让 `owned.has()` 永远 false（见上面那段注释）。
       account: accountOf(options.account),
@@ -352,33 +395,57 @@ export const runPlan = async (options = {}) => {
         }
         return null;
       },
-    });
+    };
+
+    // ① 满分池：榜面口径（与改之前**逐字节一致**）。
+    const board = buildPlanPool(env.scored, buildOptions);
+    // ② 非满分池：只用来**召回**（差一档 / 通关 / 未达标），排在满分之后。
+    const extra = env.extraScored.length ? buildPlanPool(env.extraScored, buildOptions) : null;
+    // ③ 合成条目表：满分在前、非满分按档位分组（规则全在 `mergePlanEntries()` 里）
+    const merged = mergePlanEntries(board, extra);
+
     const i18n = await loadI18n();
+    // 搜索要中文名（用户会敲「流萤」而不是 `Firefly`）。名字只在这里解析一次，
+    // `plan-index.js` 全程只用这个函数，不 import i18n、也不碰文件。
+    const nameOf = (kindOfName, name) => {
+      if (!name) return null;
+      return zhName(i18n, kindOfName === 'cone' ? 'lightCones' : 'characters', name) || null;
+    };
+    // 搜索索引**必须常驻这份缓存对象**：词元倒排与 lastQuery 命中缓存都挂在索引对象
+    // 上。2026-10-21 第一版在每次请求里现场包一个 `{ entries, nameOf }` —— 对象每次
+    // 都是新的，倒排每次重建，搜索从 3 ms 涨回 40 ms（真实数据实测）。索引的形状见
+    // `plan-index.js`：它只读 `entries` / `nameOf`，缓存字段（tokenIndex / lastQuery）
+    // 也写在它自己身上，随整池一起被 LRU 淘汰。
+    const searchIndex = { entries: merged.entries, nameOf };
     return {
-      ...pool,
-      // 搜索要中文名（用户会敲「流萤」而不是 `Firefly`）。名字只在这里解析一次，
-      // `plan-index.js` 全程只用这个函数，不 import i18n、也不碰文件。
-      nameOf: (kindOfName, name) => {
-        if (!name) return null;
-        return zhName(i18n, kindOfName === 'cone' ? 'lightCones' : 'characters', name) || null;
-      },
+      board,
+      extra,
+      merged,
+      searchIndex,
+      rowCount: merged.entries.length,
+      nameOf,
     };
   });
 
   // ---- ③ 全量搜索 + 分页（都只动行号，不重算任何分数）----
-  const found = searchPlanIndex(poolState, options.query);
+  // ⚠️ 索引按 `entries`（满分在前、非满分在后）建，名次 = 下标 + 1 ——
+  //    所以「第 1~N 名」永远是满分队伍的次序，与非满分那一批无关。
+  const found = searchPlanIndex(poolState.searchIndex, options.query);
   const page = planPageOf(found.ids, options.page, options.pageSize ?? options.maxRows);
 
   // ---- ④ 只物化当前页 ----
   const altOnlySet = new Set(found.altOnlyIds);
   const rows = page.ids.map((id) => {
-    const row = materializePlanRow(poolState.lineups[id], poolState);
+    const entry = poolState.merged.entries[id];
+    const row = materializePlanRow(entry.row, entry.state);
     // 名次 = **整池**里的名次（1 起）。搜索 / 翻页都只是视图，不许改写名次。
     row.rank = id + 1;
     // 「这条是靠次选命中的」标记：本队四个位置里没有关键词，是它下面的次选配队里有。
     row.altOnly = altOnlySet.has(id);
     return row;
   });
+
+  const { tierCounts, boardCount } = poolState.merged;
 
   const i18n = await loadI18n();
   const zh = (name) => (name ? (zhName(i18n, 'characters', name) || null) : null);
@@ -408,13 +475,19 @@ export const runPlan = async (options = {}) => {
     pages: page.pages,
     start: page.start,
     total: page.total,
-    // 全池规模：`lineups` = 角色组合数（= 榜面能翻到的总条数），
-    // `poolRows` = 该关卡窗口内的投稿记录数，`submissions` = 这些记录背后的真实投稿条数，
-    // `pool` = 整包数（折叠前）。
-    pool: poolState.pool.length,
-    lineups: poolState.lineups.length,
-    poolRows: poolState.poolRows,
+    // 全池规模：`lineups` = **能翻到的总条数**（满分 + 非满分），
+    // `boardLineups` = 其中满分那部分（= 榜面名次的上界），
+    // `poolRows` = 该关卡窗口内的投稿记录数，`submissions` = 这些记录背后的真实投稿条数
+    // （`perfectSubmissions` 是其中满分档的），`pool` = 整包数（折叠前）。
+    pool: poolState.board.pool.length + (poolState.extra?.pool.length || 0),
+    lineups: poolState.merged.entries.length,
+    boardLineups: boardCount,
+    poolRows: env.poolRows,
     submissions: env.submissions,
+    perfectSubmissions: env.perfectSubmissions,
+    // 各档位：`tierCounts` 是**池子里**的行数（可翻到），`tierSubmissions` 是投稿条数。
+    tierCounts,
+    tierSubmissions: env.tierSubmissions,
     query: {
       text: String(options.query ?? ''),
       terms: found.terms,
