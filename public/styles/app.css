@@ -2155,6 +2155,25 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   line-height: 1.4;
   cursor: help;
 }
+/* 档位标记（2026-10-21）：非满分队伍排在满分之后，卡上要说明它不是满分。
+   金色留给「次选命中」那种提示性标记；这里用中性灰，别抢视线 —— 它是**减分项**
+   的说明，不是卖点。 */
+.advice-plan-tier {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid rgba(150, 168, 196, 0.42);
+  border-radius: 4px;
+  background: rgba(150, 168, 196, 0.12);
+  color: var(--text-muted);
+  font-size: 10.5px;
+  line-height: 1.4;
+  cursor: help;
+}
+/* 「未达标」再压一档明度：它在池子里只是为了「搜得到」 */
+.advice-plan-tier.is-below {
+  border-style: dashed;
+  opacity: 0.82;
+}
 .advice-value-wrap:focus { outline: none; }
 .advice-value-wrap:focus-visible .advice-unit-value { border-color: var(--cyan); }
 /* `display: none` 是**没点开时**的状态：内容节点一直挂在徽标里（窗口关闭时会还回来），

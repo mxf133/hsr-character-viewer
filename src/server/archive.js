@@ -36,6 +36,23 @@ const superimpOf = (value) => {
 };
 
 /** Friendly labels for the site's mode slugs. */
+/**
+ * 档案里的四个档位（`frontier[].t`，与 `tools/herta-build.mjs` 的 `TIER_CODE` 一一对应）。
+ *
+ *   below  0  没达标（轮次型 5T+ / 末日 <3400 / 绝境 ≥500 行动值之外）
+ *   pass   1  通关但慢（轮次型 3~4T / 末日 3400~3700）
+ *   target 2  差一档（轮次型 1~2T / 末日 3700~4000 / 绝境 300~500 行动值）
+ *   perfect 3 满分（0T / 4000 / <300 行动值）
+ *
+ * ⚠️ 数组下标**就是** `t` 的编码，别改成对象字面量后按名字查 —— 上游给的是数字。
+ */
+const FRONTIER_TIERS = ['below', 'pass', 'target', 'perfect'];
+
+/** `t` → 档位名。未知值按 `below` 处理（宁可低估，也不谎报成满分）。 */
+export const frontierTierOf = (value) => (
+  FRONTIER_TIERS[Math.max(0, Math.min(3, Math.round(Number(value) || 0)))]
+);
+
 export const MODE_LABELS = {
   moc: 'Memory of Chaos',
   pf: 'Pure Fiction',
@@ -598,8 +615,10 @@ export const archiveIndex = async () => {
  *
  * 数据来自建库侧每个版本存的 `frontier`（普通模式满分 + 次高目标档、绝境满分 + 达标档，
  * 按「阵容 + 成本」去重），见 tools/herta-build.mjs 的 `frontierIndex`。
- * ⚠️ 「全部成绩」的边界就是这个**已达标（target / perfect）**的集合 —— 低于达标档的
- * 投稿在建库侧就没进 `frontier`，这里也就永远看不到它们。
+ * ⚠️ 「全部成绩」的边界由 `options.minTier` 决定（默认 2 = target 及以上）：
+ *    建库侧的 `frontier` 其实**收录了全部档位**（`tier !== 'unknown'`），是这里在按档位筛。
+ *    所以「低于达标档的投稿永远看不到」只对默认口径成立 —— 抽卡方案传 `minTier: 0`
+ *    就能把 below / pass 也取出来（见 `gacha-plan-run.js`）。
  *
  * 这里做两件事：
  *   1. 把**版本窗口内**的前沿合并（跨赛季样本才够谈角色强度）；
@@ -663,11 +682,23 @@ export const archiveFrontier = async (mode, options = {}) => {
   const recentDesc = [...recent].reverse();
   const weightOf = (s) => versionWeightOf(recentDesc.indexOf(s), vWeights);
 
+  /**
+   * 收哪些档位（0 = below / 1 = pass / 2 = target / 3 = perfect，见 `tools/herta-build.mjs`
+   * 的 `TIER_CODE`）。
+   *
+   * ⚠️ **默认仍是 2**（只收 target + perfect），因为「角色总榜 / 上场率」那两条链一直按
+   *    这个口径算，放宽会改动它们的分母。
+   * ⚠️ 抽卡方案从 v4.6.136 起传 **0**：用户要求「所有投稿都能被搜到」——差一档（target）、
+   *    通关（pass）、未达标（below）的投稿原来在 `runPlan()` 那层被丢掉，于是「搜某个角色
+   *    一条都搜不到」。方案那边把三档**排在满分之后**并打标记，榜面前 267 名的口径不变。
+   */
+  const minTier = Math.max(0, Math.min(3, Math.floor(Number(options.minTier ?? 2) || 0)));
+
   // 旧的差距/星魂强度口径仍然只看满分；目标档只进入新的性价比总榜。
   const rows = [];
   for (const s of recent) {
     for (const f of stageData.seasons[s]?.frontier || []) {
-      if (f.t !== undefined && Number(f.t) < 2) continue;
+      if (f.t !== undefined && Number(f.t) < minTier) continue;
       rows.push({ ...f, season: s, w: weightOf(s) });
     }
   }
@@ -748,7 +779,10 @@ export const archiveFrontier = async (mode, options = {}) => {
       cost: Number(r.c) || 0,
       actionValue: r.a === null || r.a === undefined || r.a === ''
         ? null : Number(r.a),
-      tier: Number(r.t) === 2 ? 'target' : 'perfect',
+      // ⚠️ 档位必须**照实映射**（0 below / 1 pass / 2 target / 3 perfect）。
+      //    改之前写成 `Number(r.t) === 2 ? 'target' : 'perfect'` —— 那是「默认只收 ≥2」
+      //    时代的写法，一旦 `minTier: 0` 放开就会把 pass / below 全部谎报成 perfect。
+      tier: frontierTierOf(r.t),
       season: r.season,
       seasonWeight: Number(r.w) || 1,
       members,
@@ -829,6 +863,9 @@ export const archiveFrontierAll = async (envs, options = {}) => {
       // 见 `conclusion.js` 的 `listEnvs` 注释（v4.6.48 修：砂金•戏浪 #14 → #2）。
       season: env.frontierSeason ?? env.season, stage: env.stage || '',
       window: options.window,
+      // 档位下限：默认 2（target 及以上）。抽卡方案传 0 —— 它要把「差一档 / 通关 /
+      // 未达标」的投稿也放进**可搜索**的池子里（排在满分之后），见 `gacha-plan-run.js`。
+      minTier: options.minTier,
       // 用户自定义的版本权重（2026-10-16）：透传给 `archiveFrontier`，它按这张表
       // 现算 `seasonWeights`（客户端再拿它做跨版本加权）。不传 = 用默认表。
       versionWeights: options.versionWeights,

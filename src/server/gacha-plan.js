@@ -476,6 +476,14 @@ export const buildPlanPool = (scored, options = {}) => {
       costPart: best ? planCostPartOf(gap) : 0,
       gap,
       gold,
+      /**
+       * 代表本行的那一版成绩的**档位**（perfect / target / pass / below）。
+       *
+       * ⚠️ 2026-10-21 新增：抽卡方案从这一版起把非满分投稿也放进池子（排在满分之后），
+       *    卡片要能标出「这条只是差一档 / 通关但更慢」。整池（`scored`）只喂满分时
+       *    这一格恒为 `perfect`，行为与改之前一致。
+       */
+      tier: best ? (best.row.tier || 'perfect') : null,
       video: videoOf ? (videoOf(entry.key, best?.season) ?? null) : null,
     });
   }
@@ -638,6 +646,9 @@ export const materializePlanRow = (row, state) => {
     variants,
     // 折叠键：前端用它做「一栏一行」的身份（与 `key` 不同，`key` 是整包身份）
     lineup: row.lineup,
+    // 档位（perfect / target / pass / below）：非满分只在**扩展池**里出现，
+    // 卡片据此印「差一档 / 通关 / 未达标」标记（见 `advice-view.js` 的 `TIER_BADGES`）。
+    tier: row.tier || 'perfect',
     video: row.video,
   };
 };

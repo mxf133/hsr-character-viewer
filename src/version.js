@@ -2586,6 +2586,28 @@
 //            `_probe-strength-why.mjs`（单角色逐副本 / 逐版本对比「现状行 vs 最快行」）、
 //
 
+//   v4.6.138 2026-10-21：**抽卡方案收进全部档位的投稿**（分支 `fix/plan-all-tiers`，
+//            版本号顺延：4.6.136 归 `feat/usage-stats`、4.6.137 归 `fix/plan-card-details`，
+//            两者都已先进 main）。
+//
+//            用户：「为什么现在只能看见 1368 条投稿，这会导致我错过一些投稿，你必须
+//            确保所有投稿都能被搜到」。实测绝境：窗口内 1985 条投稿里只有最好一档的
+//            1356 条进了方案池 —— v4.6.134 的 `minTier` 默认 2，差一档的投稿在建池前
+//            就被丢掉了。
+//
+//            * `archiveFrontier` 加 `minTier` 选项（默认仍 2，行为不变）；方案传 0。
+//            * `archive.js` 的行映射照实带档位（原来 `t===2?'target':'perfect'`
+//              一旦放开就会把 pass/below 谎报成 perfect）+ 真实投稿数 `submissions`。
+//            * `mergePlanEntries()`：最好一档的池在前（名次与改前逐字节一致，对拍
+//              `_probe-plan-board-parity.mjs`），其余按档位分组跟在后面；
+//              同一套四人已有更好行时非最好行丢弃。
+//            * 视频索引含全档位但**最好一档优先**；缓存键、搜索、分页全部复用
+//              v4.6.134 的结构，搜索索引常驻整池缓存（现场包一层会让倒排每次重建，
+//              实测搜索 3.9 → 40 ms，已修）。
+//            * 界面：状态行把各档位条数与投稿数分开印 + 版本窗口；非最好一档的卡片
+//              带 `advice-plan-tier` 标记；档位名一律 `tierTextOf()`（`herta-test`
+//              的禁词扫描钉住）。
+//
 //   v4.6.135 2026-10-20：**三处口径变更**（分支 `feat/gap-curve`）。
 //            ⚠️ **版本号顺延到 4.6.135**：分支上原本写的是 4.6.133，那个号已被并行分支
 //            `feat/ui-polish` 占用并打了 tag，4.6.134 归 `feat/plan-search-paging`，
@@ -3554,7 +3576,7 @@
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.135';
+export const PROGRAM_VERSION = '4.6.138';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';

@@ -4688,6 +4688,26 @@ const planInputsKey = () => JSON.stringify([
 ]);
 
 /**
+ * 非满分档位的**卡片标记**（2026-10-21，用户：「必须确保所有投稿都能被搜到」）。
+ *
+ * 方案池现在是「满分先排、非满分跟在后面」两段（`gacha-plan-run.js` 的 ②）：
+ * 前 N 名永远是满分队伍，名次与改之前逐字节一致；后面那批只是**可搜索**，
+ * 所以每张卡必须自己说清「我不是满分」—— 否则「#280」会被读成「第 280 名好队」。
+ *
+ * ⚠️ 档位名由服务端给（`archive.js` 的 `frontierTierOf()`），这里只做中文与解释。
+ *    同一个档位在行动值型 / 轮次型关卡里的判据不同，所以文案**不写具体阈值**，
+ *    只写「这一条的最好成绩没到满分」，具体数看卡片上的「最佳证据」。
+ */
+const PLAN_TIER_BADGE_TITLE = {
+  target: '这条阵容在该关卡的最好成绩停在这一档（比最好一档慢），所以强度分更低、'
+    + '排在最好一档的队伍之后；搜得到、但不是首选。',
+  pass: '这条阵容在该关卡的最好成绩属于第三档，强度分很低，'
+    + '排在前面两档之后；只在搜索时才有意义。',
+  below: '这条阵容在该关卡的最好成绩没到第三档，只是有人投过；'
+    + '列在这里只为了「搜得到」，不建议照抄。',
+};
+
+/**
  * 一次请求的完整签名 = 输入签名 + 归一化后的搜索词 + 页码。
  *
  * 三级缓存都认这个键：本地的 `state.planKey`、服务端的整池缓存（忽略后两段）、
@@ -5017,18 +5037,43 @@ const renderTeamPlan = () => {
       // 否则用户会以为「这些队的次选里确实没有」。
       + (found.altSearch === false ? '（投稿量过大，本次只匹配本队四个位置）' : '')
     : '';
-  // 全池规模：`lineups` = 角色组合数（能翻到的总条数），`submissions` = 真实投稿条数。
-  // 用户 2026-10-20 的要求是「展示所有的投稿」，所以这两个数要印出来。
+  // 全池规模：`lineups` = 能翻到的总条数（满分 + 非满分），
+  // `boardLineups` = 其中满分那部分，`submissions` = 真实投稿条数。
+  //
+  // ⚠️ 2026-10-21（用户：「为什么现在只能看见 1368 条投稿，这会导致我错过一些投稿」）：
+  //    原来这里只印「共 267 支 · 来自 1356 条投稿」—— 那是**满分档**的数，用户拿它
+  //    和档案总量一比就以为漏了。现在把「满分 / 差一档 / 通关 / 未达标」分开印，
+  //    并把版本窗口印出来（更早的版本不在窗口内，这一点必须让人看得见）。
+  const tierCounts = plan.tierCounts || {};
+  // 档位名**必须走 tierTextOf()**（用户 2026-10-10：网页上不许出现「满分 / 达标」
+  // 这种要先翻译一次的说法，要写游戏内那个量）。元数据从总榜那份 frontierEnvs 拿；
+  // 万一没到就拿 TIER_PLACEHOLDER 的中性写法，绝不自造词。
+  const planMeta = frontierEnvMeta(plan.env);
+  const tierLabelOf = (tier) => tierTextOf(planMeta, tier);
+  const tierText = ['perfect', 'target', 'pass', 'below']
+    .filter((tier) => Number(tierCounts[tier]) > 0)
+    .map((tier) => `${tierLabelOf(tier)} ${Number(tierCounts[tier])} 支`)
+    .join(' · ');
+  const seasonList = Array.isArray(plan.seasons) ? plan.seasons : [];
+  const seasonText = seasonList.length
+    ? ` · 版本 ${seasonList[0]}–${seasonList[seasonList.length - 1]}（${seasonList.length} 版）`
+    : '';
   const poolText = `共 ${Number(plan.lineups ?? total)} 支`
-    + (Number(plan.submissions) > 0 ? ` · 来自 ${Number(plan.submissions)} 条投稿` : '');
+    + (tierText ? `（${tierText}）` : '')
+    + (Number(plan.submissions) > 0
+      ? ` · 来自 ${Number(plan.submissions)} 条投稿`
+        + (Number(plan.perfectSubmissions) > 0 && Number(plan.perfectSubmissions)
+          !== Number(plan.submissions)
+          ? `（其中${tierLabelOf('perfect')} ${Number(plan.perfectSubmissions)} 条）` : '')
+      : '');
   const range = total
     ? (pages > 1 ? ` · 第 ${start + 1}–${start + rows.length} / ${total} 支` : '')
     : '';
   const pendingText = state.planPending ? ' · 正在查找…' : '';
   setMeta(rows.length
-    ? `${plan.envLabel || plan.env}` + hit + ` · ${poolText}` + range
+    ? `${plan.envLabel || plan.env}` + seasonText + hit + ` · ${poolText}` + range
       + (pages > 1 ? ` · 第 ${page}/${pages} 页` : '') + pendingText
-    : `${plan.envLabel || plan.env} · 没有可用配队` + pendingText);
+    : `${plan.envLabel || plan.env}` + seasonText + ` · 没有可用配队` + pendingText);
 
   renderTeamPlanPager(total, pages);
 
@@ -5038,8 +5083,11 @@ const renderTeamPlan = () => {
         ? `没有配队**同时**包含「${terms.join(' + ')}」这些角色或光锥`
           + '（多个关键词用空格分隔，结果要全都出现在同一支队伍里）。'
         : `没有配队包含「${state.teamPlanQuery.trim()}」这个角色或光锥。`)
-        + `本关卡一共 ${Number(plan.lineups) || 0} 支配队，全部都在搜索范围内 ——`
-        + '想换人或换队，看上面的角色总榜。'
+        + `本关卡 ${seasonText.replace(/^ · /, '')}窗口内的 ${Number(plan.lineups) || 0} 支`
+        + `（${tierLabelOf('perfect')} ${Number(plan.boardLineups) || 0} 支 + 其余 ${Math.max(0,
+          (Number(plan.lineups) || 0) - (Number(plan.boardLineups) || 0))} 支）全部搜过了。`
+        + `更早的版本（${seasonText ? '窗口之前' : '3.x 起'}）与其它关卡不在本次范围 ——`
+        + ' 在「版本权重」里加档位可以纳入更早的版本，或先切换关卡再搜。'
       : '这个关卡下没有可用的配队（该关卡的投稿里没有可评成绩）。'));
     return;
   }
@@ -5060,6 +5108,14 @@ const renderTeamPlan = () => {
       //    「A 在本队、B 在次选」那条用例专门造了这种行）。
       altMark.title = '本队四个位置没有同时命中你搜的词，它下面的「次选配队」里都有';
       head.appendChild(altMark);
+    }
+    // 档位标记（2026-10-21）：非最好一档的行排在它后面，必须自己说清「我不是
+    // 最好一档」，否则「#280」会被读成「第 280 名」。（最好一档的卡不印 —— 那是
+    // 绝大多数，印了只是噪声。）档位名同样走 tierTextOf()。
+    if (row.tier && row.tier !== 'perfect' && PLAN_TIER_BADGE_TITLE[row.tier]) {
+      const mark = text('span', `advice-plan-tier is-${row.tier}`, tierLabelOf(row.tier));
+      mark.title = PLAN_TIER_BADGE_TITLE[row.tier];
+      head.appendChild(mark);
     }
     // 分数保留两位：补金推荐分的量纲是 0~ws+wc ≈ 0~1.5（版本权重最大 6 时到 6+），
     // 一位小数会把 6.55 与 6.52 压成同一个 6.5，相邻名次看着像同分。

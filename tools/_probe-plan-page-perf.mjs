@@ -132,7 +132,13 @@ const big = {};
   big.lineups = pool.lineups.length;
   big.packs = pool.pool.length;
 
-  const index = { ...pool, nameOf: () => null };
+  // 2026-10-21：搜索层吃条目表（entries）。合成数据全是满分档（t: 2），
+  // 所以 entries 就是把池子里的每一行包一层 state。
+  const asIndex = (pl) => ({
+    entries: pl.lineups.map((row) => ({ row, state: pl })),
+    nameOf: () => null,
+  });
+  const index = asIndex(pool);
 
   // 词元倒排（第一次搜索付一次）
   big.tokenMs = timeIt(() => {
@@ -176,7 +182,10 @@ const big = {};
   const page = planPageOf(ids, 1, 20);
   const account = { owned: new Set(), eidolons: new Map(), cones: new Map() };
   t0 = process.hrtime.bigint();
-  const pageRows = page.ids.map((id) => materializePlanRow(index.lineups[id], index));
+  const pageRows = page.ids.map((id) => {
+    const { row, state } = index.entries[id];
+    return materializePlanRow(row, state);
+  });
   big.pageMs = ms(t0);
   big.pageRows = pageRows.length;
   big.pagePages = page.pages;
