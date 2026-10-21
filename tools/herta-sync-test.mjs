@@ -1,12 +1,17 @@
 // 「同步黑塔网」这条链路的回归测试（需求 7：同步不了 / 耗时过长 / 旧数据不跳过）。
 //
-// 覆盖三件事：
+// 覆盖六件事：
 //   (a) 缺 `.snapref` 参考表时，herta-availability.mjs **不能写坏数据**、
 //       退出码必须是 0、并且要明确打印警告（旧版直接 exit 1 → 整条同步链断在第 ② 步）；
 //   (b) herta-update.mjs 的跳过判据：用夹具 + 注入的「今天」，**完全不联网**，
 //       断言「已结束的期跳过、每个副本最新的一期必抓、还在收投稿的期必抓」；
 //   (c) plan 行的 `total / skipped / capped / combos` 四个数自洽
-//       （`total + skipped + capped === combos`），且 `latest` 是真实的数字最大版本号。
+//       （`total + skipped + capped === combos`），且 `latest` 是真实的数字最大版本号；
+//   (d) 聚合缩水时拒绝覆盖已提交的 archive.json；
+//   (e) 宽限期与轮转清扫（2026-10-21 加）：期刚结束的仍要抓、最久没抓的定期补抓；
+//   (f) 缩水护栏（2026-10-21 加）：抓取环节发现「线上条数比本地少」时不覆盖本地文件；
+//   (g) 排期刷新（2026-10-21 加）：线上新增的版本必须能被增量同步看见；
+//       排期接口挂掉时用本地排期继续、绝不中断同步。
 //
 // 为什么用夹具而不是真数据集：判据的核心输入是 `submission_config.json` 里的
 // `availableDate` / `expireDate`，而这些日期会随版本推进而变 —— 拿真数据集断言
@@ -16,8 +21,9 @@
 // 只用相对路径、只写 worktree 内的临时目录（放在 gitignore 掉的 theherta/backup/ 下），
 // 跑完自己清理。用法：node tools/herta-sync-test.mjs
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -59,17 +65,36 @@ const run = (script, args, env, cwd = ROOT) => new Promise((resolvePromise) => {
 const sha = async (path) => createHash('sha256')
   .update(await readFile(path)).digest('hex');
 
-/** 从 --json 的 stdout 里取那行 plan；找不到就返回 null。 */
-const planLineOf = (stdout) => {
+/** 从 --json 的 stdout 里取指定 type 的那行 JSON；找不到就返回 null。 */
+const jsonLineOf = (stdout, type) => {
   for (const line of stdout.split(/\r?\n/)) {
     if (!line.trim().startsWith('{')) continue;
     try {
       const payload = JSON.parse(line);
-      if (payload.type === 'plan') return payload;
+      if (payload.type === type) return payload;
     } catch { /* 不是 JSON 行，跳过 */ }
   }
   return null;
 };
+
+/** 起一个一次性本地站点，替代 theherta.com（handler 返回要序列化的 JSON，抛错 = 500）。 */
+const serve = (handler) => new Promise((done) => {
+  const server = createServer(async (req, res) => {
+    try {
+      const body = await handler(new URL(req.url, 'http://local'));
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+    } catch (err) {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: String(err.message || err) }));
+    }
+  });
+  server.listen(0, '127.0.0.1', () => done({
+    server,
+    base: `http://127.0.0.1:${server.address().port}`,
+    close: () => new Promise((r) => server.close(r)),
+  }));
+});
 
 // ------------------------------------------------------------------ fixtures
 
@@ -94,6 +119,8 @@ const MODES = ['Memory of Chaos', 'Pure Fiction'];
  *   3.1 PF   既是 PF 的最新一期、expireDate 也没过 → **必须抓**
  *
  * 期望：combos=8、total=4、skipped=4（latest=2 + live=1 + missing=1）。
+ * ⚠️ 这组断言跑 `--grace=0 --sweep=0`：宽限期与清扫是**叠加**的判据，
+ * 它们自己的行为在 (e) 用另一份夹具单独验证。
  */
 const FIXTURE = {
   today: '2026-06-15',
@@ -155,6 +182,59 @@ const writeFixture = async () => {
   return dir;
 };
 
+/**
+ * (e) 用的第二份夹具：专测宽限期与轮转清扫。today 同样是 2026-06-15
+ * （宽限下限 = 2026-05-16）：
+ *
+ *   1.0 PF   已排期、04-01 结束（**超出宽限期**）、已同步 3 条 → 跳过（清扫候选）
+ *   1.0 MoC  排期外空档、已同步 0 条 → 跳过（清扫候选）
+ *   2.0 PF   06-01 结束（**宽限期内**）、已同步 5 条 → reason=grace
+ *   2.0 MoC  排期外、没文件 → reason=missing
+ *   3.0 PF   06-30 没结束，**且是 PF 的最新一期** → reason=latest
+ *   3.0 MoC  06-01 结束（宽限期内），MoC 的最新一期是 4.0 → reason=grace（纯宽限）
+ *   4.0 MoC  07-01 没结束、MoC 最新一期 → reason=latest
+ *   4.0 PF   排期外、没文件 → reason=missing
+ */
+const GRACE_FIXTURE = {
+  config: {
+    categories: ['Clear'],
+    modes: MODES,
+    seasons: [
+      { version: '1.0', modes: { 'Pure Fiction': { availableDate: '2026-03-01', expireDate: '2026-04-01' } } },
+      { version: '2.0', modes: { 'Pure Fiction': { availableDate: '2026-05-01', expireDate: '2026-06-01' } } },
+      {
+        version: '3.0',
+        modes: {
+          'Memory of Chaos': { availableDate: '2026-05-01', expireDate: '2026-06-01' },
+          'Pure Fiction': { availableDate: '2026-06-01', expireDate: '2026-06-30' },
+        },
+      },
+      { version: '4.0', modes: { 'Memory of Chaos': { availableDate: '2026-06-10', expireDate: '2026-07-01' } } },
+    ],
+  },
+  synced: {
+    '1.0-Pure_Fiction': { items: [{ id: 'g1' }, { id: 'g2' }, { id: 'g3' }] },
+    '1.0-Memory_of_Chaos': { items: [] },
+    '2.0-Pure_Fiction': { items: [{ id: 'g4' }, { id: 'g5' }] },
+    '3.0-Memory_of_Chaos': { items: [{ id: 'g6' }] },
+  },
+};
+
+const writeGraceFixture = async () => {
+  const dir = join(SANDBOX, 'grace');
+  await mkdir(join(dir, 'raw', 'submissions'), { recursive: true });
+  await writeFile(join(dir, 'submission_config.json'), JSON.stringify(GRACE_FIXTURE.config, null, 2), 'utf8');
+  for (const [stem, payload] of Object.entries(GRACE_FIXTURE.synced)) {
+    await writeFile(join(dir, 'raw', 'submissions', `${stem}.json`), JSON.stringify(payload), 'utf8');
+  }
+  // 清扫按「文件最旧」挑人：把两个候选的 mtime 钉死成已知先后。
+  await utimes(join(dir, 'raw', 'submissions', '1.0-Memory_of_Chaos.json'),
+    new Date('2026-06-01T00:00:00Z'), new Date('2026-06-01T00:00:00Z'));
+  await utimes(join(dir, 'raw', 'submissions', '1.0-Pure_Fiction.json'),
+    new Date('2026-06-10T00:00:00Z'), new Date('2026-06-10T00:00:00Z'));
+  return dir;
+};
+
 /** 跑一次 herta-update 的纯计划模式（--plan-only 不发任何请求、不写盘）。 */
 const planOf = async (dataDir, extraArgs = []) => {
   const res = await run('herta-update.mjs', ['--json', '--plan-only', ...extraArgs], {
@@ -163,7 +243,7 @@ const planOf = async (dataDir, extraArgs = []) => {
     // 万一哪次忘了 --plan-only，也让它打不到真站点：
     HERTA_BASE: 'http://127.0.0.1:9',
   });
-  return { res, plan: planLineOf(res.stdout) };
+  return { res, plan: jsonLineOf(res.stdout, 'plan') };
 };
 
 // ----------------------------------------------------------------------- (a)
@@ -205,7 +285,7 @@ const testAvailabilityDegrades = async () => {
 /** (b) 跳过判据 + (c) plan 自洽，都用同一份夹具。 */
 const testSkipCriterion = async (dataDir) => {
   console.log('\n(b) 跳过判据：已结束的期跳过、最新一期与进行中的期必抓');
-  const { res, plan } = await planOf(dataDir);
+  const { res, plan } = await planOf(dataDir, ['--grace=0', '--sweep=0']);
   if (!plan) {
     bad('拿到 plan 行', `退出码 ${res.code}；stdout：${res.stdout.slice(0, 300)}`);
     return;
@@ -254,8 +334,8 @@ const testSkipCriterion = async (dataDir) => {
 /** (c 续) --limit 只能收紧范围，不能改变判据本身。 */
 const testLimitIsAdditiveOnly = async (dataDir) => {
   console.log('\n(c2) --limit 只截断抓取范围，不改判据');
-  const { plan: full } = await planOf(dataDir);
-  const { plan: limited, res } = await planOf(dataDir, ['--limit=2']);
+  const { plan: full } = await planOf(dataDir, ['--grace=0', '--sweep=0']);
+  const { plan: limited, res } = await planOf(dataDir, ['--grace=0', '--sweep=0', '--limit=2']);
   if (!limited) { bad('--limit=2 也能拿到 plan 行', `退出码 ${res.code}`); return; }
   assert(limited.skipped === full.skipped,
     `--limit 不影响跳过数（都是 ${full.skipped}）`, `实际 ${limited.skipped}`);
@@ -275,10 +355,179 @@ const testLimitIsAdditiveOnly = async (dataDir) => {
 /** 默认参数不能被命令行弄松（`--limit=abc` 这类非法值要退回默认）。 */
 const testBadArgsFallBackToDefaults = async (dataDir) => {
   console.log('\n(c3) 非法开关退回默认，默认行为不变松');
-  const { plan } = await planOf(dataDir, ['--limit=abc', '--concurrency=0', '--timeout=-5']);
+  const { plan } = await planOf(dataDir,
+    ['--limit=abc', '--concurrency=0', '--timeout=-5', '--grace=0', '--sweep=0']);
   assert(plan && plan.total === 4 && plan.capped === 0,
     '--limit=abc 被忽略（退回「不限」），计划与不带参数时一致',
     `实际 total=${plan?.total} capped=${plan?.capped}`);
+};
+
+// ----------------------------------------------------------------------- (e)
+
+/**
+ * (e) 宽限期与轮转清扫（2026-10-21 加，动机见 tools/herta-update.mjs 文件头：
+ * 站方收录滞后 ≥2 周，旧判据「过期即永久跳过」实测已丢 11 条）。
+ */
+const testGraceAndSweep = async (dataDir) => {
+  console.log('\n(e) 宽限期与轮转清扫');
+
+  // (e1) 默认宽限期：期刚结束的仍要抓。
+  const { plan: withGrace } = await planOf(dataDir, ['--sweep=0']);
+  assert(withGrace.graceDays === 30 && withGrace.graceLimit === '2026-05-16',
+    'plan 行带上宽限参数（30 天 → 下限 2026-05-16）',
+    `实际 graceDays=${withGrace.graceDays} graceLimit=${withGrace.graceLimit}`);
+  assert(withGrace.reasons.grace === 2 && withGrace.total === 6,
+    '宽限期内的 2 个期进抓取集合（total 4 → 6）',
+    `实际 grace=${withGrace.reasons.grace} total=${withGrace.total} targets=${withGrace.targets.join('; ')}`);
+  const gTargets = withGrace.targets.map((t) => t.replace(/\s*\/\s*/, '|'));
+  assert(gTargets.includes('2.0|Pure Fiction') && gTargets.includes('3.0|Memory of Chaos'),
+    '宽限期抓的是「期刚结束」的组合（含纯宽限的 3.0 MoC，它不是该副本最新一期）');
+
+  // (e2) --grace=0 显式关掉：回到旧判据。
+  const { plan: noGrace } = await planOf(dataDir, ['--grace=0', '--sweep=0']);
+  assert(noGrace.reasons.grace === 0 && noGrace.total === 4,
+    '--grace=0 时宽限期不生效（回到 4 个组合）',
+    `实际 grace=${noGrace.reasons.grace} total=${noGrace.total}`);
+
+  // (e3) 轮转清扫：每次补抓 1 个「文件最旧」的已结束组合。
+  const { plan: swept } = await planOf(dataDir, ['--grace=0', '--sweep=1']);
+  assert(swept.reasons.sweep === 1 && swept.total === 5,
+    '--sweep=1 恰好把 1 个跳过组合转成清扫目标',
+    `实际 sweep=${swept.reasons.sweep} total=${swept.total}`);
+  const sTargets = swept.targets.map((t) => t.replace(/\s*\/\s*/, '|'));
+  assert(sTargets.includes('1.0|Memory of Chaos') && !sTargets.includes('1.0|Pure Fiction'),
+    '清扫挑的是 mtime 最旧的那个（1.0 MoC 06-01 < 1.0 PF 06-10）',
+    `实际 targets=${sTargets.join('; ')}`);
+
+  // (e4) --grace=abc 这类非法值退回默认 30（非负开关的「0」是显式关掉，不能混同）。
+  const { plan: badGrace } = await planOf(dataDir, ['--grace=abc', '--sweep=0']);
+  assert(badGrace.graceDays === 30 && badGrace.total === 6,
+    '--grace=abc 退回默认 30 天',
+    `实际 graceDays=${badGrace.graceDays} total=${badGrace.total}`);
+
+  // (e5) --all 时清扫不重复挑人（全部组合本来就在抓取集合里）。
+  const { plan: allPlan } = await planOf(dataDir, ['--all']);
+  assert(allPlan.total === allPlan.combos && allPlan.skipped === 0
+    && (allPlan.reasons.sweep || 0) === 0,
+    '--all 时全部组合都进集合、清扫不额外挑人');
+};
+
+// ----------------------------------------------------------------------- (f)
+
+/**
+ * (f) 缩水护栏（2026-10-21 加）：抓取环节发现「线上条数比本地少」时不覆盖本地文件。
+ * 场景：站点接口偶发的空/短响应会把整期清零，且该期从此被标成「已同步」永不重抓；
+ * `theherta/raw/` 不进 git、留档也不含它。`herta-build.mjs` 的缩水护栏是**总量** 50%，
+ * 单期清零只掉几个百分点，兜不住 —— 所以必须在写盘前拦住。
+ */
+const testShrinkGuard = async () => {
+  console.log('\n(f) 缩水护栏：线上条数变少时不覆盖本地文件');
+  const dir = join(SANDBOX, 'shrink');
+  await mkdir(join(dir, 'raw', 'submissions'), { recursive: true });
+  const cfg = {
+    categories: ['Clear'],
+    modes: ['Memory of Chaos'],
+    seasons: [{
+      version: '3.0',
+      modes: { 'Memory of Chaos': { availableDate: '2026-06-01', expireDate: '2026-12-31' } },
+    }],
+  };
+  await writeFile(join(dir, 'submission_config.json'), JSON.stringify(cfg), 'utf8');
+  const local = { items: Array.from({ length: 5 }, (_, i) => ({ id: `r${i}` })), count: 5 };
+  const localPath = join(dir, 'raw', 'submissions', '3.0-Memory_of_Chaos.json');
+  await writeFile(localPath, JSON.stringify(local), 'utf8');
+  const before = await sha(localPath);
+
+  const remote = { items: local.items.slice(0, 3), count: 3 };
+  const site = await serve((url) => (url.pathname === '/submission_config.json' ? cfg : remote));
+  try {
+    const res = await run('herta-update.mjs', ['--json'], { HERTA_DATA_DIR: dir, HERTA_BASE: site.base });
+    const out = `${res.stdout}${res.stderr}`;
+    assert(res.code === 0, '退出码 0（保留本地不算失败，下一轮还会再试）',
+      `实际 ${res.code}；${out.slice(0, 200)}`);
+    assert(/保留本地文件/.test(out), '明确说了「保留本地文件」', out.slice(0, 300));
+    const doneLine = jsonLineOf(res.stdout, 'done');
+    assert(doneLine && doneLine.shrunk?.length === 1
+      && doneLine.shrunk[0].existing === 5 && doneLine.shrunk[0].count === 3,
+    'done 行带 shrunk 明细（本地 5 → 线上 3）',
+    JSON.stringify(doneLine?.shrunk));
+    assert(await sha(localPath) === before, '本地文件一个字节都没变');
+
+    // 显式 --allow-shrink 才允许覆盖（确认站点真的在删稿时的出口）。
+    const forced = await run('herta-update.mjs', ['--json', '--allow-shrink'],
+      { HERTA_DATA_DIR: dir, HERTA_BASE: site.base });
+    const after = JSON.parse(await readFile(localPath, 'utf8'));
+    assert(forced.code === 0 && after.items.length === 3,
+      '--allow-shrink 时才真正覆盖（本地 5 → 3）', `实际 items=${after.items.length}`);
+  } finally {
+    await site.close();
+  }
+};
+
+// ----------------------------------------------------------------------- (g)
+
+/**
+ * (g) 排期刷新（2026-10-21 加）：增量同步的一切判据都读本地 submission_config.json，
+ * 而增量链此前从不拉它 —— 线上新增的版本（实测 4.7）对增量同步完全不可见。
+ * 现在同步开头先刷排期：成功则落盘并让新版本进计划；失败则警告 + 用本地排期继续。
+ */
+const testConfigRefresh = async () => {
+  console.log('\n(g) 排期刷新：线上新版本必须能被增量同步看见');
+  const localCfg = {
+    categories: ['Clear'],
+    modes: ['Memory of Chaos'],
+    seasons: [{
+      version: '3.0',
+      modes: { 'Memory of Chaos': { availableDate: '2026-06-01', expireDate: '2026-06-30' } },
+    }],
+  };
+  const remoteCfg = {
+    ...localCfg,
+    seasons: [...localCfg.seasons, {
+      version: '9.9',
+      modes: { 'Memory of Chaos': { availableDate: '2026-12-01', expireDate: '2027-01-15' } },
+    }],
+  };
+
+  // (g1) 成功路径：新版本落盘 + 进计划。
+  const dir = join(SANDBOX, 'refresh');
+  await mkdir(join(dir, 'raw', 'submissions'), { recursive: true });
+  await writeFile(join(dir, 'submission_config.json'), JSON.stringify(localCfg), 'utf8');
+  const site = await serve((url) => (url.pathname === '/submission_config.json' ? remoteCfg
+    : { items: [], count: 0 }));
+  try {
+    const res = await run('herta-update.mjs', ['--json'], { HERTA_DATA_DIR: dir, HERTA_BASE: site.base });
+    assert(res.code === 0, '退出码 0', `实际 ${res.code}；${res.stderr.slice(0, 200)}`);
+    const onDisk = JSON.parse(await readFile(join(dir, 'submission_config.json'), 'utf8'));
+    assert(onDisk.seasons.some((s) => s.version === '9.9'), '本地排期已被刷新出 9.9');
+    const plan = jsonLineOf(res.stdout, 'plan');
+    assert(plan && plan.targets.includes('9.9 / Memory of Chaos'),
+      '计划里出现了新版本的组合（旧判据永远看不见它）',
+      JSON.stringify(plan?.targets));
+    assert(/排期已刷新/.test(res.stdout), '上报了「排期已刷新」');
+  } finally {
+    await site.close();
+  }
+
+  // (g2) 失败路径：排期接口 500 → 警告 + 用本地排期继续，绝不中断同步。
+  const dir2 = join(SANDBOX, 'refresh-fail');
+  await mkdir(join(dir2, 'raw', 'submissions'), { recursive: true });
+  await writeFile(join(dir2, 'submission_config.json'), JSON.stringify(localCfg), 'utf8');
+  const before = await sha(join(dir2, 'submission_config.json'));
+  const site2 = await serve((url) => {
+    if (url.pathname === '/submission_config.json') throw new Error('boom');
+    return { items: [], count: 0 };
+  });
+  try {
+    const res = await run('herta-update.mjs', ['--json'], { HERTA_DATA_DIR: dir2, HERTA_BASE: site2.base });
+    const out = `${res.stdout}${res.stderr}`;
+    assert(/排期刷新失败/.test(out), '打了「排期刷新失败」的警告', out.slice(0, 200));
+    assert(jsonLineOf(res.stdout, 'plan') !== null, '照样给出了计划（没被排期失败打断）');
+    assert(await sha(join(dir2, 'submission_config.json')) === before, '本地排期没被动过');
+    assert(res.code === 0, '退出码仍是 0（警告不是失败）', `实际 ${res.code}`);
+  } finally {
+    await site2.close();
+  }
 };
 
 // ----------------------------------------------------------------------- (d)
@@ -364,6 +613,10 @@ const main = async () => {
     await testSkipCriterion(dataDir);
     await testLimitIsAdditiveOnly(dataDir);
     await testBadArgsFallBackToDefaults(dataDir);
+    const graceDir = await writeGraceFixture();
+    await testGraceAndSweep(graceDir);
+    await testShrinkGuard();
+    await testConfigRefresh();
     await testBuildRefusesToShrink();
     await testBuildRefusesEmptyRaw();
   } finally {
