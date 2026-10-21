@@ -98,6 +98,8 @@ const cardInfo = () => evaluate(`(() => {
     count: cards.length,
     ranks: cards.map((c) => Number((c.querySelector('.advice-unit-rank')?.textContent || '').replace('#', ''))),
     altMarks: cards.filter((c) => c.querySelector('.advice-plan-alt-hit')).length,
+    tierMarks: cards.filter((c) => c.querySelector('.advice-plan-tier')).length,
+    tierLabels: [...new Set(cards.map((c) => c.querySelector('.advice-plan-tier')?.textContent || '').filter(Boolean))],
     meta: document.getElementById('adviceTeamPlanMeta')?.textContent || '',
     pager: document.getElementById('adviceTeamPlanPager')?.textContent || '',
     firstChars: [...(cards[0]?.querySelectorAll('.advice-plan-team-char') || [])].map((n) => n.textContent),
@@ -121,6 +123,8 @@ const typeQuery = (value) => evaluate(`(() => {
 const totalMatch = (meta) => Number((meta.match(/共 (\d+) 支/) || [])[1] || 0);
 const pageMatch = (meta) => (meta.match(/第 (\d+)\/(\d+) 页/) || []).slice(1).map(Number);
 const first = await cardInfo();
+// 2026-10-21（v4.6.138）：首屏全是最好一档的队伍，徽章只给非最好一档的行 —— 首屏不该有。
+check('首屏没有档位徽章（最好一档不印）', first.tierMarks === 0, `${first.tierMarks} 个 · ${first.tierLabels.join('/')}`);
 check('首屏 20 张卡', first.count === 20, `${first.count} 张`);
 check('状态行印全池规模（远大于 20）', totalMatch(first.meta) > 20, first.meta);
 check('状态行印投稿条数', /来自 \d+ 条投稿/.test(first.meta), first.meta);
@@ -142,6 +146,11 @@ await waitFor(`(() => {
 })()`);
 const lastPage = await cardInfo();
 const expectedTail = totalMatch(lastPage.meta) % 20 || 20;
+// v4.6.138：末页全是较差档位的行，每张都该有档位徽章，且只印一种（同一档分组）。
+check('末页每张卡都有档位徽章', lastPage.tierMarks === lastPage.count,
+  `徽章 ${lastPage.tierMarks} / 卡 ${lastPage.count}`);
+check('末页档位徽章只有一种文案（按档分组）', lastPage.tierLabels.length === 1,
+  lastPage.tierLabels.join(' / '));
 check('末页张数 = 余数', lastPage.count === expectedTail, `${lastPage.count} 张（期望 ${expectedTail}）`);
 check('末页名次接着上一页继续（不重编号）',
   lastPage.ranks[0] > 20 && lastPage.ranks[lastPage.ranks.length - 1] === totalMatch(lastPage.meta),
