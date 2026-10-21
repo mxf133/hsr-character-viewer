@@ -264,6 +264,13 @@ export const scoreEnvRows = (rows, ctx) => {
  * @param ctx.versionWeightOf (season) => number
  * @param ctx.debutSeasonOf    (packKey) => season | null；null = 查不到登场版本，视为一直在线
  * @param ctx.versionCmp       (a, b) => -1|0|1，版本先后
+ *
+ * ⚠️ **当前无生产调用点**（2026-10-21 审计结论）：角色总榜那条链真正生效的是
+ *    `public/scripts/advice.js` 的 `frontierBoard()`（服务端 import 它来算），
+ *    这一份是早期写的**备用实现**，只有 `tools/gacha-score-test.mjs` 在引用。
+ *    留着它有两面：真要换聚合口径时有个现成参照；但两套「跨版本聚合」并存
+ *    必然分叉 —— **改聚合口径时两处都要动，或干脆删掉这份**。别在生产代码里
+ *    顺手 import 它而不看 `frontierBoard` 是否才是线上在用的那份。
  */
 export const aggregatePacks = (scored, ctx) => {
   const {

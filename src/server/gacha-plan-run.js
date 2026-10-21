@@ -178,9 +178,17 @@ export const planCacheStats = () => ({
  *
  * ⚠️ 四个字段名别改：`a` 成绩（行动值 / 轮次）、`c` 用金、`n` 投稿数、`m` 成员串。
  *    这几个是数据集的原生写法（见 `herta-build.mjs` 的产出），`gacha-score.js` 全程按它读。
- * ⚠️ `tier === 'perfect'` 才算投稿：建库侧把 `target`（差一档）也写进 frontier，
- *    但「差一档」不是成绩 —— 拿它进方案会让「没打满的队」白得高分。
- *    需求文档 §一 的判据就是「通关 / 0T / <500 行动值」，不含差一档。
+ * ⚠️ v4.6.139 起 `target`（差一档）**也进方案池**。此前只取 `perfect`，但满分档的
+ *    成绩恒为满分（轮次型 `a=0`、末日积分满 ⇒ `a=0`），实测 20913 条满分行的
+ *    `a` 全是 0（见 `audit/algo-review` 的审计记录）—— 方案池里「队伍强度」恒 1.000、
+ *    零区分度，moc 首页 20 行只有 2 个分值、榜首 13 支并列。差一档行带着真实成绩
+ *    （忘却 a∈{1,2}、末日 a∈(0,300]），强度有梯度；它的分数自然靠后，不存在
+ *    「没打满的队白得高分」（旧注释的顾虑在新公式下不成立：强度项按真实成绩打折）。
+ *    同阵容同版本的 perfect/target 冲突由 `groupRosters()` 裁决：**档位优先**。
+ * ⚠️ 成绩缺失（`a=null`）的行**排除**而不是按 0 分进池：强度 0 的「幽灵候选」
+ *    会静默沉底，污染「来自 M 条投稿」的分母。旧过滤
+ *    `Number.isFinite(Number(r.actionValue)) !== false` 恒为真（`Number(null)=0`
+ *    是 finite），滤不住 null —— 已修。
  */
 const rowOf = (r) => ({
   season: r.season,
@@ -191,6 +199,9 @@ const rowOf = (r) => ({
   n: Math.max(1, Number(r.submissions) || 1),
   m: (r.members || []).map((m) => `${m.char}|${m.eidolon}|${m.lc || '-'}|${m.superimp || 1}`),
   tier: r.tier,
+  // 档位的**数字**形式（3=满分 2=差一档），与建库侧 `TIER_CODE` 同刻度。
+  // `groupRosters()` 的同版本裁决和池行的 `tier` 字段都读它；缺失当满分（老夹具没这字段）。
+  t: r.tier === 'target' ? 2 : 3,
   video: r.video || null,
 });
 
@@ -303,16 +314,26 @@ export const runPlan = async (options = {}) => {
       return Number.isFinite(Number(w)) ? Number(w) : 1;
     };
 
+    // ⚠️ v4.6.139（算法审计修复，用户拍板）：`target`（差一档）**纳入榜面排序**，
+    //    不再像 v4.6.138 那样丢进「只做召回」的非满分池。审计发现满分档判据本身
+    //    就是成绩归零（轮次 ≤0 / 积分 ≥4000 ⇒ `a=0`），20913 条满分行的 `a` 全为 0，
+    //    只取 perfect 时榜面「队伍强度」恒 1.000、零区分度；差一档行带真实成绩，
+    //    纳入后有梯度。同阵容同版本的 perfect/target 冲突由 `groupRosters()` 档位优先裁决。
+    //    ⚠️ 成绩缺失（`a=null`）的行**排除**：旧式 `isFinite(Number(av)) !== false`
+    //    恒真（`Number(null)=0` 是 finite），滤不住 null，会放「幽灵候选」进来污染分母。
+    //    四个档位仍**全部**进池（`minTier: 0`），pass/below 照旧只做召回、排后面。
     const usable = (f.frontierRows || [])
-      .filter((r) => Number.isFinite(Number(r.actionValue)) !== false)
+      .filter((r) => r.actionValue !== null && r.actionValue !== undefined
+        && Number.isFinite(Number(r.actionValue)))
       .map(rowOf)
       .filter((r) => r.m.length);
 
-    // 满分池（榜面口径，**与改之前逐字节一致**）与非满分池（只做召回，排在后面）。
-    const perfectRows = usable.filter((r) => r.tier === 'perfect');
-    const otherRows = usable.filter((r) => r.tier !== 'perfect');
+    // 榜面池：满分 + 差一档（v4.6.139 起 target 参与强度排序，档位优先裁决见 groupRosters）。
+    // 召回池：通关 + 未达标（只做召回，排在榜面之后，规则见 mergePlanEntries）。
+    const boardRows = usable.filter((r) => r.tier === 'perfect' || r.tier === 'target');
+    const otherRows = usable.filter((r) => r.tier !== 'perfect' && r.tier !== 'target');
 
-    const board = scoreEnvRows(perfectRows, {
+    const board = scoreEnvRows(boardRows, {
       mode: picked.mode, stage: picked.stage, ws: 1, wc, versionWeightOf,
     });
     const extra = otherRows.length
@@ -321,8 +342,9 @@ export const runPlan = async (options = {}) => {
       })
       : { scored: [], baselines: new Map() };
 
-    // 性价比那一栏的「该版最低金」统一用**满分池**的基准：非满分行的 `seasonsDetailOf`
-    // 里那列「该版最低 N 金」要是另一把尺子，同一个弹窗里两行会没法比。
+    // 性价比那一栏的「该版最低金」统一用**榜面池（满分 + 差一档）**的基准：召回池
+    // （通关 / 未达标）行的 `seasonsDetailOf` 里那列「该版最低 N 金」要是另一把尺子，
+    // 同一个弹窗里两行会没法比。
     // （注：v4.6.135 起性价比是 `1 − 补金/10` 的线性扣分，`baseline` 已不进分数，
     //   这里纯粹是为了弹窗里那个数说的是同一件事。）
     const extraScored = extra.scored.map((row) => {
@@ -349,8 +371,9 @@ export const runPlan = async (options = {}) => {
       extraScored,
       poolRows: board.scored.length + extraScored.length,
       // 窗口内**真实投稿数**（Σ 每行的 `n`）：一行常被 2~3 个人投过，所以它 ≥ `poolRows`。
-      submissions: perfectRows.concat(otherRows).reduce((sum, row) => sum + (Number(row.n) || 1), 0),
-      perfectSubmissions: perfectRows.reduce((sum, row) => sum + (Number(row.n) || 1), 0),
+      submissions: boardRows.concat(otherRows).reduce((sum, row) => sum + (Number(row.n) || 1), 0),
+      perfectSubmissions: boardRows.filter((r) => r.tier === 'perfect')
+        .reduce((sum, row) => sum + (Number(row.n) || 1), 0),
       tierSubmissions,
     };
   });
