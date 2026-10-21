@@ -341,6 +341,17 @@ console.log('\n[上场率汇总 — Top N + 其它，份额必须刚好 100%]');
   eq('0T 那档只数 a=0 的行', zero.items.map((it) => it.char).sort(), ['A', 'B']);
   eq('0T 那档的投稿规模是 4 条', zero.submissions, 4);
   eq('样本的行数也报出来（UI 要印）', zero.entries, 1);
+
+  // v4.6.136：非通关档带「占通关」比例（UI 的「占通关 x%」角标）。四档是切分 +
+  // 嵌套（0T ⊂ 通关；轮次型通关 = 0T+1T+2T），不是并列的四类。
+  near('0T 占通关 4/12', zero.shareOfClear, 4 / 12, 1e-9);
+  near('1T 占通关 0.5', s.find((b) => b.key === 'r1').shareOfClear, 0.5, 1e-9);
+  near('2T 占通关 1/6', s.find((b) => b.key === 'r2').shareOfClear, 2 / 12, 1e-9);
+  check('通关档自己是分母，不设该字段（前端据此不印角标）',
+    s[0].shareOfClear === undefined);
+  near('切分关系：各非通关档的占通关比例加总 = 1',
+    zero.shareOfClear + s.find((b) => b.key === 'r1').shareOfClear
+      + s.find((b) => b.key === 'r2').shareOfClear, 1, 1e-9);
 }
 
 // ---- 真实数据集：把 UI 上要印的样本量钉下来 ---------------------------------
