@@ -4897,16 +4897,90 @@ const renderTeamPlanPager = (total, pages) => {
  * ⚠️ 图标表里没有这个键（新角色 / 译名差异）时 `iconUrlOf()` 返回 null，这一格**直接
  *    不画** —— 宁可少一个头像，也不留一个空框（那会被读成「这个位置没人」）。
  */
-const planMemberIcons = (members, className = 'advice-plan-variant-icon') => {
+const planMemberIcons = (members, className = 'advice-plan-variant-icon', highlight = null) => {
   const wrap = text('span', 'advice-plan-variant-icons');
   for (const member of members || []) {
     const url = iconUrlOf('char', member.char);
     if (!url) continue;
     const label = member.charCn || cn(member.char);
-    wrap.appendChild(iconImg(url, className, label));
+    // 2026-10-21：`highlight` 是「这一支新换来的人」的 char 集合。次选的价值就是
+    // 「换掉一两个人也能打」，所以四个人里哪几个是**新来的**必须画出来（金色描边），
+    // 否则四张 20px 头像看起来和本队一模一样。
+    wrap.appendChild(iconImg(url,
+      highlight?.has(member.char) ? `${className} is-diff` : className, label));
   }
   return wrap;
 };
+
+/**
+ * 「其它配装 / 次选」行首的分数（2026-10-21）。
+ *
+ * 三个档位只用**颜色**区分，不用字号 —— 这几行是并排的，字号一变行高就跳。
+ *   · 与代表行接近（差 ≤ 0.2 分）→ 金色：值得看一眼；
+ *   · 还能打 → 常规白；
+ *   · 负分 → 压暗：`性价比 = 1 − 补金 ÷ 10`，负分意味着**比代表行多补 10 金以上**，
+ *     列在这里只是「确实存在这套」，不该和上面几行抢注意力（实测那批从 1.64 排到 -0.79）。
+ */
+const variantScoreChip = (score, baseScore) => {
+  const value = Number(score);
+  const delta = Number(baseScore) - value;
+  const tone = !Number.isFinite(value) || value < 0
+    ? ' is-negative'
+    : (Number.isFinite(delta) && delta <= 0.2 ? ' is-top' : '');
+  return text('span', `advice-plan-variant-score${tone}`,
+    Number.isFinite(value) ? value.toFixed(2) : '—');
+};
+
+/**
+ * 配装变体的「4 把光锥」（2026-10-21）。
+ *
+ * 这 17 套配装的**四个角色完全相同**，只换光锥 / 叠影 / 命座 —— 原来每行印
+ * 「砂金·戏浪·向浪花掷下盛夏S5 / 不死途·烦恼着，幸福着S1 / …」这种 60 字的串，
+ * 17 行读下来一个字都抓不住，而重复的四个角色名本身没有信息量。改成画 4 把光锥。
+ * 完整名字（角色 · 命座 · 光锥 S 数）留在行的 `title` 里，要核对时悬停就有。
+ * 没装光锥的位置退回角色头像（「空位」本身也是差异）。
+ *
+ * ⚠️ **描边只标「只差命座」的那一种**（2026-10-21 两次踩坑后定的口径）：
+ *    ① 先做成「任何差异都描金边」—— 实测 116 套变体里 **113 套换过光锥**，
+ *       四格里平均 **2.6 格**都会亮（305/464 个图标），满屏橙框反而没有重点；
+ *    ② 再给命座加 E 角标 —— 20px 的图上角标必然压到**右边那一格**，
+ *       实测四格里两个角标就糊成一片。
+ *    最终：**光锥换了就让图标本身去表达**（那把光锥的画本来就不一样，不需要再描边）；
+ *    只有「光锥一模一样、只有命座变了」时图标看不出差别，才给它描金边 ——
+ *    实测这种情况只有 3/116 套，标出来是有效信息而不是噪声。
+ */
+const variantConeIcons = (members, baseMembers) => {
+  const wrap = text('span', 'advice-plan-variant-icons');
+  // 光锥签名**不含命座**：命座单独判（见上）。`lineup` 的键只有四个角色名
+  // （`lineupKeyOf`），所以折叠进来的这一批光锥和命座都可能不同。
+  const sigOf = (m) => `${m?.lc || ''}|${Number(m?.superimp) || 1}`;
+  const base = new Map((baseMembers || []).map((m) => [m.char, m]));
+  for (const m of members || []) {
+    const url = (m.lc && iconUrlOf('cone', m.lc)) || iconUrlOf('char', m.char);
+    if (!url) continue;
+    const lcName = m.lc ? `${m.lcCn || cnCone(m.lc)} S${Number(m.superimp) || 1}` : '无光锥';
+    const eidolon = Number(m.eidolon) || 0;
+    const b = base.get(m.char);
+    const eidolonOnly = !!b
+      && sigOf(b) === sigOf(m)
+      && (Number(b.eidolon) || 0) !== eidolon;
+    wrap.appendChild(iconImg(url,
+      eidolonOnly ? 'advice-plan-variant-icon is-diff' : 'advice-plan-variant-icon',
+      `${m.charCn || cn(m.char)} E${eidolon} · ${lcName}`));
+  }
+  return wrap;
+};
+
+/** 一行配装的完整写法（角色·命座·光锥S数）—— 只进 `title`，不在界面上占位。 */
+const variantNamesText = (members) => (members || [])
+  .map((m) => {
+    const head = `${m.charCn || cn(m.char)} E${Number(m.eidolon) || 0}`;
+    return m.lc
+      ? `${head}·${m.lcCn || cnCone(m.lc)}S${Number(m.superimp) || 1}`
+      : head;
+  })
+  .join(' / ');
+
 
 /**
  * 方案卡片的「这个分数怎么来的」（2026-10-20）。
@@ -5198,23 +5272,48 @@ const renderTeamPlan = () => {
     // ---- 其它配装（同一套四人，光锥 / 叠影不同）------------------------------
     // 用户 2026-10-18 决策：按角色组合折叠。代表行是分最高的那套配装，
     // 其余收在这个折叠块里 —— 「换个光锥能省 2 金」这种信息不该丢掉。
+    //
+    // 2026-10-21（用户：「其它配装和次选显示的效果都不够好」）重做这一块，三件事：
+    //   ① 原来每行印一串**四个人的全名 + 光锥名**（`砂金·戏浪·向浪花掷下盛夏S5 / …`），
+    //      一屏 17 行全是这种 60 字的串，扫读时一个字都抓不住 —— 而这 17 套的四个
+    //      **角色是完全相同的**（同一 lineup，只换光锥），把角色名重复 17 遍本身没有信息量。
+    //      现在画 **4 个光锥图标**，与代表行不同的那把描金边；角色名与光锥全名退进
+    //      行的 `title`（悬停可核对）。
+    //   ② 一行从平均折两行文字压到一行，宽屏排两列 —— 17 套从 17 行变成 9 行。
+    //   ③ **只列前 8 套**。实测这批变体从 1.64 一路排到 -0.79（负分 = 比代表行多补
+    //      10 金以上，性价比项已经转负），后 9 套与代表行差好几倍，列出来只稀释上面几行。
+    //      余下的在列表末尾写一句「还有 N 套更低分的」—— 收敛而非静默丢弃。
+    const VARIANTS_SHOWN = 8;
     if ((row.variants || []).length) {
+      // 折叠进来的这一批**不止换光锥**：`lineup` 的键只有四个角色名（`lineupKeyOf`），
+      // 命座也在变（实测某张卡的 17 套里 15 种命座组合）。标题按实际内容写 ——
+      // 一张卡没动过命座时就不提「命座」，否则读者会去列表里找不存在的差异。
+      const baseById = new Map((row.members || []).map((m) => [m.char, m]));
+      const eidolonMoves = (row.variants || []).some((v) => (v.members || []).some((m) => {
+        const b = baseById.get(m.char);
+        return !!b && (Number(b.eidolon) || 0) !== (Number(m.eidolon) || 0);
+      }));
       const details = document.createElement('details');
       details.className = 'advice-plan-team-variants';
-      details.appendChild(text('summary', '', `其它 ${row.variants.length} 套配装（同角色）`));
-      for (const v of row.variants) {
+      details.appendChild(text('summary', '',
+        `其它 ${row.variants.length} 套配装（同角色，换光锥 / 叠影${eidolonMoves ? ' / 命座' : ''}）`));
+      const list = text('div', 'advice-plan-variant-list');
+      for (const v of row.variants.slice(0, VARIANTS_SHOWN)) {
         const line = text('div', 'advice-plan-variant');
-        line.appendChild(text('span', 'advice-plan-variant-score', Number(v.score).toFixed(2)));
+        line.appendChild(variantScoreChip(v.score, row.score));
         line.appendChild(text('span', 'advice-plan-variant-gap', `补 ${v.gap} 金`));
-        // 同一套四人、只是光锥 / 叠影不同 —— 头像完全一样，所以这里**不画头像**
-        // （四个一样的图连排四次，看着像坏了）。差异在下面的名字串里（带光锥名）。
-        line.appendChild(text('span', 'advice-plan-variant-members',
-          (v.members || []).map((m) => (m.lc
-            ? `${m.charCn || m.char}·${m.lcCn || m.lc}S${m.superimp || 1}`
-            : `${m.charCn || m.char}`)).join(' / ')));
+        line.appendChild(variantConeIcons(v.members, row.members));
+        line.title = variantNamesText(v.members);
         const vv = videoLink(v.video);
         if (vv) line.appendChild(vv);
-        details.appendChild(line);
+        list.appendChild(line);
+      }
+      details.appendChild(list);
+      const restCount = row.variants.length - VARIANTS_SHOWN;
+      if (restCount > 0) {
+        const last = row.variants[row.variants.length - 1];
+        details.appendChild(text('p', 'advice-plan-variant-more muted small',
+          `还有 ${restCount} 套更低分的没列（最低 ${Number(last.score).toFixed(2)} 分）。`));
       }
       card.appendChild(details);
     }
@@ -5222,24 +5321,55 @@ const renderTeamPlan = () => {
     // ---- 次选配队 ------------------------------------------------------------
     // 2026-10-20（用户：「次选配队没有图标和视频」）：每支加**四个头像 + 来源视频**。
     // 次选的价值就是「换掉一两个人也能打」，所以是谁很关键 —— 纯名字串看不出差别。
-    if ((row.alternatives || []).length) {
+    //
+    // 2026-10-21：把「换了几人、换成谁」直接算出来写在一行里（`换 1 人：爻光`），
+    // 四个头像里新来的那几位描金边。原来那句「共享 4 人」要先做一次 4 减 1 才知道换了几个。
+    //
+    // ⚠️ **「同四人」的那几支直接不列**（2026-10-21）：
+    //   `alternativesOf()` 的候选是全池，排序第一键是 `shared` 降序，所以排在最前面的
+    //   常常是「四个角色一个没换」的那些 —— 实测首屏 60 支次选里 **43 支是 shared=4**
+    //   （第一行那张卡的 3 支次选全是 shared=4）。
+    //   但 `lineup` 的键就是排序后的四个角色名（`lineupKeyOf`），所以 shared=4 的邻队
+    //   **必然已经折叠进 `row.variants`**，也就是上面「其它配装」里已经列过一遍了。
+    //   这里再列一次，读者只会看到两块内容一模一样，而这一块的标题还写着「换一两个人」。
+    // ⚠️ 过滤放在**展示层**：服务端那份 `alternatives` 还被 `plan-index.js` 的
+    //    「次选命中」复用（搜索结果计数依赖它，见 `plan-index.js` 里那段注释），
+    //    改服务端会连带改掉搜索口径 —— 那不是这次要动的东西。
+    const mineSet = new Set((row.members || []).map((m) => m.char));
+    const alts = (row.alternatives || [])
+      .filter((alt) => (alt.members || []).some((m) => !mineSet.has(m.char)));
+    if (alts.length) {
       const details = document.createElement('details');
       details.className = 'advice-plan-team-alts';
-      details.appendChild(text('summary', '', `次选 ${row.alternatives.length} 支（共享成员多）`));
-      for (const alt of row.alternatives) {
-        const line = text('div', 'advice-plan-variant');
-        line.appendChild(text('span', 'advice-plan-variant-score', Number(alt.score).toFixed(2)));
-        line.appendChild(text('span', 'advice-plan-variant-gap',
-          `共享 ${alt.shared} 人 · 补 ${alt.gap} 金`));
-        line.appendChild(planMemberIcons(alt.members));
-        line.appendChild(text('span', 'advice-plan-variant-members',
-          (alt.members || []).map((m) => m.charCn || m.char).join(' / ')));
+      details.appendChild(text('summary', '',
+        `次选 ${alts.length} 支（换一两个人也能打）`));
+      const list = text('div', 'advice-plan-variant-list');
+      for (const alt of alts) {
+        const line = text('div', 'advice-plan-variant is-alt');
+        line.appendChild(variantScoreChip(alt.score, row.score));
+        const fresh = (alt.members || []).filter((m) => !mineSet.has(m.char));
+        const theirs = new Set((alt.members || []).map((m) => m.char));
+        const gone = (row.members || []).filter((m) => !theirs.has(m.char));
+        const nameOf = (m) => m.charCn || cn(m.char);
+        line.appendChild(text('span', 'advice-plan-variant-swap',
+          `换 ${fresh.length} 人：${fresh.map(nameOf).join('、')}`));
+        line.appendChild(text('span', 'advice-plan-variant-gap', `补 ${alt.gap} 金`));
+        line.appendChild(planMemberIcons(alt.members, 'advice-plan-variant-icon',
+          new Set(fresh.map((m) => m.char))));
+        // 「换出谁」没法塞进行里（行宽有限），但它是次选最要紧的一问：
+        // 「我没有 X，能不能用这支」—— 所以写进 `title`，悬停就有。
+        line.title = gone.length
+          ? `换出 ${gone.map(nameOf).join('、')} → 换入 ${fresh.map(nameOf).join('、')}\n`
+            + variantNamesText(alt.members)
+          : variantNamesText(alt.members);
         const av = videoLink(alt.video);
         if (av) line.appendChild(av);
-        details.appendChild(line);
+        list.appendChild(line);
       }
+      details.appendChild(list);
       card.appendChild(details);
     }
+
 
     el.teamPlanBody.appendChild(card);
   });
