@@ -2590,7 +2590,11 @@ const wireValueTips = (container) => {
      */
     const envsHere = unit.envs || [];
     const needEnvs = Number(unit.envCount) > envsHere.length
-      || envsHere.some((env) => !Array.isArray(env.members));
+      || envsHere.some((env) => !Array.isArray(env.members))
+      // v4.6.144：版本表（`versions`）只在按需载荷 `/api/archive/packs` 上
+      // （`/conclusion` 带它会顶穿 660 KB 的硬上限）。没有它就去补一份 ——
+      // 详情窗口的两张来源表直接读它，缺了会只剩一行「明细未展开」。
+      || envsHere.some((env) => !Array.isArray(env.versions));
     const needVideo = envsHere.some((env) => !env.video);
     // ⚠️ 2026-10-20：「泛用性名单」不再是这里要补的东西（该分项已从界面上删除，见
     //    `scoreBreakdownTable()` 那段注释）。按需取数现在只服务两件事：补齐关卡明细、来源视频。
@@ -3567,7 +3571,7 @@ const scoreBreakdownTable = (unit) => {
     // ⚠️ 三个分项名带「角色」前缀（用户 2026-10-17 第 2 条）—— 与补金推荐那三行
     //    （「队伍强度 / 队伍性价比 / 队伍泛用性」）分开。`check-advice-layout.mjs` 的
     //    `SPLIT_LABELS` 逐字钉着这三个名字，改这里要同步改那边。
-    ['角色强度', '各关卡取该队自己的行动值 → 按关卡权重加权平均', unit.strengthTotal, unit.strengthScore,
+    ['角色强度', '逐版本取该版本最好的一条投稿 → 按版本权重加权平均', unit.strengthTotal, unit.strengthScore,
       w.strength, 'strength', false],
     ['角色性价比', '同成绩下金数越少越高', unit.total, unit.costScore, w.cost, 'cost', false],
     // ⚠️ 2026-10-20：这里原来还有第三行「角色泛用性」（`unit.versatilityRaw` /
@@ -3673,171 +3677,67 @@ const scoreBreakdownTable = (unit) => {
 };
 
 /**
- * 「**强度**」这一项的完整来源（用户 2026-10-13 要求三项都给来源；2026-10-14 换了口径）。
+ * 「**强度**」分项的来源（v4.6.144「整链切 v2」重写）。
  *
- * 用户 2026-10-14 的原话：「强度分应当围绕**行动值**决定，此角色参与的队伍，行动值越低则
- * 强度分越高，**仅取最少行动值**，若达成 **0 行动值通关**，则**成本越低越强**」，
- * 以及「按照已有的用户设置的关卡权重，**各自贡献**」。落地成这张表：
+ * 表里逐**版本**列：该版本最好的一条投稿（成绩 → 强度分）、版本权重、加权贡献。
+ * 合计 = 榜上那个强度分（`unit.strengthTotal`）。
  *
- * ```
- *   某副本强度 = av == 0 → 100                                             ← 顶格档
- *                av > 0  → 95 × 判据线曲线(av)                              ← 第二档
- *   强度原始量 = Σ(关卡权重 × 某副本强度) / Σ(**全部**副本的关卡权重)   ← 缺副本按 0
- *   强度得分   = 原始量夹到 90 以下（除非本档自己在每一关都打出顶格档）
- * ```
- *
- * ⚠️ **2026-10-17 晚：金数彻底退出强度**（用户：「强度得分应仅考虑强度（不考虑别的，
- *    因此低难副本普遍能拿满分）」）。改前顶格档是 `100 × 该期最省金 ÷ 本队金数`、
- *    第二档封顶是 `min(90, 100 × 该期最省金 ÷ 该期最贵金)` —— 两处都在按成本折分，
- *    18 金的 E6 队在「1 金就能 0 行动值」的混沌 / 虚构里只能拿个位数。现在强度只回答
- *    「打得多快」，成本只影响**性价比**那张表。
- * ⚠️ **2026-10-17 第 2 条整条重做过**（用户：「角色/队伍强度与成本**改为无相关性**，
- *    不需要遵守高造价必然等于高强度」）。改前最后还有两步 ——
- *    「同角色低档位救高档位」的单调兜底，与一个 5 分的投入加成（顶格档按压金度、
- *    其余按投入档位）—— 两步**都删了**：星魂档与叠影档就是成本，留着它们等于把
- *    「高造价必然等于高强度」又请回来。实测删之前真珠 E0/E1/E2/E6 四档强度分
- *    **全部等于 73.33**（= E0 自己的分），强度列读不出任何档位差异。
- * ⚠️ **2026-10-17 晚新增「继承」**：已登场却缺证据的版本，若同角色有**成本更低且
- *    那一期有成绩**的整包，就取它们的**最高分**（见 `advice.js` 的
- *    `cheaperPoolBySeason`）。依据是用户那句「人们一般不会上传低难度关卡用超高成本
- *    通关的记录」—— 继承来的分会在下面单独写一句，别让读者以为它有自己的投稿。
- * ⚠️ 金数与行动值都取**卡片上「最佳证据」那一队**（`observed` 行）：用户 2026-10-16
- *    报过「卡片写着绝境 26 金 · 457 行动值、强度却是 100」，所以强度必须与那个数同源。
- *
- * ⚠️ 分母是**全部**副本的权重和：缺副本按 0 计。改前那版除以「有数据的副本」，实测奖励
- * 了数据少的整包（绝境覆盖率 36/77 → 1/77），见 `advice.js` 里 `strengthTotal` 那段注释。
- * ⚠️ **抽卡方案**里那条 `avSource`（行动值前沿池）的分母**故意不同**：它只对「比本队打过的
- * 任何一关都更轻」的缺关卡免罚（v4.6.112），所以同一支队在两个榜上的强度分**不保证相等**
- * —— 方案那张表的刻度文案里写明了这件事。
- *
- * ⚠️ 这张表**不再有**「跨版本发挥」列：新口径**不跨版本平均**（用户要的是「仅取最少
- * 行动值」那一次成绩）。该列仍然保留在**性价比**那张表里 —— 那边确实按版本加权。
+ * 与 v1 的三处差别（别再改回去）：
+ *   * **没有「关卡权重」列** —— v4.6.144 起总榜是**单关卡**（「关卡选择」选中的那一关
+ *     权重 10、其余 0）。关卡权重只剩「这一关算不算数」的开关语义，不再是可切的多列。
+ *   * **没有「跨版本发挥」列** —— v2 的版本加权直接算进 `strength`
+ *     （`Σ(该版本强度 × 版本权重) ÷ Σ版本权重`），没有「÷ 最好那一版」这个残差动作。
+ *   * **强度分是线性的**：`100 × (1 − 行动值/500)`（轮次型 `100 / (轮次+1)`），
+ *     与抽卡方案共用 `public/scripts/v2-score.js` 的 `strengthPartOf()`。
  */
 const strengthSourceBlock = (unit) => {
-  const envs = unit.envs || [];
-  if (!envs.length) return null;
-  const rows = envs.map((env) => {
-    const meta = frontierEnvMeta(env.id);
-    // ⚠️ `weight` 优先读 env 上的（按需载荷带），退回顶层 `frontierEnvs[].weight`
-    //    （总榜载荷为了守住 600 KB 硬上限**不发** env.weight，见服务端 `slimFrontierUnit`
-    //    里那段注释 —— 改前界面那一列因此恒印 `×0`，是个一直没人发现的历史 bug）。
-    const weight = Number(env.weight ?? meta?.weight) || 0;
-    const strength = Number(env.envStrength);
-    // ⚠️ 2026-10-18：强度来源表读**强度那一档自己的行动值**（`strengthAv`），
-    //    不是卡片那一行的 `avBest`。两者可能不是同一支队伍 —— 卡片按含金数项挑
-    //    （最划算），强度按打得最快挑；老载荷没有 `strengthAv` 时退回 `avBest`。
-    const av = Number(env.strengthAv ?? env.avBest);
-    // ⚠️ `env.strengthGold` **不再读**：强度已与金数无关（用户 2026-10-17 晚），
-    //    这一列不再印「（N 金）」，留着变量只会让人以为它还在参与算分。
-    // 「是否达到满分线」优先读载荷给的（按需载荷带）；总榜载荷没带时按 `av ≤ 满分线`
-    // 现算一次 —— 判据线与 `avLinesOf` 同源，都在顶层 `frontierEnvs[].tierLines` 里。
-    const lines = meta?.tierLines || null;
-    const perfectLine = Number(env.perfectLine
-      ?? (lines ? avLinesOf(lines, meta?.lowerIsBetter !== false).perfect : Number.NaN));
-    const isPerfect = env.isPerfect === true
-      || (Number.isFinite(av) && Number.isFinite(perfectLine) && av <= perfectLine + 1e-9);
-    // ⚠️ 2026-10-18：整关继承来的分（这一档在这一副本**一条自己的投稿都没有**）——
-    //    行动值那格写「继承」，不印出借那个整包的行动值（否则会读成「这是它自己打出来的」）。
-    const inheritedEnv = env.inheritedEnv === true;
-    const avText = inheritedEnv
-      ? '继承'
-      : (Number.isFinite(av)
-        ? `行动值 ${Number.isInteger(av) ? av : av.toFixed(1)}`
-        : '—');
-    // 「0 行动值通关」那一段。
-    // ⚠️ 2026-10-17 晚起**不再印金数**：强度已经与成本无关（用户「强度得分应仅考虑
-    //    强度」），还写「（26 金）」会让读者以为这一格是按金数折过的 —— 改前确实折，
-    //    现在不折。金数在**性价比**那张表里看。
-    // ⚠️ 措辞不能用「满分/达标/及格」——`herta-test.mjs` 有一条全源码判据盯着这类自造词
-    //    （用户 2026-10-10：「把『满分』『达标』改为具体的行动值」）。所以这里说「判据线」。
-    // ⚠️ 2026-10-15（用户报「老队伍的强度得分过高」后）：这一列的行动值改成取**最近版本**
-    //    的那一次成绩，所以**必须把版本写出来** —— 否则读者会以为它还是「窗口内最快的那次」，
-    //    拿两三版前的旧 0 行动值来对账。版本缺失（老载荷）时不写，不编。
-    const avNote = [
-      inheritedEnv ? '同角色更低成本配装的分' : '',
-      inheritedEnv ? '' : (Number.isFinite(av) && av === 0
-        ? '0 行动值通关'
-        : (isPerfect ? '已达判据线' : '')),
-      env.strengthSeason ? `${env.strengthSeason} 版本` : '',
-    ].filter(Boolean).join(' · ');
+  const env = (unit.envs || [])[0];
+  if (!env) return null;
+  const versions = Array.isArray(env.versions) ? env.versions : [];
+  // 按需载荷没拿到时给一句实话，不要画一张空表。
+  if (!versions.length) {
+    return text('div', 'muted small advice-source-note',
+      '逐版本明细未展开（按需加载失败）：重开这个窗口会再试一次。');
+  }
+  const weightSum = versions.reduce((n, v) => n + (Number(v.weight) || 0), 0);
+  const rows = versions.map((v) => {
+    const strength = Number(v.strength) || 0;
+    const weight = Number(v.weight) || 0;
+    const share = weightSum > 0 ? (strength * weight) / weightSum : 0;
+    // ⚠️ 精简载荷里 env 只有 `id`（`aa|plight`），没有 mode/stage —— 从 id 现拆，
+    //    不要指望 `env.mode` 存在（`slimFrontierUnit` 刻意不下发它）。
+    const [envMode, envStage] = String(env.id || '').split('|');
+    const avText = metricValueTextOf(envMode, envStage || '', Number(v.actionValue))
+      || '—';
     return [
-      tipEnvLabel(meta?.label || env.envLabel || env.id, env.evidenceSeason),
-      Number.isFinite(av) ? tipFactor(avText, avNote) : '—',
-      Number.isFinite(strength)
-        ? tipFactor(`${strength.toFixed(1)}`, isPerfect && av > 0 ? '已达判据线' : '')
-        : '—',
+      text('span', 'tip-label-cell', String(v.season)),
+      avText,
+      strength.toFixed(1),
       `×${formatWeight(weight)}`,
-      tipChain([`${Number.isFinite(strength) ? strength.toFixed(1) : '—'}`, `×${formatWeight(weight)}`],
-        `+${packScoreText(env.envStrengthValue)}`),
+      tipChain([strength.toFixed(1), `×${formatWeight(weight)}`], `+${share.toFixed(1)}`),
     ];
   });
   const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
-    '角色强度来源：逐关卡取**这一关最佳证据那一支队**最近的行动值（同一支队里取最快的一次），'
-    + '再按你设的关卡权重各自贡献'));
+    '角色强度来源：逐版本取该版本最好的一条投稿，'
+    + '强度分 = 100 ×（1 − 行动值/500）（轮次型 100 /（轮次+1）），再按版本权重加权平均'));
   box.appendChild(tipTable(
-    // ⚠️ 2026-10-17：第 4 列原名「权重」，与**三分项表**里那一列同名不同义 ——
-    //    那边是**抽卡权重**（印成百分比），这边是**关卡权重**（印成 ×N）。同一个窗口里
-    //    两把尺子共用一个表头，读者只能靠脚注兜底，所以这里显式叫「关卡权重」。
-    ['关卡', '行动值（这支队自己）', '本副本强度', '关卡权重', '贡献'],
+    ['版本', '最佳成绩', '强度分', '版本权重', '加权贡献'],
     rows,
-    // 合计 = `strengthTotal`（三个分项表里「强度」那一行的**原始量**），不是角色得分。
-    // 单副本时它就是那一列本身，不必再写一行（与性价比表同一条约定）。
-    // ⚠️ 2026-10-17：合计行改成 `+N`（`packScoreText`），与**本表「贡献」列**以及性价比
-    //    来源表的合计行同一种写法。改前这里是一位小数且不带加号（`91.6`），而它自己那一列
-    //    是 `+28` 这样的整数 —— 同一列两种格式，读者想逐行加总对账时根本对不上。
-    envs.length > 1
-      ? ['本档自身合计', '', '', '', `+${packScoreText(unit.strengthTotal)}`] : null,
-    // ⚠️ 打上自己的 class：浮层里现在有**三张**表（三个分项 / 强度来源 / 性价比来源），
-    //    `check-advice-layout.mjs` 的探针按 class 选表 —— 不给这张加标记，
-    //    它就只能按下标猜，而「按下标取」在这类探针里是假红的常客。
+    versions.length > 1
+      ? ['合计', '', Number(unit.strengthTotal || 0).toFixed(1), '',
+        `+${Number(unit.strengthTotal || 0).toFixed(1)}`]
+      : null,
+    // 探针按 class 认表（三张表并存时不能靠下标猜）。
     'is-strength-source',
   ));
-  // 继承来的分（用户 2026-10-17 晚）要在下面两处脚注里用到，先取出来。
-  const inheritedSeasons = Number(unit.inheritedSeasons) || 0;
+  const inherited = Number(unit.inheritedSeasons) || 0;
   box.appendChild(text('div', 'muted small advice-source-note',
-    (inheritedSeasons > 0
-      ? '上表每一格是**这一关的版本加权强度**（某一版没有本档自己的成绩时，'
-        + '按同角色更便宜的整包补，见下）；'
-      : '上表**每一格都是这一档自己那支队的成绩**（行动值 → 该副本强度，'
-        + '再按关卡权重加权平均；')
-    + '行动值下面那行小字就是它的版本）。'
-    // ⚠️ 2026-10-18 起这里**恒等**：单调包络（2026-10-17 删）与整维 90 天花板
-    //    （2026-10-18 删，用户报「前排普遍不够强」）都不在了，榜上那个强度分就是上表
-    //    的合计；逐关卡的第二档上限 95 仍在上表每一格里体现。
-    + '榜上那个强度分就是上表的合计（逐关卡的第二档上限 95 已在表内体现）。'));
-  /**
-   * ⚠️ 2026-10-18：**整维天花板已删除**，这里不再写「本档被 90 压下来」那条小字。
-   *    逐关卡的第二档上限仍然有效（表里每一格都体现），但整包分不再夹第二刀 ——
-   *    用户报的「前排角色普遍不够强」就是那一刀造成的（一整排并列 90.0）。
-   *    因此 `strengthFloor` 与 `strengthTotal` 恒等，这条分支永远不会成立；
-   *    留着 `floor` 的读取只会误导后来的读者，一并删掉。
-   */
-  /**
-   * 顶格档说明（用户 2026-10-17 第 2 条；2026-10-17 晚金数退出强度后简化）。
-   *
-   * 现在顶格档**只由行动值决定**：每一关都打出 0 行动值 → 每关 100 → 合计 100。
-   * 改前还要求「且都取到那一期的最省金」，那条随「强度只看行动值」删除了。
-   */
-  if (Number(unit.strengthTotal) >= 99.99) {
-    box.appendChild(text('div', 'muted small advice-source-note',
-      '顶格档：本档在**每一个有数据的关卡**都打出了 0 行动值，所以每关都是 100、'
-      + '合计就是 100 —— 其余任何情况都必须低于 100。'));
-  }
-  /**
-   * 继承说明（用户 2026-10-17 晚）。
-   *
-   * 高成本整包在低难副本上往往**一条投稿都没有**（用户原话：「人们一般不会上传低难度
-   * 关卡用超高成本通关的记录」）。这些版本现在从「同角色更便宜且有成绩」的整包继承
-   * 最高分，所以这一档的分可能**大于**它自己的投稿数能解释的量 —— 必须写出来，
-   * 否则读者对着来源表逐行找，会发现有几版根本没有对应的成绩。
-   */
-  const inherited = inheritedSeasons;
-  if (inherited > 0) {
-    box.appendChild(text('div', 'muted small advice-source-note',
-      `其中 ${inherited} 个「已登场但没有本档自己的成绩」的版本，分是从**同角色更便宜的`
-      + '整包**继承来的（取它们那一期的最高分；这一列对金数不作惩罚）。'));
-  }
+    '上表合计就是榜上的强度分：未上线的版本不参与，已登场但无投稿的版本记 0 分。'
+    + (inherited > 0
+      ? `其中 ${inherited} 个无投稿版本从同角色更便宜的整包继承（同一把尺子）。`
+      : '')
+    + '单关卡口径：只有「关卡选择」里选中的那一关进榜。'));
   return box;
 };
 
@@ -3921,130 +3821,64 @@ const versatilitySourceBlock = (unit) => {
 };
 
 /**
- * 「**性价比**」这一项的逐关卡来源表（用户 2026-10-13 第 8 条：它现在长在三个分项表的
- * 「性价比」那一行**下面**的就地折叠块里，见 `scoreBreakdownTable()`）。
+ * 「**性价比**」分项的来源（v4.6.144「整链切 v2」重写）。
  *
- * 口径与 `frontierTip()` 里那张主表**逐字同一套**（同一个 `frontierFactorsOf()`、
- * 同一个 `perfLabelOf()`、同一个 `tipChain()`）—— 所以这里**只有一份公式**，
- * 界面上不会出现「折叠块里一个数、主表里另一个数」。
- * 两处唯一的差别是**位置**：主表在窗口正文里、折叠块在这一行下方。
+ * 逐**版本**列：该版本最好的一条投稿（成绩 + 本队金数 → 性价比分）、版本权重、
+ * 加权贡献。合计 = 榜上那个性价比分（`unit.costScore`）。
  *
- * ⚠️ `unit.envs` 为空时返回 `null`：`frontierTip()` 的主表也靠它渲染，
- * 这一份**不引入新的数据依赖**（不会出现「主表有行、来源块没有」）。
+ * 口径（`docs/抽卡推荐重构设计.md` §3.2 / §3.3）：
+ *   性价比分 = 100 × baseline(该版本) / 本队金数，封顶 100；
+ *   baseline = 该版本打到判据线（行动值 <500 / 0T）的最便宜配置（剔除 0 金队）。
+ * ⚠️ 「整包系数」（该角色最便宜整包金数 / 本整包金数）在表外乘一次，标题行会写出来
+ *    —— 否则逐版本贡献加起来会比合计多一截（它只作用在整包层面，不是某一版的因子）。
+ * ⚠️ v1 的「跨版本发挥」列已删除：v2 的版本加权直接算进 `costPart`，没有残差可拆。
  */
 const costSourceBlock = (unit) => {
-  const envs = unit?.envs || [];
-  if (!envs.length) return null;
-  const rows = envs.map((env) => {
-    const meta = frontierEnvMeta(env.id);
-    const f = frontierFactorsOf(env, meta);
-    // 用户 2026-10 要求：**贡献要写出真实的计算过程**，不再是光秃秃一个结果数。
-    // 改前读者拿左边可见的因子直接相乘，只能得到 1/100 的数 —— 链子里那枚 `×100`
-    // （`f.packScale`，也就是 `SCORING.frontierPackScale`）是隐形的。这里按**同一口径**
-    // 把整条链连出来：
-    //   权重 × 100 × 表现 × 金数 × 跨版本发挥 = 贡献
-    //
-    // ⚠️ 用户 2026-10-11 缺陷 3：**「档位」与「行动值」已合并成一项「表现」**
-    // （`f.perfFactor`）—— 它们本是同一维度（档位由行动值推出），乘两次会把差距平方、
-    // 并在判据线处跳变 2 倍。所以链子里**只写一项**，界面表里那两列合并成一列。
-    const chain = [formatWeight(f.weight)];
-    if (Number.isFinite(f.packScale)) chain.push(formatWeight(f.packScale));
-    if (Number.isFinite(f.perfFactor)) chain.push(factorText(f.perfFactor));
-    if (f.costFactor !== null) chain.push(factorText(f.costFactor));
-    if (Number.isFinite(f.seasonFactor)) chain.push(factorText(f.seasonFactor));
-    const contribution = `+${packScoreText(env.value ?? f.value)}`;
-    // ---- 第一格：关卡名 + 版本小字 + **这一关卡的队伍图标**（用户 2026-10-11 第 5 条）----
-    // 「角色的图标都放进表格内，节约空间也更高效」：改前图标在表**上方**那一整块里，
-    // 与表格中的关卡名/表现/金数/版本/贡献逐字重复一遍；现在信息只出现一次。
-    // ⚠️ 卡片仍然**等点开窗口时才建**（`teamSlot()` 只挂数据、`fillTeamCards()` 建：
-    // 一次性建出来会到 798 个 img，jsdelivr 实测丢请求 —— 见 `teamSlot()` 的注释）。
-    // ⚠️ 第一列的主值仍是**两级写法 + 版本小字**：`tipEnvLabel()` 按 `·` 拆行、
-    // `env.evidenceSeason` 写版本（来源与「不能拿什么顶替」见 `tipEnvLabel()` 的注释）。
-    const labelCell = text('span', 'tip-label-cell');
-    // ⚠️ 关卡名走**三级兜底** `meta.label → env.envLabel → env.id`，与 v4.6.77 给
-    // 「最佳证据的队伍」那块加的是同一条链：`frontierEnvMeta()` 查的是顶层
-    // `frontierEnvs[].label`，一旦那份数据没到（或改口径时被省掉），只读它就会退回
-    // `env.id`，窗口里立刻印出 `aa/plight` / `as` / `moc` —— 用户 2026-10-11 截图报的
-    // 「这些英语简称我没要求添加」就是这么来的。v4.6.79 把卡片搬进表格时，那条兜底
-    // 跟着被删的函数一起没了（实测：只读 meta 时关卡名就是英文 id），所以这里补回来。
-    // `tools/check-advice-layout.mjs` 的 `stageNameCnOk` 仍然盯着「必须含汉字」。
-    labelCell.appendChild(tipEnvLabel(
-      meta?.label || env.envLabel || env.id, env.evidenceSeason,
-    ));
-    // 来源视频（用户 2026-10-14 第 6 条）随 `env` 一起交给队伍槽（见 `teamSlot()`）。
-    const teamSlotNode = teamSlot(env.members, env.video);
-    if (teamSlotNode) labelCell.appendChild(teamSlotNode);
+  const env = (unit.envs || [])[0];
+  if (!env) return null;
+  const versions = Array.isArray(env.versions) ? env.versions : [];
+  // 按需载荷没拿到时给一句实话，不要画一张空表。
+  if (!versions.length) {
+    return text('div', 'muted small advice-source-note',
+      '逐版本明细未展开（按需加载失败）：重开这个窗口会再试一次。');
+  }
+  const weightSum = versions.reduce((n, v) => n + (Number(v.weight) || 0), 0);
+  const rows = versions.map((v) => {
+    const part = Number(v.costPart) || 0;
+    const weight = Number(v.weight) || 0;
+    const share = weightSum > 0 ? (part * weight) / weightSum : 0;
+    // ⚠️ 精简载荷里 env 只有 `id`（`aa|plight`），没有 mode/stage —— 从 id 现拆，
+    //    不要指望 `env.mode` 存在（`slimFrontierUnit` 刻意不下发它）。
+    const [envMode, envStage] = String(env.id || '').split('|');
+    const avText = metricValueTextOf(envMode, envStage || '', Number(v.actionValue))
+      || '—';
     return [
-      labelCell,
-      // 权重 / 版本两列**保留** `×`：它们只有系数、没有原始量，乘号不连接任何东西，
-      // 而且它正是「这是一枚乘数」的提示，与抽卡方案浮层的权重列写法保持一致。
-      `×${formatWeight(f.weight)}`,
-      // 2026-10-11：档位与行动值合并成**一列「表现」** —— 主值写游戏内量纲
-      // （`0T` / `行动值 285`），副值写合并后的系数。原始量仍保留在浮层里，
-      // 因为它回答「凭什么给这个系数」。
-      tipFactor(perfLabelOf(meta, env, f), `（${factorText(f.perfFactor)}）`),
-      // 金数那一列（用户 2026-10-11 第 2、3 条）：
-      //   · 除号从 `÷` 改成**斜杠 `/`**（用户原话「金数的符号改为斜杠，表示除以」）；
-      //   · **0 金通关**（隐金后有效队伍金数 = 0）不写 `分母/0`（那是无意义的），
-      //     改成写「0 金」+ 那一枚固定倍率 —— 它就是 `frontierZeroGoldBonus`（×1.2）；
-      //   · **被封顶**时补一个「封顶」字样：主值是原始两个金数（`7/1`）、副值是被封顶后的
-      //     倍数（`1.00`），不标一下读者会以为「7 除以 1 怎么会是 1.00」（实测末日幻影 4.3
-      //     就是这一格）。标了之后这一列每一格都能自圆其说。
-      f.costFactor === null
-        ? tipFactor('—')
-        : (Number(f.cost) === 0
-          ? tipFactor('0 金', `（×${factorText(f.costFactor)}）`)
-          : tipFactor(
-            `${f.minCost}/${f.cost}`,
-            Number(f.minCost) > Number(f.cost)
-              ? `（${factorText(f.costFactor)} 封顶）`
-              : `（${factorText(f.costFactor)}）`,
-          )),
-      f.seasonFactor === null ? '—' : `×${factorText(f.seasonFactor)}`,
-      tipChain(chain, contribution),
+      text('span', 'tip-label-cell', String(v.season)),
+      avText,
+      Number.isFinite(Number(v.cost)) ? `${Number(v.cost)} 金` : '—',
+      part.toFixed(1),
+      `×${formatWeight(weight)}`,
+      tipChain([part.toFixed(1), `×${formatWeight(weight)}`], `+${share.toFixed(1)}`),
     ];
   });
-  const box = text('span', 'advice-score-split');
-  // ⚠️ 2026-10-17（配装口径，用户「走 A + D」）：`unit.total` 里多乘了一个
-  //    **整包自身金数系数**（`ownGoldFactor` = 该角色最便宜整包金数 ÷ 本整包金数 的 0.5 次方），
-  //    它不在下面那张逐关卡表里（它是**整包级**的常数，不是某一关的因子）。
-  //    所以必须印在标题行：否则「Σ逐关卡贡献」比「合计」小一截，读者会以为算错了
-  //    （`docs/功能要求.md` §7 第 4 条「数字必须可验算」）。
-  //    系数 = 1（这个整包就是该角色最便宜的那套）时不印，避免满屏「×1.00」。
   const ownFactor = Number(unit.ownGoldFactor ?? 1);
-  const ownRef = Number(unit.ownGoldRef);
-  // ⚠️ 分母必须是**隐金前**的金数：系数算的是 `(ownGoldRef ÷ rawGold)^q`，而 `gold`
-  //    是隐金后的。2026-10-17 第二轮修 —— 改前这里写的是 `unit.gold`，一开隐金就
-  //    「1 ÷ 0」「1 ÷ 1 = 1.000 但系数 0.577」（开满隐金实测 67/261 条对不上）。
-  //    旧服务端没有 `ownGold` 时退回 `gold`（会重新不一致，但不至于印出 undefined）。
-  const ownGold = Number(unit.ownGold ?? unit.gold) || 0;
   const ownPart = (Number.isFinite(ownFactor) && Math.abs(ownFactor - 1) > 1e-4)
-    ? ` × 整包系数 ${factorText(ownFactor)}`
-      + (Number.isFinite(ownRef) ? `（最便宜 ${ownRef} 金 ÷ 本整包 ${ownGold} 金）` : '')
-    : '';
+    ? ` × 整包系数 ${factorText(ownFactor)}` : '';
+  const box = text('span', 'advice-score-split');
   box.appendChild(text('span', 'advice-score-split-title',
-    '角色性价比来源：逐关卡「权重 × 100 × 表现 ×（该副本最便宜金数 / 这支队金数）× 跨版本发挥」'
-    + ownPart));
+    `角色性价比来源：逐版本「baseline / 本队金数 × 100」，再按版本权重加权平均${ownPart}`));
   box.appendChild(tipTable(
-    // 用户 2026-10-11 第 2 条：表头第一列原名「副本/关卡」，与下面第一列实际写的
-    // 内容（两级写法 + 版本小字 + 队伍图标）已经不一致了，用户点名改成**「关卡」**。
-    // ⚠️ 2026-10-17：第 2 列原名「权重」，与三分项表里的**抽卡权重**同名不同义
-    //    （那边印百分比、这边印 ×N），改叫「关卡权重」。与强度来源表同一处理。
-    ['关卡', '关卡权重', '表现', '金数', '跨版本发挥', '贡献'],
+    ['版本', '最佳成绩', '本队金数', '性价比分', '版本权重', '加权贡献'],
     rows,
-    // 合计只在多副本时给：一个副本时它就是那一列本身，再写一行纯属重复。
-    // ⚠️ 标签写「性价比合计」而不是「合计」：这个窗口里上面那张表的合计是**角色得分**，
-    // 这张只是其中一个分项（写「合计」读者会拿它去对徽标上的数）。
-    envs.length > 1
-      ? ['性价比合计', '', '', '', '', `+${packScoreText(unit.total)}`] : null,
-    // 主表打 `is-source`：浮层里现在有两张表，探针（`check-advice-layout.mjs`）靠这个
-    // class 认准「逐关卡来源」这张，不会量到上面那张三个分项的表。
-    // 主表打 `is-source`：浮层里有**三张**表了（三个分项 / 强度来源 / 性价比来源），
-    // 探针（`check-advice-layout.mjs`）按这个 class 认准「性价比逐关卡来源」那一张
-    // —— 它的合计 = `unit.total`，探针就是这么断言的。强度那张**不带** `is-source`
-    // （它的合计是 `strengthTotal`，两者不是一个数）。
+    versions.length > 1
+      ? ['性价比合计', '', '', '', '', `+${Number(unit.costScore || 0).toFixed(1)}`]
+      : null,
+    // 探针按这个 class 认「性价比逐版本来源」这张（合计 = unit.costScore）。
     'is-source',
   ));
+  box.appendChild(text('div', 'muted small advice-source-note',
+    'baseline = 该版本打到判据线（行动值 <500 / 0T）的最便宜配置（0 金队不计）；'
+    + '本队金数越接近它，性价比分越高，封顶 100。'));
   return box;
 };
 
@@ -4096,65 +3930,22 @@ const frontierTip = (unit) => {
   // 脚注一律**单行**（用户要求「更简略」）：一条只说一件事，能省的定语全省。
   // ⚠️ 每条 ≤60 字有 CDP 断言钉着（`check-advice-layout.mjs` 的 notesShortOk）。
   const notes = [
-    // ⚠️ 2026-10-17 第二轮改：这条原来写的是「整包自身 N 金**不进公式**」——v4.6.118
-    //    加了整包系数之后那句话就成了假话（整包自己的金数正是系数的分母）。
-    //    现在如实写「折成系数」，与标题行那句「× 整包系数 N」对齐。
+    // ⚠️ 整包系数仍在（用户 2026-10-17「走 A + D」的配装口径）：它在**整包层面**乘一次，
+    //    不是某一版的因子 —— 标题行会写出它，否则逐版本贡献加起来对不上合计。
     //    数字用 `ownGold`（隐金前）：标题行那个除法用的就是它，两处必须同一个数。
-    // ⚠️ 除法一律写**斜杠**：`check-advice-layout.mjs` 有全窗口判据禁止出现 `÷`
-    //    （用户 2026-10-11「金数的符号改为斜杠」）。这一格在 v4.6.118 写成了「÷」，
-    //    一直红到 2026-10-18 第一次真跑 CDP 套件才抓出来。
+    //    ⚠️ 除法一律写斜杠：`check-advice-layout.mjs` 有全窗口判据禁止出现 ÷。
     `整包 = 角色 + 星魂档 + 光锥（含叠影）；整包自身 ${Math.max(0, Math.round(Number(unit.ownGold ?? unit.gold) || 0))} 金按「该角色最便宜 / 本整包」折成系数。`,
-    // ⚠️ 用户 2026-10-11 第二轮：**表现列现在只写实测成绩**（`285` / `0T` / `3852`），
-    // 量纲由副本决定，所以脚注要把「列里那个数是什么」和「系数怎么来的」一起说清。
-    // 曲线默认全程单调不增（v4.6.72 起满分线以内也有梯度）：
-    //   0 得 1.00 → 满分线 0.85 → 达标线 0.50 → 及格线 0.25 → 线外衰减到 0.05。
-    // ⚠️ v4.6.78 起**绝境单独一套**（用户第四轮）：满分线以内固定 1.00、达标线 0.60
-    // —— 上面那串默认值不再适用于它，`perfCurveText` 按副本现算，别在这里写死。
-    // 满分线 = 0 的副本（混沌 / 虚构 / 末日幻影）没有满分锚点，直接从 1.00 接达标线。
-    // ⚠️ 这条脚注有 **60 字硬上限**（`notesShortOk`），所以曲线说明只列「档位 系数」对。
-    `表现：列里是实测成绩，系数按 ${perfCurveText(bestMeta)}。`,
-    // 不写「本期 N 金」：多副本时每个副本各有一个最便宜金数，写在脚注里只会和表里的
-    // `1÷2`、`7÷9` 打架（实测悬停「千冶•刃」时脚注说 7 金、第二行却是 1÷2）。
-    // 「该版本」三个字不能省：分母是**那一版自己**的最便宜金数（v4.6.63 起）。
-    // ⚠️ 用户 2026-10-11 第 3 条改了两件事，这条脚注必须同时说清（它有 **60 字硬上限**，
-    // `check-advice-layout.mjs` 的 `notesShortOk` 钉着，所以只能压到最短）：
-    //   · 除号改写成**斜杠**（用户第 2 条：「金数的符号改为斜杠，表示除以」）；
-    //   · 金数项**封顶 ×1**，0 金通关拿固定 **×1.2**（用户第 3 条原话：「倍数封顶 1.00，
-    //     使用 0 金通关额外获得 1.2 的倍率（对所有关卡生效）」）。
-    //     封顶之前这一列能出现 `7/1 = 7.00`（末日幻影 4.3），与「越接近 ×1 越强」自相矛盾。
-    '金数 = 该版本最便宜的配置 / 这支队伍，封顶 ×1；0 金通关 ×1.2。',
-    // 用户 2026-10-10 第 6 轮：那一栏原名「版本」太抽象（会被当成左边的版本权重）。
-    // ⚠️ **2026-10-15 起口径变了**（用户：「最佳证据会受到跨版本发挥的削减，因此还是
-    // 新版本新配队更强」）：「最好的那一版」从「跨版本原始分最高的那次」改成「**版本
-    // 最新**的那一次成绩」（与强度来源表同一口径）。所以这一列不再恒 ≤ 1：
-    //   * `< 1` = 缺投稿的版本被按 0 分摊薄（典型：新角色只有一两版有成绩）；
-    //   * `> 1` = 旧版本的成绩仍在把加权平均往上抬（典型：老常客，当前版本金数水位高）。
-    //   `1.00` 表示这一版的成绩就是各版本的加权平均水平。
-    // ⚠️ v4.6.78 删掉了后半句「非前沿投稿按质量梯度估算」：前沿池改成**全部成绩**之后，
-    // 「有成绩但没进池」这种版本不存在了（估算机器整台删除）。这条脚注有 ≤60 字上限，
-    // 改动必须同步 `tools/check-advice-layout.mjs` 的 `NOTE_EXACT`。
-    // ⚠️ 除号写成 `/`：`check-advice-layout.mjs` 有一条「浮层正文里不许出现 ÷」的判据
-    //    （`feat/level-icons-cost-cap` 那一轮加的）。
-    '跨版本发挥 = 各版本加权平均 / 最新版那次成绩；小于 1 被摊薄，大于 1 是旧版抬分。',
-    // 用户 2026-10-10 第 8 条给了整句：「最近 7 个版本按 2:2:2:1:1:1:1 加权，未上线版本
-    // 不参与加权」。⚠️ 版数一律**跟着数据走**（版数取 `versionWindow`、比例取
-    // `versionRatioText`，兜底 6 版 = 当前 `VERSION_WEIGHTS` 的长度）—— 只有「未上线
-    // 版本不参与加权」这句是固定的口径，其余照用户原话。
+    // v4.6.144（整链切 v2）：这条替掉了 v1 的「封顶 ×1、0 金通关 ×1.2」——
+    // v2 的性价比就是 baseline / 本队金数（封顶 100），没有倍率、也没有跨版本残差。
+    // ⚠️ 措辞避开「满分 / 达标 / 及格」（用户 2026-10-10 点名，`herta-test` 有源码判据）。
+    '金数 = 该版本打到判据线的最便宜配置 / 本队金数，封顶 100；0 金队给 100。',
+    // 版本加权那句仍然成立（§3.5：逐版本加权、登场规则不变）。
     `最近 ${bestMeta?.versionWindow || 6} 个版本按 ${versionRatioText} 加权，未上线版本不参与加权。`,
-    // ⚠️ 用户 2026-10-11 缺陷 5：**新老角色的尺子不同**必须让读者看得见。
-    // 「早于登场 → 不参与平均」让新角色只按**它唯一那一版**算（近似单点最大值），
-    // 而老角色是多版加权平均（被没上榜的版本拖低）。两者混在一张榜上时，
-    // 「观测 1 版」的条目天然偏高（实测观测 1 版的 max=80，观测 7 版的 p50≈30）。
-    //
-    // 按用户口径**不改算法**（「不罚新角色」是第 6 条的明确要求，向均值收缩会与之冲突），
-    // 而是把证据基础摆出来，让读者自己判断这个分数的可信度。
+    // 证据基础（新老角色尺子不同）仍然成立：登场前的版本不参与平均。
     `实测证据 ${evidenceUnits} 个（副本×版本）；证据越少，分数波动越大。`,
     '同队成员必然同分（分子分母都只来自队伍）；投稿条数不累加；与你的角色池无关。',
-    // ⚠️ 用户 2026-10-13 第 1、2 条之后，这个窗口里有**两类**权重同时在起作用，
-    // 所以这句必须说清分工（改前只说「这里的权重是关卡权重那一类」）。
-    // ⚠️ 2026-10-20：「三个分项」→「两个分项」—— 泛用性已从角色得分里删掉，
-    //    再写三个就是假话（读者会去找第三个分项在哪）。
-    '关卡权重决定哪些副本算数；抽卡权重决定两个分项怎么加权。',
+    // 单关卡之后「关卡权重」只剩开关语义（2026-10-18 的 5 选 1 + v4.6.144 的单关卡进榜）。
+    '关卡选择决定算哪一关；抽卡权重决定两个分项怎么加权。',
   ];
   // 「最佳证据的队伍」那一块**已删除**（用户 2026-10-11 第 5 条「图标都放进表格内」）：
   // 队伍卡片现在长在表格第一格里（见 `costSourceBlock()` 的 `labelCell`），关卡信息因此
@@ -4185,7 +3976,7 @@ const frontierTip = (unit) => {
     // （与强度来源表同一口径），所以这一列可 `< 1`（缺投稿摊薄）也可 `> 1`（旧版抬分）。
     // ⚠️ 这条等式描述的是**「性价比」那一项的来源表**（现在收在它那一行的折叠块里），
     // 不是上面的角色得分 —— 所以开头写明「性价比分项」。
-    eq: '性价比分项 = 副本权重 × 100 × 表现 ×（该副本最便宜金数 / 这支队金数）× 跨版本发挥',
+    eq: '性价比分项 = 逐版本 100 × baseline（该版本打到判据线的最便宜配置）/ 本队金数，再按版本权重加权平均',
     // ⚠️ 用户 2026-10-13 第 8 条之后这个窗口里**只剩上面那一张**（三个分项）表：
     // 强度表 / 性价比逐关卡表 / 泛用性名单三块都收进了它下面各分项行里的就地折叠块
     // （`scoreBreakdownTable()` 的 `tipScoreDetails`，**默认全部收起**）。窗口正文因此
@@ -4488,15 +4279,12 @@ const teamPlanTip = (row, plan) => {
     //    ⚠️ `avSource`（行动值前沿池）那条的取值**不是**角色总榜那一列，而是本队自己
     //    各关行动值加权（分母对「比本队打过的任何一关都更重」的缺关卡才计 0），分开写。
     (row.avSource
-      ? '队伍强度 = **本队自己的行动值**（绝对 0~100）：逐关卡取这支队**这一关自己的行动值**'
-        + '（同一关里取最快的一次），按「0 行动值 = 100、其余按判据线曲线」折算成该副本强度，'
-        + '再按你设的关卡权重加权；跳过的**更重**关卡按 0 计进分母 —— '
+      ? '队伍强度 = **本队自己的行动值**（绝对 0~100）：取这支队在**这一关**最好的行动值，'
+        + '按 100 ×（1 − 行动值/500）折算（轮次型 100 /（轮次+1））—— '
         + '所以**行动值越低越高**，**与金数、与你有多少钱无关**。'
       : '队伍强度 = **角色总榜那一列的强度分**（绝对 0~100，与总榜同一把尺子）：'
-        + '逐关卡取**这一关最佳证据那一支队自己的行动值**（同一支队里取最快的一次，'
-        + '旧版本的成绩不再压过新版本），按「0 行动值 = 100、其余按判据线曲线」折算成该副本强度，'
-        + '再按你设的关卡权重加权（缺副本按 0 计）—— 所以**行动值越低越高**，'
-        + '**与金数、与你有多少钱无关**。')
+        + '取这一关最好的一次投稿，按 100 ×（1 − 行动值/500）折算（轮次型 100 /（轮次+1））——'
+        + '所以**行动值越低越高**，**与金数、与你有多少钱无关**。')
     + `三个系数来自「抽卡权重」（强度 ${(draw.strength * 100).toFixed(0)}% / `
     + `性价比 ${(draw.cost * 100).toFixed(0)}% / 泛用性 ${(draw.versatility * 100).toFixed(0)}%），`
     + '改它不用重算数据集。',

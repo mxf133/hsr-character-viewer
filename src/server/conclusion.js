@@ -502,6 +502,16 @@ const slimFrontierUnit = (unit, index = 0, maxEnvs = null, withVideo = false) =>
       // ⚠️ 键名**不是** `strength`：那是 v4.6.87 被撤销的字段名，回归测试盯着它别复活。
       envStrength: env.envStrength ?? null,
       envStrengthValue: env.envStrengthValue ?? null,
+      /**
+       * ⚠️ v4.6.144：**v2 逐版本明细（`versions`）刻意不在这里下发**。
+       *
+       * 实测：200 条 × 5 版 × 6 字段会把 `/conclusion` 从 660 KB 顶到 **738 KB**，
+       * 直接打穿 `e2e-test.mjs` 的硬上限。而详情窗口打开时**本来就会**取
+       * `/api/archive/packs?char=…`（补队友名单与来源视频），那一份的
+       * `slimCharacterPack()` 已经带 `versions`。
+       * 所以这里不发，`enrichTipDetail()` 的 `needEnvs` 多看一眼「有没有 versions」
+       * 就会去补 —— 效果一样，载荷零增长。
+       */
       // 该副本里**最好的那一版**的表现分（0~100）。⚠️ 新口径下强度**不再跨版本平均**，
       // 所以它不再是「跨版本发挥」的分母；留着只为兼容旧载荷的消费方。
       envStrengthBest: env.envStrengthBest ?? null,
@@ -649,6 +659,17 @@ const slimCharacterPack = (unit, i18n, maps) => ({
     // 与 `slimFrontierUnit` 的 env 投影**等价**（面板这条路上界面的「来源」表也是现算的，
     // 少一个字段不会报错、只会静默少一列或算出 > 1 的因子 —— 见下面 `seasonMinCost` 那段）。
     envStrengthBest: env.envStrengthBest ?? null,
+    // v2 逐版本明细（v4.6.144）：与 `slimFrontierUnit` 的那一份**必须等价** ——
+    // 详情窗口打开时 `enrichTipDetail` 会用这份载荷**整份替换** `unit.envs`，
+    // 漏了它版本表就会突然变空。
+    versions: (env.versions || []).map((v) => ({
+      season: v.season ?? null,
+      weight: v.weight ?? null,
+      actionValue: v.actionValue ?? null,
+      cost: v.cost ?? null,
+      strength: v.strength ?? null,
+      costPart: v.costPart ?? null,
+    })),
     // 新强度口径（2026-10-14）要的同一批字段 —— 与 `slimFrontierUnit` 的 env 投影**必须
     // 逐字段等价**（那两条接口会互相整份替换 `unit.envs` 再重画强度来源表）。
     weight: env.weight ?? null,

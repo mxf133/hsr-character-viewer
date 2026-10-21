@@ -1077,11 +1077,14 @@ check('强度详情窗口：投入项与单调包络的文案都不许回来（�
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1 ');
   const live = stripComments(src.slice(from, to));
-  assert.ok(live.includes('逐关卡的第二档上限'),
-    '逐关卡的第二档上限（90）必须在详情里写清楚 —— 它才是「0 行动值才满分」的实现');
+  // v4.6.144「整链切 v2」：详情表改成逐**版本**给分，强度是线性的 100 ×（1 − 行动值/500）。
+  // v1 的「逐关卡第二档上限 90」「顶格档」随两档曲线一起退役，换成新公式的护栏。
+  assert.ok(live.includes('100 ×（1 − 行动值/500）'),
+    'v2 的线性强度公式必须写在详情里（100 ×（1 − 行动值/500））');
   assert.ok(!live.includes('第二档天花板'),
     '整维 90 天花板已删除（2026-10-18），它的文案不许回来');
-  assert.ok(live.includes('顶格档'), '顶格档的判据必须写清楚');
+  assert.ok(!live.includes('跨版本发挥'), 'v4.6.144 起没有「跨版本发挥」这一列');
+  assert.ok(!live.includes('关卡权重'), 'v4.6.144 起单关卡，详情表不再印「关卡权重」列');
   assert.ok(!/投入加成/.test(live), '投入项已删除，它的文案不许回来');
   assert.ok(!/这 5 分/.test(live), '投入维那一项已删除，文案不许回来');
   assert.ok(!/那 5 分/.test(live), '投入维那一项已删除，文案不许回来');
@@ -1323,12 +1326,12 @@ check('角色性价比是**配装口径**：同一个角色，更贵的整包性
   // 再归一。界面那句验算式要跟着 `power` 走，所以它必须进载荷。
   assert.equal(Number(ext.power), SCORING.costScorePower,
     `性价比刻度指数必须下发（期望 ${SCORING.costScorePower}，实际 ${ext.power}）`);
+  // v4.6.144：性价比分 = `total` 本身（0~100 的绝对刻度），不再「开方 + 全榜 min-max」。
+  // `frontierExtents` 仍下发只为旧载荷兼容，得分不再依赖它 —— 这里把这条钉死。
   for (const u of packs) {
-    const scaled = Math.pow(Math.max(0, Number(u.total) || 0), Number(ext.power));
-    const want = 100 * (scaled - ext.lo) / (ext.hi - ext.lo);
-    assert.ok(Math.abs((Number(u.costScore) || 0) - want) < 1e-3,
-      `${u.name} E${u.eidolon}：性价比得分必须 = 100 ×(√原始量 − lo)/(hi − lo)，`
-      + `期望 ${want.toFixed(4)}，实际 ${u.costScore}`);
+    assert.ok(Math.abs((Number(u.costScore) || 0) - (Number(u.total) || 0)) < 1e-3,
+      `${u.name} E${u.eidolon}：v2 的性价比分必须等于 total（不再 min-max），`
+      + `total=${u.total} costScore=${u.costScore}`);
   }
   // ---- v4.6.119：整包系数必须能按「下发出去的两个金数」复算出来 -------------------
   // 界面印的是「最便宜 X 金 ÷ 本整包 Y 金」。`gold` 是隐金后的，系数算的是隐金前的，
@@ -2499,11 +2502,14 @@ check('性价比总榜（frontierUnits）：只用黑塔网数据，不看角色
 
   // 权重：把混沌回忆权重拉高 → 分值等比放大，排序不变
   const heavier = run({ owned: new Set() }, { 'moc|': 8 });
+  // v4.6.144 起总榜是单关卡：关卡权重只剩「这一关算不算数」的开关语义，
+  // 从默认值调到 8 不再等比放大分值（总分 = 该关的 0~100 加权平均，权重约掉）。
   const starHeavy = heavier.frontierUnits.find((u) => u.name === 'Star');
-  assert.ok(starHeavy.total > star.total,
-    `权重调大后分值应变大：${star.total} → ${starHeavy.total}`);
+  assert.ok(starHeavy, '权重 > 0 时该关仍在榜上');
+  assert.ok(Math.abs(Number(starHeavy.total) - Number(star.total)) < 1e-6,
+    `单关卡下权重不再放大分值：${star.total} → ${starHeavy.total}`);
   assert.deepEqual(heavier.frontierUnits.map((u) => u.key), a.frontierUnits.map((u) => u.key),
-    '整体等比放大不该改变排序');
+    '改权重不该改变排序');
   // 权重调成 0 = 这个副本不参与排序（允许 0，不再被静默退回默认值）
   const off = run({ owned: new Set() }, { 'moc|': 0 });
   assert.deepEqual(off.frontierUnits, [], '权重 0 时该副本的贡献为 0，榜面应为空');
@@ -2630,8 +2636,8 @@ check('性价比总榜：队伍金数相同时，用更多限定光锥的那支�
   const env = envFixture('aa|plight', [], {
     mode: 'aa', stage: 'plight', season: '4.5',
     frontierRows: [
-      { cost: 2, tier: 'perfect', members: coneTeam },
-      { cost: 2, tier: 'perfect', members: charTeam },
+      { cost: 2, tier: 'perfect', actionValue: 0, members: coneTeam },
+      { cost: 2, tier: 'perfect', actionValue: 0, members: charTeam },
     ],
   });
   const out = buildConclusion([env], { availability });
@@ -2734,13 +2740,15 @@ check('性价比总榜：版本权重 = 6:5:4:3:2:1（窗口 6 版、线性递�
   const rowsOf = (char, bestSeason) => seasons.map((season) => ({
     cost: season === bestSeason ? 2 : (season === '4.0' || season === '4.5' ? 4 : 3),
     tier: 'perfect',
+    // v2（v4.6.144）：强度/性价比都要真实行动值，夹具必须给成绩。
+    actionValue: 0,
     newestSeason: season,
     members: [{ char, eidolon: 2 }],
   }));
   // 每个版本一条 2 金陪跑 → 各版本 minCost 统一为 2，这样测出来的只是版本权重，
   // 不是版本间的金数水位差。
   const pacers = seasons.map((season) => ({
-    cost: 2, tier: 'perfect', newestSeason: season, members: [{ char: 'Pacer', eidolon: 0 }],
+    cost: 2, tier: 'perfect', actionValue: 0, newestSeason: season, members: [{ char: 'Pacer', eidolon: 0 }],
   }));
   const env = envFixture('aa|plight', [], {
     mode: 'aa', stage: 'plight', season: '4.5',
@@ -2760,7 +2768,7 @@ check('性价比总榜：版本权重 = 6:5:4:3:2:1（窗口 6 版、线性递�
     '权重 0 的版本是「不进窗口」，不是「早于登场」—— 不该被记成不参与平均');
   assert.equal(recent.envs[0].droppedSeasons, 0, '权重 0 的版本也不该被记成「无人使用算 0 分」');
   // 纸条上的算式：单版分 = 100 × (该版本最便宜金数 ÷ 这支队金数)，本例 minCost 恒为 2。
-  const perEnv = (u) => u.total / 10; // 绝境权重 10
+  const perEnv = (u) => u.total; // v2：total 已是 0~100 的加权平均
   const w = seasonWeights;
   const wSum = Object.values(w).reduce((n, v) => n + v, 0);
   // Recent：4.5 拿 2 金 → 100；4.0 → 4 金 → 50；其余三版各 3 金 → 66.67。
@@ -2812,10 +2820,10 @@ check('性价比总榜：早于「登场版本」的版本**不参与平均**（
   const seasons = ['4.4', '4.5'];
   const seasonWeights = { 4.5: 2, 4.4: 2 };
   const rows = [
-    { cost: 2, tier: 'perfect', newestSeason: '4.5', members: [{ char: 'Newbie', eidolon: 0 }] },
-    { cost: 2, tier: 'perfect', newestSeason: '4.5', members: [{ char: 'Veteran', eidolon: 0 }] },
-    { cost: 2, tier: 'perfect', newestSeason: '4.4', members: [{ char: 'Veteran', eidolon: 0 }] },
-    { cost: 2, tier: 'perfect', newestSeason: '4.4', members: [{ char: 'Filler', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.5', members: [{ char: 'Newbie', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.5', members: [{ char: 'Veteran', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.4', members: [{ char: 'Veteran', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.4', members: [{ char: 'Filler', eidolon: 0 }] },
   ];
   const env = envFixture('aa|plight', [], {
     mode: 'aa', stage: 'plight', season: '4.5', frontierRows: rows,
@@ -2828,7 +2836,7 @@ check('性价比总榜：早于「登场版本」的版本**不参与平均**（
   const newbie = out.frontierUnits.find((u) => u.name === 'Newbie');
   const vet = out.frontierUnits.find((u) => u.name === 'Veteran');
   assert.ok(newbie && vet, '两个整包都应进榜');
-  const perEnv = (u) => u.total / 10; // 绝境权重 10
+  const perEnv = (u) => u.total; // v2：total 已是 0~100 的加权平均
 
   // ---- Newbie：登场 4.5，4.4 早于它登场 → 那一版**不参与** ----
   assert.equal(newbie.envs[0].absentSeasons, 1, 'Newbie 缺的 4.4 早于登场 → 记 1 个「不参与」');
@@ -2865,8 +2873,8 @@ check('性价比总榜：早于登场的版本不参与平均时，分母**只�
   const seasons = ['4.4', '4.5'];
   const seasonWeights = { 4.5: 2, 4.4: 2 };
   const rows = [
-    { cost: 2, tier: 'perfect', newestSeason: '4.5', members: [{ char: 'Late', eidolon: 0 }] },
-    { cost: 2, tier: 'perfect', newestSeason: '4.4', members: [{ char: 'Filler', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.5', members: [{ char: 'Late', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.4', members: [{ char: 'Filler', eidolon: 0 }] },
   ];
   const env = envFixture('aa|plight', [], {
     mode: 'aa', stage: 'plight', season: '4.5', frontierRows: rows,
@@ -2882,8 +2890,8 @@ check('性价比总榜：早于登场的版本不参与平均时，分母**只�
   assert.equal(late.envs[0].absentSeasons, 1, '4.4 早于登场 → 记 1 个「不参与」');
   // 实测那版 100（2 金 = minCost）→ 分母只有它自己的权重 2 → 200 ÷ 2 = 100。
   // 若误把「不参与」当成「算 0 分」，分母会是 2+2=4 → 50。
-  assert.ok(Math.abs(late.total / 10 - 100) < 0.01,
-    `不参与的版本不该进分母 → 应为 100，实际 ${(late.total / 10).toFixed(2)}`);
+  assert.ok(Math.abs(late.total - 100) < 0.01,
+    `不参与的版本不该进分母 → 应为 100，实际 ${(late.total).toFixed(2)}`);
 });
 
 check('性价比总榜：已登场却缺证据的版本**算 0 分**（权重仍进分母）（用户 2026-10-10）', () => {
@@ -2911,10 +2919,10 @@ check('性价比总榜：已登场却缺证据的版本**算 0 分**（权重仍
   // Widely 两版的实测分**完全一样**（都是 100）—— 这样「算 0 分」与「中性补分」在
   // Widely 身上看不出差别，分差只可能来自 Sparse 那一侧，判据才咬得住。
   const rows = [
-    { cost: 2, tier: 'perfect', newestSeason: '4.5', members: [{ char: 'Widely', eidolon: 0 }] },
-    { cost: 2, tier: 'perfect', newestSeason: '4.4', members: [{ char: 'Widely', eidolon: 0 }] },
-    { cost: 2, tier: 'perfect', newestSeason: '4.5', members: [{ char: 'Sparse', eidolon: 0 }] },
-    { cost: 2, tier: 'perfect', newestSeason: '4.4', members: [{ char: 'Filler', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.5', members: [{ char: 'Widely', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.4', members: [{ char: 'Widely', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.5', members: [{ char: 'Sparse', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.4', members: [{ char: 'Filler', eidolon: 0 }] },
   ];
   const env = envFixture('aa|plight', [], {
     mode: 'aa', stage: 'plight', season: '4.5', frontierRows: rows,
@@ -2928,7 +2936,7 @@ check('性价比总榜：已登场却缺证据的版本**算 0 分**（权重仍
   const widely = out.frontierUnits.find((u) => u.name === 'Widely');
   const sparse = out.frontierUnits.find((u) => u.name === 'Sparse');
   assert.ok(widely && sparse, '两个整包都应进榜');
-  const perEnv = (u) => u.total / 10; // 绝境权重 10
+  const perEnv = (u) => u.total; // v2：total 已是 0~100 的加权平均
 
   assert.equal(widely.envs[0].droppedSeasons, 0, '两版都有观测 → 没有「无人使用」的版本');
   assert.equal(sparse.envs[0].droppedSeasons, 1, 'Sparse 缺 4.4 → 记 1 个「无人使用」');
@@ -2975,10 +2983,10 @@ check('性价比总榜：池 = 全部成绩（不再按成本截断），最佳�
   const seasonWeights = { 4.5: 2, 4.4: 2 };
   const rows = [
     // 4.5 这一版：本版最便宜的完美成绩是 Filler 的 1 金 → Pool 那条 2 金只拿 1÷2 = 0.5。
-    { cost: 1, tier: 'perfect', newestSeason: '4.5', members: [{ char: 'Filler', eidolon: 0 }] },
-    { cost: 2, tier: 'perfect', newestSeason: '4.5', members: [{ char: 'Pool', eidolon: 0 }] },
+    { cost: 1, tier: 'perfect', actionValue: 0, newestSeason: '4.5', members: [{ char: 'Filler', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.5', members: [{ char: 'Pool', eidolon: 0 }] },
     // 4.4 这一版：更贵（3 金）但它是本版最便宜的完美成绩 → 拿满 3÷3 = 1.0。
-    { cost: 3, tier: 'perfect', newestSeason: '4.4',
+    { cost: 3, tier: 'perfect', actionValue: 0, newestSeason: '4.4',
       members: [{ char: 'Pool', eidolon: 0 }, { char: 'Mate', eidolon: 0 }] },
   ];
   const env = envFixture('aa|plight', [], {
@@ -3000,7 +3008,7 @@ check('性价比总榜：池 = 全部成绩（不再按成本截断），最佳�
 
   // ② 加权平均 = (50×2 + 100×2) ÷ 4 = 75；分母 = 最新版那次 = 50 → 因子 1.5（> 1 合法：
   // 4.4 的满分记录把加权平均抬到了最新版成绩之上 —— 正是「旧版抬分」的形态）。
-  const perEnv = pool.total / 10;                       // 绝境权重 10
+  const perEnv = pool.total; // v2：total 已是 0~100 的加权平均
   assert.ok(Math.abs(perEnv - 75) < 0.01,
     `应按 (50×2 + 100×2) ÷ 4 = 75 计分，实际 ${perEnv.toFixed(2)}`);
   const meta = (out.frontierEnvs || []).find((e) => e.id === 'aa|plight');
@@ -3038,8 +3046,8 @@ check('性价比总榜：登场版本必须**按副本取**（四个副本各用
   const seasons = ['4.5', '4.6'];
   const seasonWeights = { 4.6: 2, 4.5: 2 };
   const rows = [
-    { cost: 2, tier: 'perfect', newestSeason: '4.6', members: [{ char: 'Newbie', eidolon: 0 }] },
-    { cost: 2, tier: 'perfect', newestSeason: '4.5', members: [{ char: 'Filler', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.6', members: [{ char: 'Newbie', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.5', members: [{ char: 'Filler', eidolon: 0 }] },
   ];
   const env = envFixture('aa|plight', [], {
     mode: 'aa', stage: 'plight', season: '4.6', frontierRows: rows,
@@ -3057,8 +3065,8 @@ check('性价比总榜：登场版本必须**按副本取**（四个副本各用
   assert.ok(wrong, '整包应进榜');
   assert.equal(wrong.envs[0].droppedSeasons, 1,
     '用全局值 4.5 比本副本窗口 → 会误判 4.5 为「无人使用」（这正是那个 bug）');
-  assert.ok(Math.abs(wrong.total / 10 - 50) < 0.01,
-    `误判时分数应是 100×2÷4 = 50，实际 ${(wrong.total / 10).toFixed(2)}`);
+  assert.ok(Math.abs(wrong.total - 50) < 0.01,
+    `误判时分数应是 100×2÷4 = 50，实际 ${(wrong.total).toFixed(2)}`);
 
   // ② 带上 byMode（本副本说 4.6）→ 4.5 变成「早于登场 → 不参与」，不再冤枉它。
   const right = build({
@@ -3071,8 +3079,8 @@ check('性价比总榜：登场版本必须**按副本取**（四个副本各用
   assert.equal(right.envs[0].absentSeasons, 1, '本副本里 4.5 早于登场 → 记 1 个「不参与」');
   assert.equal(right.envs[0].bornSeason, '4.6', '登场版本要取本副本的值');
   // 只剩 4.6 一版实测（权重 2）→ 200 ÷ 2 = 100。
-  assert.ok(Math.abs(right.total / 10 - 100) < 0.01,
-    `按本副本编号应得 100（不再被冤枉），实际 ${(right.total / 10).toFixed(2)}`);
+  assert.ok(Math.abs(right.total - 100) < 0.01,
+    `按本副本编号应得 100（不再被冤枉），实际 ${(right.total).toFixed(2)}`);
   assert.ok(right.total > wrong.total, '按副本取登场版本必须让这个整包的分回升');
 });
 
@@ -3092,7 +3100,7 @@ check('性价比总榜：只在「权重 0」的版本上有观测的整包不�
   // 4.5 权重 2、4.4 权重 0：Ghost 只有 4.4 那一条证据。
   const seasonWeights = { 4.5: 2, 4.4: 0 };
   const rows = [
-    { cost: 2, tier: 'perfect', newestSeason: '4.4', members: [{ char: 'Ghost', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.4', members: [{ char: 'Ghost', eidolon: 0 }] },
   ];
   const env = envFixture('aa|plight', [], {
     mode: 'aa', stage: 'plight', season: '4.5', frontierRows: rows,
@@ -3133,9 +3141,9 @@ check('性价比总榜：金数项的分母是「**本版本**最便宜」（不
   const seasonWeights = { 4.5: 2, 4.4: 1 };
   const rows = [
     // 4.4（老版、权重 1）：最省就是 2 金。
-    { cost: 2, tier: 'perfect', newestSeason: '4.4', members: [{ char: 'Old', eidolon: 0 }] },
+    { cost: 2, tier: 'perfect', actionValue: 0, newestSeason: '4.4', members: [{ char: 'Old', eidolon: 0 }] },
     // 4.5（新版、权重 2）：这一期全场最省也要 4 金。
-    { cost: 4, tier: 'perfect', newestSeason: '4.5', members: [{ char: 'Fresh', eidolon: 0 }] },
+    { cost: 4, tier: 'perfect', actionValue: 0, newestSeason: '4.5', members: [{ char: 'Fresh', eidolon: 0 }] },
   ];
   const env = envFixture('aa|plight', [], {
     mode: 'aa', stage: 'plight', season: '4.5', frontierRows: rows,
@@ -3161,31 +3169,23 @@ check('性价比总榜：金数项的分母是「**本版本**最便宜」（不
   assert.deepEqual(meta.minCostBySeason, { '4.4': 2, '4.5': 4 }, '逐版本最便宜金数要一并下发');
 });
 
-check('贡献值来源：因子乘回去必须等于榜上的分（界面按它列「来源」）', () => {
-  // 用户 2026-10 要求「在性价比界面列出贡献值来源」。界面不自己写公式，而是调
-  // `frontierFactorsOf()` 把一条贡献拆成 权重 / 档位 / 行动值 / 金数 / 版本 五个因子；
-  // 这条用例钉住两件事：① 因子取的就是算分用的那几个数与**同一对行动值分位边界**；
-  // ② 乘回去精确等于榜上的分（拆错了界面就会说谎，而且是没人能一眼看出来的那种）。
+check('贡献值来源：v2 版本表加权回去必须等于两个分项（界面按它列「来源」）', () => {
+  // v4.6.144「整链切 v2」之后，详情窗口不再有「关卡权重 / 跨版本发挥」两列，
+  // 改成逐**版本**列：成绩 → 强度分 / 性价比分 → 按版本权重加权。
+  // 这条用例钉住两件事：① 版本表选的是「该版本综合分最高的那条投稿」；
+  // ② 表里的数按权重加权**精确等于**榜上的两个分项（拆错了界面就会说谎）。
   const availability = { characters: { Lead: { rarity: 5, limited: true } }, lightCones: {} };
   const members = [{ char: 'Lead', eidolon: 0 }];
   const seasons = ['4.4', '4.5'];
   const seasonWeights = { 4.5: 2, 4.4: 1 };
   const rows = [
-    // 4.5 版（权重 2）：最便宜那条（2 金）成绩最差（行动值 480，落在达标线内 →
-    // 绝境自 v4.6.78 起的曲线：300~500 段由 1.00 线性降到 0.60，480 → 0.64）。
     { cost: 2, tier: 'perfect', actionValue: 480, newestSeason: '4.5', members },
-    // 这条才是「最佳证据」：3 金 / 行动值 150（满分线以内，权重固定 1.00）→ 分最高。
     { cost: 3, tier: 'perfect', actionValue: 150, newestSeason: '4.5', members },
     { cost: 4, tier: 'perfect', actionValue: 100, newestSeason: '4.5', members },
-    // 同一整包在旧版本（4.4）还有一条更差的证据 → 版本项（加权平均）不等于 1。
-    // ⚠️ 用户 2026-10-10 第 5 轮起金数项按版本归一，所以 4.4 这一版的分母是
-    // **它自己**的最便宜金数 5（不是 4.5 的 2）。
     { cost: 5, tier: 'perfect', actionValue: 490, newestSeason: '4.4', members },
   ];
   const env = envFixture('aa|plight', [], {
     mode: 'aa', stage: 'plight', season: '4.5', frontierRows: rows,
-    // ⚠️ 用户 2026-10-11 缺陷 3 起，表现分以**该副本的判据线**为标尺（不再是分位归一）。
-    // `envFixture` 默认给 moc 的 `{0,2,4}`，与绝境成绩量纲不符 → 必须显式给绝境的线。
     tierLines: { perfect: 300, target: 500 },
   });
   const out = buildConclusion([env], {
@@ -3195,39 +3195,38 @@ check('贡献值来源：因子乘回去必须等于榜上的分（界面按它�
   const unit = out.frontierUnits.find((u) => u.name === 'Lead');
   assert.ok(unit, '整包应进榜');
   const meta = out.frontierEnvs.find((e) => e.id === 'aa|plight');
-  // ① 判据线必须随副本元数据下发（表现分靠它现算，界面自己拼不出来）。
   assert.deepEqual(meta.tierLines, { perfect: 300, target: 500 },
     `判据线要一并下发，实际 ${JSON.stringify(meta.tierLines)}`);
-  assert.equal(meta.lowerIsBetter, true, '方向要一起下发（越大越好的副本要反过来归一化）');
-  const factors = frontierFactorsOf(unit.envs[0], meta);
-  // ② 最佳证据 = 3 金 / 行动值 150 那条（不是最便宜那条，也不是行动值最好那条）。
-  assert.equal(factors.cost, 3, '最佳证据应是 3 金那条');
-  assert.equal(factors.av, 150, '最佳证据的行动值应是 150');
-  // ⚠️ 用户 2026-10-11 缺陷 3：档位与行动值**合并**成单一 `perfFactor`
-  // （以判据线为标尺的连续曲线）。**第四轮起绝境单独一套**（`frontierPerfLineByEnv`，
-  // 工具 v4.6.78）：满分线以内固定 1.00、达标线 0.60。
-  //   行动值 150 < 满分线 300 → **1.00**（不再是 0.925 —— 那是有档内梯度那版的取值）。
-  assert.equal(factors.tierFactor, 1, '满分档的档位因子仍是 1（兼容字段，不再参与相乘）');
-  assert.ok(Math.abs(factors.perfFactor - 1) < 1e-9,
-    `行动值 150 在满分线以内 → 绝境表现分应为 1.00，实际 ${factors.perfFactor}`);
-  assert.ok(Math.abs(factors.costFactor - 2 / 3) < 1e-9,
-    `金数因子 = 该副本最便宜 2 金 ÷ 本队 3 金，实际 ${factors.costFactor}`);
-  // 版本项：4.5 那版的最佳证据 = 100 × 1.00 × (2 ÷ 3) = 66.6667；
-  // 4.4 那版的分 = 100 × 0.62(表现：av 490 在 300~500 段，1.00 → 0.60 线性) × (5 ÷ 5) = 62.0 ——
-  // 加权 (2 × 66.6667 + 1 × 62.0) ÷ 3 = 65.1111，再 ÷ 66.6667 = 0.976667。
-  assert.ok(Math.abs(factors.seasonFactor - 0.976667) < 1e-5,
-    `版本因子应为 0.97667，实际 ${factors.seasonFactor}`);
-  // 算分本身也必须是这条曲线（只改函数、忘了给调用点传权重时，这里会红）：
-  // 旧默认曲线（满分线 0.85 / 达标线 0.50）算出来是 58.3611。
-  assert.ok(Math.abs(factors.score - 65.11111) < 1e-4,
-    `这一副本的分应是 65.1111（绝境新曲线），实际 ${factors.score}`);
-  // ③ 恒等式：合并后的因子乘回去 = 这一副本的分；再乘副本权重 = 「贡献」那一列。
-  const rebuilt = 100 * factors.perfFactor * (factors.costFactor ?? 1) * factors.seasonFactor;
-  assert.ok(Math.abs(rebuilt - factors.score) < 1e-9,
-    `因子乘回去必须等于这一副本的分（${rebuilt} vs ${factors.score}）`);
-  assert.ok(Math.abs(factors.value - factors.weight * factors.score) < 1e-9,
-    '贡献 = 副本权重 × 这一副本的分');
-  assert.ok(Math.abs(unit.total - factors.value) < 1e-3, '只有一个副本时总分 = 该副本贡献');
+  const versions = unit.envs[0].versions || [];
+  assert.equal(versions.length, 2, '版本表应有 4.5 / 4.4 两版');
+  const v45 = versions.find((v) => v.season === '4.5');
+  const v44 = versions.find((v) => v.season === '4.4');
+  // 4.5：三条候选按「强度 + 性价比（等权）」比 —— 3 金 / av 150 那条综合最高
+  // （4 + 100、70 + 66.67、80 + 50），与 v1 的「最佳证据」恰好同一条。
+  assert.equal(v45.cost, 3, '4.5 选中的应是 3 金那条');
+  assert.equal(v45.actionValue, 150, '行动值应是 150');
+  assert.ok(Math.abs(v45.strength - 70) < 1e-6,
+    `强度 = 100 × (1 − 150/500) = 70，实际 ${v45.strength}`);
+  assert.ok(Math.abs(v45.costPart - (2 / 3) * 100) < 1e-4,
+    `性价比 = baseline 2 / 3 金 × 100，实际 ${v45.costPart}`);
+  // 4.4：baseline = 5（本版唯一达标行），av 490 → 强度 2、性价比 100。
+  assert.ok(Math.abs(v44.strength - 2) < 1e-6,
+    `4.4 强度 = 100 × 0.02 = 2，实际 ${v44.strength}`);
+  assert.ok(Math.abs(v44.costPart - 100) < 1e-6,
+    `4.4 性价比 = 5/5 = 100，实际 ${v44.costPart}`);
+  // 加权：(70×2 + 2×1)/3 = 47.3333；(66.6667×2 + 100×1)/3 = 77.7778
+  assert.ok(Math.abs(unit.strengthScore - 47.3333) < 1e-3,
+    `强度加权平均应为 47.3333，实际 ${unit.strengthScore}`);
+  assert.ok(Math.abs(unit.costScore - 77.7778) < 1e-3,
+    `性价比加权平均应为 77.7778，实际 ${unit.costScore}`);
+  // ② 恒等式：版本表按权重加权 = 榜上的两个分项。
+  const wsum = versions.reduce((n, v) => n + (Number(v.weight) || 0), 0);
+  const sTable = versions.reduce((n, v) => n + v.strength * v.weight, 0) / wsum;
+  const cTable = versions.reduce((n, v) => n + v.costPart * v.weight, 0) / wsum;
+  assert.ok(Math.abs(sTable - unit.strengthScore) < 1e-3, '强度必须能从版本表加权复算');
+  assert.ok(Math.abs(cTable - unit.costScore) < 1e-3, '性价比必须能从版本表加权复算');
+  assert.equal(Object.prototype.hasOwnProperty.call(versions[0], 'seasonFactor'), false,
+    '版本表不该再带 seasonFactor（v2 没有这个残差）');
 });
 
 check('表现曲线：锚点落在判据线上、绝境满分线以内固定 1.00（用户 2026-10-11 第二 / 四轮）', () => {
@@ -3515,12 +3514,11 @@ check('性价比总榜：每个角色只出场一次，取它分数最高的那�
   // ⚠️ 2026-10-18 起环境级继承会往 E6 补一条「普通关」继承行（它自己没有普通关的投稿，
   //    从更便宜的 E2 借分），所以 `envs` 不再只含绝境那一关。断言改成「自己证据在绝境、
   //    普通关是继承来的」。
-  const own = only.envs.filter((e) => !e.inheritedEnv);
-  const borrowed = only.envs.filter((e) => e.inheritedEnv);
-  assert.deepEqual(own.map((env) => env.id), ['aa|plight'],
-    '自己的证据只在绝境那一关');
-  assert.ok(borrowed.length > 0 && borrowed.every((e) => e.id !== 'aa|plight'),
-    '普通关是继承来的（不是自己打出来的），且继承的分数来自更便宜的同角色整包');
+  // v4.6.144：总榜单关卡 —— 只有被选中的那一关进 `envs`，其余关卡的继承行
+  // （权重 0、贡献 0）不再合成噪音行。所以这里只剩绝境那一行。
+  assert.deepEqual(only.envs.map((env) => env.id), ['aa|plight'],
+    '单关卡：只保留绝境那一行（普通关权重 0，不参与总榜）');
+  assert.ok(only.envs.every((env) => !env.inheritedEnv), '这一行是它自己打出来的证据');
 });
 
 // ------------------------------------------------- 隐金设置（用户 2026-10-11）
@@ -3876,24 +3874,24 @@ check('两套副本权重相互独立：总榜权重只动总榜，方案权重�
     plan: out.units.map((u) => `${u.key}:${u.total.toFixed(6)}`),
   });
   const base = shape(run({}));
-  // ① 只给总榜权重 → 总榜变、方案一字不变
-  const onlyFrontier = shape(run({ frontierWeights: { 'moc|': 5 } }));
-  const fOnly = JSON.parse(onlyFrontier);
   const b = JSON.parse(base);
-  assert.notDeepEqual(fOnly.frontier, b.frontier, '总榜权重必须影响性价比总榜');
+  // ① 只给总榜权重 0 → 该关不进总榜、方案一字不变
+  //    （v4.6.144 起单关卡，权重是「算不算这一关」的开关，不是等比放大的系数）
+  const fOnly = JSON.parse(shape(run({ frontierWeights: { 'moc|': 0 } })));
+  assert.deepEqual(fOnly.frontier, [], '总榜权重 0 → 该关不进榜');
   assert.deepEqual(fOnly.plan, b.plan, '总榜权重不该影响抽卡方案');
-  // ② 只给方案权重 → 方案变、总榜一字不变
-  const onlyPlan = JSON.parse(shape(run({ weights: { 'moc|': 5 } })));
+  // ② 只给方案权重 0 → 方案空掉、总榜一字不变
+  const onlyPlan = JSON.parse(shape(run({ weights: { 'moc|': 0 } })));
   assert.deepEqual(onlyPlan.frontier, b.frontier, '方案权重不该影响性价比总榜');
   assert.notDeepEqual(onlyPlan.plan, b.plan, '方案权重必须影响抽卡方案');
-  // ③ 两套都给：各按各的倍数（总榜 ×7、方案 ×2，互不串味）
+  // ③ 两套都给：v4.6.144 起总榜只认「算不算这一关」，方案侧仍按自己的权重缩放。
   const both = JSON.parse(shape(run({ weights: { 'moc|': 2 }, frontierWeights: { 'moc|': 7 } })));
   // 注意键里本来就有冒号（`char:Star`）和竖线（整包键 `Star|E0|Big Cone|S1`），
   // 所以取的是**最后一段**而不是第 2 段。
   const pick = (list, key) => Number(list.find((row) => row.startsWith(`${key}:`)).split(':').pop());
   const baseStar = pick(b.frontier, 'Star|E0|Big Cone|S1');
-  assert.ok(Math.abs(pick(both.frontier, 'Star|E0|Big Cone|S1') / baseStar - 7) < 0.01,
-    '总榜那一套应当只吃 ×7');
+  assert.ok(Math.abs(pick(both.frontier, 'Star|E0|Big Cone|S1') - baseStar) < 1e-6,
+    '总榜是单关卡：权重 7 与默认同分（关卡权重只当开关）');
   const basePlanStar = pick(b.plan, 'char:Star');
   assert.ok(Math.abs(pick(both.plan, 'char:Star') / basePlanStar - 2) < 0.01,
     '方案那一套应当只吃 ×2');
@@ -4172,11 +4170,12 @@ check('⭐ 强度两档：打出 0 行动值 = 顶格档 100；没打出 = ≤ 9
     })], { availability });
     return out.frontierUnits.find((u) => u.name === 'Hero').envs[0].envStrength;
   };
-  assert.equal(strengthOf(0), 100, '0 行动值 → 顶格档，本副本强度 100');
-  assert.ok(strengthOf(1) <= SCORING.strengthSecondBandCap + 1e-9,
-    `av=1（没打出 0）应落第二档 ≤ ${SCORING.strengthSecondBandCap}，实际 ${strengthOf(1)}`);
-  // 「顶格 > 第二档」这条主序：0 行动值哪怕配到最贵，也强过只差一点的队伍。
-  assert.ok(strengthOf(0) > strengthOf(1), '顶格档必须严格高于任何第二档');
+  // v4.6.144「整链切 v2」：强度改成线性 100 × (1 − 行动值/500)，不再有「95 的第二档上限」。
+  // 0 行动值仍是唯一满分；av=1 → 99.8（差距变小是 v2 口径本身，不是回归）。
+  assert.equal(strengthOf(0), 100, '0 行动值 → 强度 100');
+  assert.ok(Math.abs(strengthOf(1) - 99.8) < 1e-6,
+    `av=1 → 100 × (1 − 1/500) = 99.8，实际 ${strengthOf(1)}`);
+  assert.ok(strengthOf(0) > strengthOf(1), '0 行动值必须严格最高');
 });
 
 check('⭐ 整维天花板已取消：非顶格档可以 > 90，100 仍只给顶格档（2026-10-18）', () => {

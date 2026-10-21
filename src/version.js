@@ -2585,6 +2585,18 @@
 //            `_probe-strength-gap.mjs`（90 天花板 / 缺副本 / 覆盖率修正）、
 //            `_probe-strength-why.mjs`（单角色逐副本 / 逐版本对比「现状行 vs 最快行」）、
 //
+//   v4.6.144 2026-10-21：**角色总榜整链切 v2**（`advice.js` 的 `frontierBoard`）。用户拍板
+//             「B（整链切 v2）」：① 强度改线性 `100 × (1 − 行动值/500)`（轮次型
+//             `100/(轮次+1)`），不再有「顶格档按金数扣分 / 第二档 95 × 曲线」；
+//             ② 性价比 = `100 × baseline(该版本) / 本队金数`，`costScore` 直接等于
+//             `total`（取消「开方 + 全榜 min-max」）；③ **单关卡**：`unit.envs` 只留
+//             「关卡选择」选中的那一关（全榜权重 0 的 env 行 565 → 0）；④ 详情两张来源表
+//             改成逐**版本**列，「关卡权重」「跨版本发挥」两列删除（v2 没有残差因子）。
+//             公式的**唯一实现**外迁到 `public/scripts/v2-score.js`（服务端 `gacha-score.js`
+//             反过来 import + re-export），方案侧 `avCandidates` 同步换同一把尺子。
+//             `/conclusion` 不带 `versions`（否则 660 KB → 738 KB），由按需载荷
+//             `/api/archive/packs` 带、`enrichTipDetail()` 补。
+//
 //   v4.6.143 2026-10-21：**安卓端 PWA**（分支 `feat/android-client`，原登 4.6.141；
 //             合并时 4.6.141 已被 `feat/character-detail-algo-fix` 占用并打 tag、
 //             4.6.142 已被 `feat/plan-best-season-score` 占用，按「跳过被并行分支
@@ -3696,7 +3708,7 @@
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.143';
+export const PROGRAM_VERSION = '4.6.144';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';

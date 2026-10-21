@@ -1,22 +1,20 @@
 // 强度口径的不变式。
 //
-// 2026-10-17 **晚**（本轮再改一次，用户原话：「强度得分应仅考虑强度（不考虑别的，因此
-// 低难副本普遍能拿满分）」）：
+// **v4.6.144「整链切 v2」**（角色总榜与抽卡方案同一套）：
 //
 //   ① 成本账：限定角色 E0S0 = 1 金 … E6S5 = **12 金**（不算隐金）—— 它只服务**性价比**。
-//   ② **强度按版本权重加权，顶格档按金数小幅区分**（2026-10-18 晚）：
+//   ② **强度只看行动值，金数完全不进**（v2 线性，`strengthPartOf()`）：
 //        ```
-//        0 行动值 → 100 − strengthGoldPinch × max(0, 本队金数 − 该期最省金)
-//        否则     → 95 × 强度曲线(行动值)
-//        整包强度 = Σ(版本权重 × 该版本强度) ÷ Σ(版本权重)
+//        行动值型：强度 = 100 × (1 − 行动值 / 500)
+//        轮次型  ：强度 = 100 ÷ (轮次 + 1)
+//        整包强度 = Σ(版本权重 × 该版本强度) ÷ Σ(版本权重)，缺证据版本记 0
 //        ```
-//      用户原话：「每期的强度最高分都有且仅有一个队伍（0 行动值的同时金数最低）」+「由于
-//      存在版本权重，强度要完全拿满分应当是非常难的」。所以最省金的 0 行动值队 = 100、
-//      其余按每多 1 金扣 0.1 分（小幅，不像 v4.6.110 那样把贵队折到个位数）。
+//      与 v1 的两点差别：**没有顶格档的「按金数小幅降分」**（0 行动值一律 100），
+//      也没有「95 × 曲线」的第二档 —— 曲线换成线性，所以 av=1 是 99.8、av=400 是 20。
 //   ③ **继承**：已登场却缺证据的版本，若同角色有「成本更低**且**那一期有成绩」的整包，
 //      取其**最高分**（用户：「人们一般不会上传低难度关卡用超高成本通关的记录」）。
-//      继承不到（同角色所有更便宜版本也没成绩）→ 仍是**算 0 分**，权重进分母。
-//   ④ 版本权重按用户设置加权；分母永远是**全部副本**的关卡权重（缺副本按 0）。
+//      继承来的分也走 v2 线性（同一把尺子）。继承不到 → **算 0 分**，权重进分母。
+//   ④ 版本权重按用户设置加权；总榜单关卡后，关卡权重只当「这一关算不算数」的开关。
 //
 // ⚠️ 2026-10-14 的「E6S5 > E6S1 > E2S1 > E0S0」早已被用户自己推翻（2026-10-17 第 2 条
 //    「强度与成本改为无相关性」），这里**不要**再把成本单调性加回来。
@@ -123,12 +121,11 @@ const runPlight = (rows, seasons, seasonWeights, zeroAvGoldBySeason, extra = {})
 };
 
 const member = (char, eidolon = 0) => [{ char, eidolon }];
-// 强度那把尺子（`SCORING.strengthLineWeights`）在判据线上的取值：
-//   av = 0 → 1.00；满分线 300 → 0.80；达标线 500 → 0.45；再往外线性衰减到地板。
-// ⚠️ 它与**性价比**那条曲线（`frontierPerfLineByEnv`：绝境满分线以内平的 1.00）
-//    **不是同一把尺子** —— 混用会让第二档按性价比的曲线打分（用户 2026-10-17 踩过）。
-const strengthPerf = (av) => perfFactorOf(av, { perfect: 300, target: 500 }, true, 'perfect',
-  SCORING.strengthLineWeights);
+/**
+ * v2 的强度尺子（唯一实现：`public/scripts/v2-score.js` 的 `strengthPartOf()`）。
+ * 这里只覆盖**行动值型**（本文件全部夹具都是绝境 aa|plight，判据线 300/500 只用于展示）。
+ */
+const v2Strength = (av) => 100 * Math.max(0, 1 - (Number(av) || 0) / 500);
 // ⚠️ 读 `frontierTiers`（按星魂档分的全量），**不要读 `frontierUnits`**：
 //    后者是「每个角色只留总分最高的那一条」的收敛结果（用户 2026-10 第 1 条），
 //    夹具里 E0 的总分必然高于 E6，E6 会被收敛掉 —— 那是**榜单**的口径，不是算分的口径。
@@ -152,33 +149,26 @@ const unitOfE = (out, name, eidolon) => allUnits(out)
   const zero = { '4.5': { min: 10, max: 40 } };
   const out = runPlight(rows, ['4.5'], { '4.5': 1 }, zero);
 
-  check('⭐ 顶格档唯一满分：最省金的 0 行动值队 = 100，其余按金数小幅降', () => {
+  check('⭐ 0 行动值 = 100，且**与金数无关**（v2：金数整条退出强度）', () => {
     const cheap = envOf(out, 'Cheap');
     const pricey = envOf(out, 'Pricey');
     assert.ok(cheap && pricey, 'Cheap / Pricey 都应进榜');
     assert.ok(Math.abs(Number(cheap.envStrength) - 100) < 1e-6,
-      `最省金（10 金）的 0 行动值队应为 100，实际 ${cheap.envStrength}`);
-    const wantPricey = 100 - SCORING.strengthGoldPinch * (40 - 10);
-    assert.ok(Math.abs(Number(pricey.envStrength) - wantPricey) < 1e-6,
-      `贵 30 金的 0 行动值队应降 ${(SCORING.strengthGoldPinch * 30).toFixed(2)} 分 = ${wantPricey.toFixed(2)}，实际 ${pricey.envStrength}`);
-    // 满分唯一：最省金 100、贵队 < 100（可排序，不再并列）。
-    assert.ok(Number(pricey.envStrength) < 100, '贵队不该拿到满分（满分唯一）');
-    assert.equal(unitOf(out, 'Cheap').strengthTopBand, true, '最省金队的顶格标记要亮');
+      `10 金 0 行动值 → 100，实际 ${cheap.envStrength}`);
+    assert.ok(Math.abs(Number(pricey.envStrength) - 100) < 1e-6,
+      `40 金 0 行动值同样 → 100（v2 不看金数），实际 ${pricey.envStrength}`);
+    assert.equal(unitOf(out, 'Cheap').strengthTopBand, true, '顶格标记要亮');
   });
 
-  check('⭐ 金数区分是**小幅**的：贵 4 倍仍 ≥ 97（不像 v4.6.110 折到个位数）', () => {
-    const pricey = Number(envOf(out, 'Pricey').envStrength);
-    assert.ok(pricey >= 97 - 1e-9,
-      `贵 40 金（4 倍）的队应仍 ≥ 97，实际 ${pricey}（小幅区分，别折狠）`);
-  });
-
-  check('非 0 行动值 → 95 × 强度曲线（**不碰金数**）', () => {
+  check('⭐ v2 线性：av=1 → 99.8、av=250 → 50（不再是 95 × 曲线）', () => {
     for (const [name, av] of [['NoZero', 400], ['Inside', 299]]) {
-      const want = SCORING.strengthSecondBandCap * strengthPerf(av);
+      const want = v2Strength(av);
       const got = Number(envOf(out, name).envStrength);
       assert.ok(Math.abs(got - want) < 1e-3,
-        `${name}（av=${av}）应为 ${SCORING.strengthSecondBandCap} × ${strengthPerf(av).toFixed(4)} = ${want.toFixed(4)}，实际 ${got}`);
+        `${name}（av=${av}）应为 100 × (1 − ${av}/500) = ${want.toFixed(4)}，实际 ${got}`);
     }
+    assert.ok(Math.abs(v2Strength(1) - 99.8) < 1e-9, 'av=1 → 99.8');
+    assert.ok(Math.abs(v2Strength(250) - 50) < 1e-9, 'av=250 → 50');
   });
 
   check('强度分 = 本档自身合计（包络与整维天花板都已删）', () => {
@@ -207,7 +197,7 @@ const unitOfE = (out, name, eidolon) => allUnits(out)
   const seasons = ['4.4', '4.5'];
   const zero = { '4.5': { min: 10, max: 10 }, '4.4': { min: 20, max: 20 } };
   const v45 = 100; // 4.5 期 0 行动值且正好最省金（10 金 = min）→ 100
-  const v44 = SCORING.strengthSecondBandCap * strengthPerf(500);
+  const v44 = v2Strength(500);
 
   check('⭐ 强度按版本权重加权：不是「只看最快」，满分要跨版本都 0 行动值', () => {
     const a = runPlight(rows, seasons, { '4.5': 3, '4.4': 1 }, zero);
@@ -252,9 +242,9 @@ const unitOfE = (out, name, eidolon) => allUnits(out)
   };
   const out = runPlight(rows, seasons, { '4.5': 1, '4.4': 1 }, {}, { firstSeen });
 
-  const own45E6 = SCORING.strengthSecondBandCap * strengthPerf(400);
+  const own45E6 = v2Strength(400);
   const lowE0At44 = 100; // Low E0 自己 4.4 的 0 行动值（zero 空 → pinch=0 → 100）
-  const lowE0At45 = SCORING.strengthSecondBandCap * strengthPerf(300);
+  const lowE0At45 = v2Strength(300);
 
   check('⭐ 缺证据的版本从更便宜且有成绩的整包继承（继承分**进加权**）', () => {
     const e6 = unitOfE(out, 'Low', 6);
@@ -340,7 +330,7 @@ check('⭐ 强度与成本无相关性：同角色里「更贵更高」与「更
     '一条「更贵反而更低」都没有 —— 单调包络可能复活了（用户 2026-10-17 第 2 条）');
 });
 
-check('整维天花板已取消：非顶格档落在 90~100 之间，顶格档 = 100（2026-10-18）', () => {
+check('v2 线性：非顶格档必须 < 100，顶格档 = 100（2026-10-18 的天花板已取消）', () => {
   let top = 0;
   let second = 0;
   let above90 = 0;
@@ -353,11 +343,11 @@ check('整维天花板已取消：非顶格档落在 90~100 之间，顶格档 =
       } else {
         second += 1;
         assert.ok(score < 100 - 1e-9, `非顶格档必须低于 100，实际 ${score}`);
-        if (score > SCORING.strengthSecondBandCap) above90 += 1;
+        if (score > 95) above90 += 1;
       }
     }
   }
-  console.log(`     顶格档 ${top} 条、第二档 ${second} 条（其中 ${above90} 条 > ${SCORING.strengthSecondBandCap}）`);
+  console.log(`     顶格档 ${top} 条、非顶格档 ${second} 条（其中 ${above90} 条 > 95）`);
 });
 
 check('顶格档的自洽性：每一关都 100 ⇔ 整包强度 100', () => {

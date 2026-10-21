@@ -276,7 +276,8 @@ const AV_MIXED_MEMBERS = [member('charA'), member('charB'), member('charY')];
 const avConclusion = {
   frontierEnvs: [
     {
-      id: 'env1', label: '测试副本', weight: 1, tierLines: AV_TIER_LINES,
+      // ⚠️ v4.6.144：v2 的强度判据按 mode/stage 判（av 型 vs 轮次型），夹具必须写。
+      id: 'env1', mode: 'aa', stage: 'plight', label: '测试副本', weight: 1, tierLines: AV_TIER_LINES,
       avLo: 0, avHi: 400, lowerIsBetter: true,
       minCostBySeason: { '4.2': 5, '4.4': 4 },
       // 逐版本的「0 行动值」金数区间（用户 2026-10-17 第 2、3 条：顶格档的基准）。
@@ -292,7 +293,7 @@ const avConclusion = {
       ],
     },
     {
-      id: 'env2', label: '测试副本二', weight: 1, tierLines: AV_TIER_LINES,
+      id: 'env2', mode: 'as', stage: '', label: '测试副本二', weight: 1, tierLines: AV_TIER_LINES,
       avLo: 0, avHi: 400, lowerIsBetter: true,
       minCostBySeason: { '4.4': 4 },
       avTeams: [
@@ -337,12 +338,11 @@ check('行动值前沿：0 行动值且取到该期最省金 = 顶格档 100，*
 
 check('行动值前沿：混合成绩按**副本权重**摊薄（0 与非 0 各占一关）', () => {
   const row = avRowOf(AV_MIXED_MEMBERS);
-  // 期望值现算（2026-10-18 晚：0 行动值按金数小幅区分）：
-  //   env1 av=0、cost=12，该期 0 行动值最省金 = 10 → 100 − 0.1×(12−10) = 99.8
-  //   env2 av=320（那一期没有 0 行动值基准）→ 95 × 强度曲线(320)
-  const perf = perfFactorOf(320, AV_TIER_LINES, true, 'target', SCORING.strengthLineWeights);
-  const env2Strength = SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
-  const env1Strength = 100 - SCORING.strengthGoldPinch * (12 - 10);
+  // 期望值现算（v4.6.144 整链切 v2：线性强度、金数不进强度）：
+  //   env1 av=0 → 100（不再按金数扣）
+  //   env2 av=320 → 100 × (1 − 320/500) = 36
+  const env1Strength = 100;
+  const env2Strength = 100 * Math.max(0, 1 - 320 / 500);
   const total = (1 * env1Strength + 1 * env2Strength) / 2;   // 两关权重都是 1
   // 投入项已整条删除（用户 2026-10-17 第 2 条）：强度就是逐关加权平均本身。
   const expect = total;

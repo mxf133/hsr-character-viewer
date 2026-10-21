@@ -17,6 +17,11 @@
 // 成绩在界面上一律写成游戏内实际的量：轮次制是 0T / ≤2T / ≤4T，末日幻影是
 // 积分 4000 / ≥3700 / ≥3400，绝境王棋关是行动值 <300 / <500（见 tierLabelsOf）。
 import { charactersOf } from './format.js';
+// v2 评分内核的纯函数（与 `src/server/gacha-score.js` **同一份实现**）——
+// 角色总榜在浏览器端算，抽卡方案在服务端算，两边用同一套公式才不会分叉。
+import {
+  AV_CAP, baselineOf, costPartOf, envKindOf, finiteOf, strengthPartOf,
+} from './v2-score.js';
 
 /** 模式顺序，按游戏解锁顺序。 */
 export const MODE_ORDER = ['moc', 'pf', 'as', 'aa'];
@@ -3096,6 +3101,9 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
           id: env.id,
           weight,
           av,
+          // v2 判据类型（v4.6.144）：用 env 自己的 mode/stage 定，别在算分时拆 id
+          // （夹具 / 老载荷的 id 可能不是 `mode|stage`）。
+          kind: envKindOf(env.mode, env.stage || ''),
           tier: row?.tier ?? null,
           season: row?.season ?? null,
           cost: Math.max(0, Number(row?.cost) || 0),
@@ -3159,6 +3167,13 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
             id: envId,
             weight,
             av: avNum,
+            /**
+             * v2 判据类型（v4.6.144）：**在这里就定下来**，别到算分时再拆 `envId`。
+             * `envId` 在真实载荷里是 `aa|plight` 这种形状，但夹具 / 老载荷可能是任意 id
+             * —— 拆不出来就会把绝境当轮次型（strength 变 100/(av+1)），实测把 36 分算成 0.31。
+             * `meta` 就在手边（`envById` 那一份），直接用它的 mode/stage。
+             */
+            kind: envKindOf(meta?.mode, meta?.stage || ''),
             // 版本号与档位随 allTeams 一起下发（卡片要写「（4.6 版本）· 行动值 297」）。
             tier: tier ?? null,
             season: season ?? null,
@@ -3198,32 +3213,32 @@ export const teamPlan = (conclusion, account = {}, options = {}) => {
       // ⚠️ 90 的天花板保留（用户 2026-10-16 第 1 条）：没打出 0 行动值就够不到顶格档。
       // ⚠️ 2026-10-18 晚：顶格档（0 行动值）按金数小幅区分（与 `frontierBoard` 同源），
       //    最省金那支 = 100、其余每多 1 金扣 `strengthGoldPinch`（0.1）—— 满分唯一。
-      const withStrength = hitEnvs.map((h) => {
-        const pinch = h.av === 0 && Number.isFinite(h.cost) && Number.isFinite(h.minCost)
-          ? SCORING.strengthGoldPinch * Math.max(0, h.cost - h.minCost)
-          : 0;
-        // 顶格档按「这个副本这一版的 0 行动值达成率」折价（v4.6.129）。
-        // 见下面 `topCapOf` 的完整口径说明。
-        const topCap = h.av === 0 ? topCapOf(h.id, h.season) : null;
-        let envStrength;
-        if (h.tierLines) {
-          const perf = perfFactorOf(h.av, h.tierLines, h.lowerIsBetter, h.tier,
-            SCORING.strengthLineWeights);
-          envStrength = h.av === 0
-            ? topCap - pinch
-            : SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
-        } else if (Number.isFinite(h.avLo) && Number.isFinite(h.avHi) && h.avHi > h.avLo) {
-          // 判据线取不到（老载荷）但有行动值区间：按区间线性折算，不猜满分线。
-          const perf = 1 - (h.av - h.avLo) / (h.avHi - h.avLo);
-          envStrength = h.av === 0
-            ? topCap - pinch
-            : SCORING.strengthSecondBandCap * Math.max(0, Math.min(1, perf));
-        } else {
-          // 什么都没有（合成夹具）：0 行动值仍是顶格，其余按第二档天花板记 —— 确定的退路。
-          envStrength = h.av === 0 ? topCap - pinch : SCORING.strengthSecondBandCap;
-        }
-        return { ...h, envStrength };
-      });
+      /**
+       * 逐关强度：**v2 单关卡口径**（v4.6.144，与 `frontierBoard` 同一个
+       * `strengthPartOf()`）。
+       *
+       * ```
+       *   行动值型：100 × (1 − 行动值 / 500)
+       *   轮次型  ：100 ÷ (轮次 + 1)
+       * ```
+       *
+       * 与 v1 的两档曲线（0 行动值 → 100、其余 95 × 曲线）相比：
+       *   * 不再有「顶格档」这个跳变点，也不再有 `strengthGoldPinch` / `topCapOf` 的
+       *     折价 —— 那些是 v1 为了让满分唯一而加的补丁，v2 的线性公式本身满分就唯一
+       *     （只有 0 行动值 / 0T 才是 1.0）；
+       *   * 刻度与角色总榜**完全一致**：`byRoster` 的强度读 `unit.strengthScore`
+       *     （同样是 0~100），三条候选链不再各用一把尺子。
+       */
+      const kindOfEnvId = (id) => {
+        const [mode, stage] = String(id || '').split('|');
+        return envKindOf(mode, stage || '');
+      };
+      const withStrength = hitEnvs.map((h) => ({
+        ...h,
+        // `h.kind` 在构建 hits 时已经从 `frontierEnvs[].mode/stage` 定好（夹具的 id
+        // 可能不是 `mode|stage`，拆 id 会误判成轮次型）；老路径才退回拆 id。
+        envStrength: 100 * strengthPartOf(h.av, h.kind ?? kindOfEnvId(h.id)),
+      }));
       const ownWeight = withStrength.reduce((n, h) => n + h.weight, 0);
       if (!(ownWeight > 0)) continue;
       /**
@@ -4555,7 +4570,20 @@ const frontierPackRowsOf = (env, frontierEntry, aggRows, availability) => {
           storedCost: stored,
           hiddenCut: cut,
           tier: r.tier,
-          actionValue: finiteOrNull(r.actionValue),
+          /**
+           * ⚠️ v4.6.144：回退路径要**退到 `avgAv`**。
+           *
+           * 合成夹具 / 老载荷的聚合阵容只带 `avgAv`（`teamFixture` 的第三个参数），
+           * 上面 `rows[]` 的 `actionValue` 只认 `bestAv > 0`，所以这里再退一层到
+           * `team.avgAv`。v1 的 `perfFactorOf(null, …, tier)` 还能按档位兜底，
+           * v2 的两维**完全依赖行动值**（强度 1 − av/500、baseline 也要按 av 判达标），
+           * 不映射就是「所有队 0 分、整榜空掉」。真实载荷走 `frontierRows`，不受影响。
+           */
+          actionValue: (() => {
+            const direct = finiteOrNull(r.actionValue);
+            if (direct !== null) return direct;
+            return finiteOrNull(r.team?.bestAv ?? r.team?.avgAv);
+          })(),
           season: r.team?.newestSeason || env.season || null,
           members,
           // 回退路径直接从聚合阵容的 `sample` 取（`localizeSample` 原样透传了 `video`）。
@@ -5041,6 +5069,39 @@ const buildConclusionInner = (envs, options = {}) => {
          *    里有几支靠它复盘「金数折」时期的数据。
          */
 
+        /**
+         * ---- v2 单关卡口径的地基（v4.6.144，「整链切 v2」）--------------------
+         *
+         * 设计文档 `docs/抽卡推荐重构设计.md` §3：
+         *
+         *   行动值型  强度分 = 1 − 行动值 / 500
+         *   轮次型    强度分 = 1 / (轮次 + 1)
+         *   性价比分  = baseline(本版本) / 本队金数        （0 金队给 1）
+         *
+         * 与 v1 的两点差别（这次改动就是要把它们落地）：
+         *   ① **单关卡**：只有用户选中的那一关进榜（关卡权重 0 的那些行不再显示、
+         *      也不再进分母）—— 见 `unit.envs` 的过滤；
+         *   ② **不再有「跨版本发挥」这个残差因子**：v2 的版本加权直接体现在
+         *      「逐版本得分 × 版本权重 ÷ Σ版本权重」里，不需要再把它拆出来当一列。
+         *
+         * `baseline` 是**逐版本**的（§3.2）：同版本里打到判据线的最便宜那队。
+         * ⚠️ 0 金队必须剔除（`c > 0`），否则 baseline 会被拉到 0、全体性价比归零 ——
+         *    这条坑在 `public/scripts/v2-score.js` 的 `baselineOf` 里已有防御，这里直接复用。
+         */
+        const v2Kind = envKindOf(env.mode, env.stage || '');
+        const v2RowsBySeason = new Map();
+        for (const row of packRows) {
+          const s = String(row.season || '');
+          if (!v2RowsBySeason.has(s)) v2RowsBySeason.set(s, []);
+          v2RowsBySeason.get(s).push(row);
+        }
+        const v2BaselineBySeason = new Map();
+        for (const [s, list] of v2RowsBySeason) {
+          v2BaselineBySeason.set(s, baselineOf(
+            list, v2Kind, (r) => r.cost, (r) => r.actionValue,
+          ));
+        }
+
         // ---- 第一趟：逐条配置算分，按「整包 × 版本」留下该版本最好的一条
         for (const row of packRows) {
           // 表现分：**档位与行动值合并成一条连续曲线**（用户 2026-10-11 缺陷 3 修）。
@@ -5104,6 +5165,17 @@ const buildConclusionInner = (envs, options = {}) => {
             // 这条证据所在版本的「最便宜金数」—— 算分时它就是这个版本的金数项分母，
             // 界面要把贡献拆成「来源」就得拿到同一个数（见 `frontierFactorsOf`）。
             seasonMinCost,
+            // ---- v2 单关卡的两个分量（v4.6.144）------------------------------
+            //
+            // 强度 0~100 = 100 × (1 − 行动值/500)（轮次型 = 100 ÷ (轮次+1)）；
+            // 性价比 0~100 = 100 × baseline(本版本) / 本队金数。
+            // 两者都来自**同一条证据**（这一行），所以卡片上的成绩与分数同源。
+            // `v2Score` 只用于「同一整包同一版本留哪一行」—— 等权相加（ws=wc=1），
+            // **不掺用户旋钮**：换抽卡权重只该改加权，不该换证据。
+            v2Strength: 100 * strengthPartOf(row.actionValue, v2Kind),
+            v2Cost: 100 * costPartOf(row.cost, v2BaselineBySeason.get(String(row.season || ''))),
+            v2Score: 100 * strengthPartOf(row.actionValue, v2Kind)
+              + 100 * costPartOf(row.cost, v2BaselineBySeason.get(String(row.season || ''))),
             season: row.season,
             limitedCones,
             rosterKey,
@@ -5149,6 +5221,16 @@ const buildConclusionInner = (envs, options = {}) => {
                  *    `env.strengthAv`）—— 两处各自与自己那把尺子同源，不再互相冒充。
                  */
                 strengthBySeason: new Map(),
+                /**
+                 * v2 口径的**版本证据**：`版本 -> 该版本 v2 综合分（强度+性价比）最高的那一行`。
+                 *
+                 * 与 `bySeason`（按 v1 的 `score = 表现 × 金数项` 挑）不是同一把尺子 ——
+                 * v2 的「最好一版」定义在 `docs/抽卡推荐重构设计.md` §3.5：
+                 * 该版本投稿得分的**最高分**。选择时两维**等权**（ws = wc = 1），
+                 * 不掺用户旋钮：换权重只该改加权，不该换证据。
+                 * 评分也**只读这一行**，所以卡片上的成绩与两个分项同源。
+                 */
+                v2BySeason: new Map(),
                 // ⚠️ 2026-10-17 曾把强度改成读 `bySeason`（= 卡片上印的最佳证据），
                 //    理由是 2026-10-16 用户报的「卡片写 457 行动值、强度按 0 给满分」。
                 //    那一改的副作用是**强度重新被成本污染**（用户 2026-10-18 报的前排
@@ -5179,6 +5261,11 @@ const buildConclusionInner = (envs, options = {}) => {
               || (hit.strengthPerf === sCur.strengthPerf && hit.actionValue < sCur.actionValue)) {
               pack.strengthBySeason.set(season, hit);
             }
+            // v2：该版本按「强度 + 性价比（等权）」挑一行，评分只读它（§3.5）。
+            const v2Cur = pack.v2BySeason.get(season);
+            if (!v2Cur || hit.v2Score > v2Cur.v2Score) {
+              pack.v2BySeason.set(season, hit);
+            }
           }
         }
 
@@ -5200,10 +5287,10 @@ const buildConclusionInner = (envs, options = {}) => {
         // ⚠️ 成本**相等**不算更便宜（E2+限定S4 与 E6+免费S0 可能都是 7 金，互相不继承）。
         // ⚠️ 继承来的分**不进** `strengthBest`（那是「最好的实测那一版」的意思）。
         const seasonStrengthOf = (hit) => {
-          const av = finiteOrNull(hit?.actionValue);
-          if (av === 0) return 100;
-          return SCORING.strengthSecondBandCap
-            * Math.max(0, Math.min(1, Number(hit?.strengthPerf) || 0));
+          // v2 口径（v4.6.144）：0 行动值 → 100，其余按 1 − 行动值/500 线性。
+          // ⚠️ 继承来的分也必须是**同一把尺子**，否则「借来的分」与「自己打的分」
+          //    不可比（v1 的 95×曲线 与 v2 的线性是两条曲线）。
+          return 100 * strengthPartOf(hit?.actionValue, v2Kind);
         };
         /** 版本 -> 角色 -> [{ key, gold, strength }]，只收**自己有证据**的整包 */
         const cheaperPoolBySeason = new Map();
@@ -5372,8 +5459,10 @@ const buildConclusionInner = (envs, options = {}) => {
            * 都 0 行动值（且每期都是最省金的那支）—— 有版本权重在，满分自然极难。
            */
           let accStrength = 0;
-          /** 强度分项里「最好的那一版」（跨版本发挥 = 加权平均 ÷ 它）。 */
+          /** 强度分项里「最好的那一版」—— v4.6.144 起**只作探针/兼容**，界面不再有「跨版本发挥」列。 */
           let accStrengthBest = 0;
+          /** 逐版本明细（v2 版本表的数据源：版本 / 成绩 / 强度 / 性价比 / 权重）。 */
+          const versions = [];
           /**
            * 泛用性的**版本加权累计器**（用户 2026-10-15：泛用性也受权重影响）。
            *
@@ -5402,63 +5491,34 @@ const buildConclusionInner = (envs, options = {}) => {
             const w = weightOr(seasonWeightOfRow(s), 1);
             if (!(w > 0)) continue;
             const observed = pack.bySeason.get(s);
-            /** 强度那一档自己的证据行（打得最快的那支），见 `strengthBySeason` 的注释。 */
-            const strengthRow = pack.strengthBySeason.get(s) || observed;
+            /**
+             * v2 口径的证据行：该版本「强度 + 性价比（等权）」最高的那一行（§3.5）。
+             *
+             * ⚠️ 评分**只读这一行**（不是 `strengthBySeason`）—— v2 的两维都定义在
+             *    同一条投稿上：「这一版打得多快、花多少金」。v1 的「强度读最快那行、
+             *    性价比读最划算那行」两把尺子在这里不再需要，所以 `seasonFactor`
+             *    那个残差因子也随之消失。
+             */
+            const v2Row = pack.v2BySeason.get(s) || observed;
             if (observed) {
               wSum += w;
-              acc += w * observed.score;
-              // ---- 强度那一档：**两档规则 + 顶格档按金数小幅区分**（2026-10-18 晚）----
-              //
-              // ```
-              //   0 行动值 → 100 − strengthGoldPinch × max(0, 本队金数 − 该期最省金)
-              //   否则     → 95 × 强度曲线(行动值)
-              // ```
-              //
-              // 用户原话：「每期的强度最高分都有且仅有一个队伍（0 行动值的同时金数最低）」
-              // —— 所以顶格档不再是「所有 0 行动值队都 100」，而是最省金那支 = 100、
-              // 其余按每多 1 金扣 `strengthGoldPinch`（0.1）分。这样满分唯一、可排序，
-              // 又不会像 v4.6.110 那样把 18 金的 E6 队折到个位数（那是被用户推翻的旧口径）。
-              //
-              // ⚠️ **逐版本各自算、再按版本权重加权**（用户 2026-10-17：「版本权重要按照
-              //    用户设置的做」）：跨版本只按 `VERSION_WEIGHTS`（界面上的版本权重槽位）加权。
-              // ⚠️ **`actionValue === 0` 是有效成绩**（绝境用它表示 0 行动值通关），
-              //    `null` 才是缺失 —— 两者不能混（`Number(null) === 0` 是本仓库的老坑）。
-              // ⚠️ **输入全部来自 `observed`** —— 就是 `bySeason` 那一行，也就是卡片上
-              //    「最佳证据」印出来的那一队。**不许**改成「该版本行动值最小的那条」
-              //    （曾经这么做过，2026-10-17 上午）：那正是用户 2026-10-16 报的
-              //    「缇宝 E6S5 卡片写着绝境 26 金 · 457 行动值、强度却是 100」——
-              //    「仅仅只是存在一个 6+5 的角色而已」。用户的判据是
-              //    「**一个队伍的强度得分和此队伍的实际行动值有关**」，所以强度必须与
-              //    卡片上那个行动值同源。
-              // ⚠️ `finiteOrNull`：`actionValue` 可能是 `null`（缺失），而
-              //    `Number(null) === 0` 会把「没测到」当成「0 行动值满分」（老坑）。
-              const avHere = finiteOrNull(strengthRow.actionValue);
-              // 强度曲线的表现分（`strengthLineWeights` 那把尺子，0~1）——
-              // 与 `strengthRow` 同一条证据（该版本打得最快的那行），不是卡片行。
-              const perfHere = Math.max(0, Math.min(1,
-                Number(strengthRow.strengthPerf) || 0));
-              // ---- 两档规则 + 顶格档按金数小幅区分（用户 2026-10-18 晚）-----------
-              //
-              // 顶格档（0 行动值）：100 − pinch × max(0, 本队金数 − 该期最省金)。
-              //   「本队金数」用 `storedCost`（隐金前原始金数，与 `zeroAvGoldBySeason` 同一
-              //   把尺子）；「该期最省金」用 `zeroAvGoldBySeason[版本].min`（0 行动值队伍的
-              //   最省金，不是 perfect 档最省金 —— 用户要的是「0 行动值的同时金数最低」）。
-              // 第二档（非 0 行动值）：95 × 强度曲线，**不碰金数**（成本只在顶格档内做
-              //   区分，第二档仍是纯行动值 —— 避免重蹈 v4.6.116 的覆辙）。
-              const zeroMin = finiteOrNull((env.zeroAvGoldBySeason || {})[s]?.min);
-              const ownGold = finiteOrNull(strengthRow.storedCost)
-                ?? finiteOrNull(strengthRow.cost);
-              let envStrength;
-              if (avHere === 0) {
-                const pinch = Number.isFinite(zeroMin) && Number.isFinite(ownGold)
-                  ? SCORING.strengthGoldPinch * Math.max(0, ownGold - zeroMin)
-                  : 0;
-                envStrength = 100 - pinch;
-              } else {
-                envStrength = SCORING.strengthSecondBandCap * perfHere;
-              }
-              accStrength += w * envStrength;
-              accStrengthBest = Math.max(accStrengthBest, envStrength);
+              // ---- v2 单关卡：两个分量都来自 `v2Row`（同一条证据）---------------
+              const v2StrengthHere = Number(v2Row?.v2Strength) || 0;
+              const v2CostHere = Number(v2Row?.v2Cost) || 0;
+              acc += w * v2CostHere;
+              accStrength += w * v2StrengthHere;
+              accStrengthBest = Math.max(accStrengthBest, v2StrengthHere);
+              // 逐版本明细：详情窗口的「版本表」直接读它（含被 0 权重排除的版本由
+              // `frontierEnvs[].seasonWeights` 决定，这里只记参与平均的）。
+              versions.push({
+                season: String(s),
+                weight: w,
+                actionValue: finiteOrNull(v2Row?.actionValue),
+                cost: finiteOrNull(v2Row?.cost),
+                strength: Number(v2StrengthHere.toFixed(4)),
+                costPart: Number(v2CostHere.toFixed(4)),
+                score: Number((v2StrengthHere + v2CostHere).toFixed(4)),
+              });
               // 泛用性那一档（用户 2026-10-15）：该版本**本副本**的队友集合大小。
               // `observed` 成立 ⇒ 这条整包在该版本有达标行 ⇒ 它的成员出现在那些
               // 队伍里 ⇒ 分桶里一定有这份集合（两趟遍历的是同一批 `packRows`）。
@@ -5574,10 +5634,21 @@ const buildConclusionInner = (envs, options = {}) => {
             // 原始金数留着：探针与回归测试要能区分「本来就是 0 金」与「被隐金减到 0 金」。
             rawGold: pack.gold,
             hiddenCut: ownCut,
+            // v2 口径（v4.6.144）：`score` = 性价比（0~100，baseline/金数 × 100），
+            // `strength` = 强度（0~100，1 − 行动值/500 或 1/(轮次+1)），
+            // 两者都按版本权重加权平均（分母含「已登场但无投稿」的版本，分子记 0）。
             score: wSum > 0 ? acc / wSum : 0,
-            // 强度分项（**不含金数项**）：同一套版本加权、同一个分母（用户 2026-10-13
-            // 第 1、2 条）。它与 `score`（性价比）一起进 `frontierBoard` 的两个分项。
             strength: wSum > 0 ? accStrength / wSum : (envInherited || 0),
+            /**
+             * **逐版本明细**（v4.6.144 起详情窗口的「版本表」直接读它）：
+             * `[{season, weight, actionValue, cost, strength, costPart, score}]`。
+             *
+             * 有了它就不再需要 v1 的两个残差因子列：
+             *   * 「关卡权重」—— 单关卡后它恒等于 1（权重只用于把 0 权重的关卡挡在榜外）；
+             *   * 「跨版本发挥」—— v2 的版本加权已经直接算进 `strength` / `score`，
+             *     没有「÷ 最好那一版」这个动作，也就没有可拆的残差。
+             */
+            versions,
             // 这一关的分是**整关继承**来的（自己没有一条证据）：界面要写「继承」。
             inheritedEnv: Boolean(!best && envInherited > 0),
             // 泛用性分项的**本副本**版本加权值（用户 2026-10-15）：`Σ w × 队友数 ÷ Σ w`，
@@ -6728,6 +6799,14 @@ const buildConclusionInner = (envs, options = {}) => {
           //    「缺副本按 0」）—— 强度量成绩、缺成绩确实是差；泛用性量关系网，没投稿
           //    不等于不百搭。理由与实测数字见 `versatilityPerTier` 那段注释。
           envVersatility: Number((Number(pack.versatility) || 0).toFixed(4)),
+          /**
+           * **逐版本明细**（v4.6.144，v2 口径）：详情窗口的版本表直接读它。
+           * 形状 `[{season, weight, actionValue, cost, strength, costPart, score}]`，
+           * 两个分项都是 0~100，`weight` 是用户版本权重表里的那一档。
+           * ⚠️ 这是「跨版本发挥」那一列的替代品：v2 的版本加权直接算进 `score` /
+           *    `envStrength`，不再需要拆一个残差因子出来。
+           */
+          versions: Array.isArray(pack.versions) ? pack.versions : [],
           // 新口径的原始证据（强度来源表要写出来）：这次成绩的行动值、金数、档位、版本，
           // 以及它是否落在满分档（界面据此解释「为什么这里按金数扣分」）。
           avBest: Number.isFinite(avBest) ? avBest : null,
@@ -6794,8 +6873,30 @@ const buildConclusionInner = (envs, options = {}) => {
     }
     const all = [];
     for (const unit of acc.values()) {
+      /**
+       * **单关卡**（v4.6.144）：只保留被选中的那一关（权重 > 0）。
+       *
+       * 这就是「多个关卡权重」在界面上的终点 —— 以前这里把 5 个关卡全留着，
+       * 详情表逐行渲染、四行 `×0`、贡献 `+0`（真实数据实测全榜 565~709 条这种行）。
+       * 数值上它们本来就贡献 0（`Σ w×x/Σw` 里 w=0），留着只是噪音。
+       */
+      unit.envs = unit.envs.filter((e) => Number(e.weight) > 0);
+      // 按「对总分的贡献」排：选中关卡的贡献一定最大，所以 `envs[0]` 恒是被选中的那一关。
       unit.envs.sort((a, b) => b.value - a.value || b.score - a.score);
-      const total = unit.envs.reduce((n, e) => n + e.value, 0);
+      /**
+       * 性价比原始量 = **按全部在榜关卡的权重和归一**（v2 口径，0~100）。
+       *
+       * ⚠️ 分母必须是 `allEnvWeight`（**全部**参与总榜的关卡权重和），不是「这个整包
+       * 有数据的那些关卡」—— 后者会奖励数据少的整包（v1 在强度侧踩过：绝境覆盖率
+       * 36/77 → 1/77）。这条对 v2 同样成立：缺关卡 = 没打出过，按 0 计。
+       * 单关卡下 `allEnvWeight` 就是选中那一关的权重，所以分母与分子同权、权重自然约掉
+       * —— 这正是「关卡权重只剩开关语义」的数学表现。
+       */
+      const total = allEnvWeight > 0
+        ? unit.envs.reduce(
+          (n, e) => n + Number(e.weight || 0) * (Number(e.score) || 0), 0,
+        ) / allEnvWeight
+        : 0;
       if (!(total > 0)) continue;
       // 强度分项的原始量（用户 2026-10-14 新口径）：**按关卡权重各自贡献**的加权平均强度。
       //
@@ -6826,6 +6927,15 @@ const buildConclusionInner = (envs, options = {}) => {
       for (const [envId, bucket] of frontierPacks) {
         if (ownedEnvIds.has(envId)) continue;
         const meta = frontierMeta.get(envId) || {};
+        /**
+         * ⚠️ v4.6.144：**只给被选中的那一关补继承行**。
+         *
+         * 单关卡之后，其余 4 关的权重是 0 —— 它们的继承行既不进分子也不进分母
+         * （`weight = 0`），推出来只会让详情表重新长出「×0、+0」的噪音行。
+         * 「整关都没有自己的证据」的继承仍然保留：那一关就是选中的关卡时才有意义。
+         */
+        const envWeightHere = Number(meta.weight) || 0;
+        if (!(envWeightHere > 0)) continue;
         let bestInherited = 0;
         let donor = null;
         for (const other of bucket.values()) {
@@ -7360,12 +7470,17 @@ const buildConclusionInner = (envs, options = {}) => {
         }
         return allEnvWeight > 0 ? acc / allEnvWeight : 0;
       })().toFixed(4));
-      // 性价比分项就是老口径的 `total`（含金数项）**开平方后**归一的值 —— 口径本身没改，
-      // 只是加了 `SCORING.costScorePower` 那一步压缩（原始量跨 1623 倍，线性归一会把
-      // 57.5% 的整包压到 10 分以下，见那个常量的注释）。
-      unit.costScore = Number((100 * spanOf(
-        costExtent.lo, costExtent.hi, costScaled(unit.total),
-      )).toFixed(4));
+      /**
+       * 性价比分 = **就是 `total` 本身**（v4.6.144，v2 口径）。
+       *
+       * v1 是「`total` 开方后在全榜 min-max 归一」—— 因为 v1 的原始量跨 1623 倍，
+       * 线性归一会把 57% 的整包压到 10 分以下。v2 的性价比分量定义就是
+       * `baseline / 本队金数 ∈ (0,1]`（`costPartOf`），本身已经是一把绝对尺子，
+       * 再套一层 min-max 只会让「榜单里有谁」影响别人的分数，反而不可比。
+       * 所以这里直接乘 100 成 0~100，与 `strengthScore` 同量纲。
+       * `costExtent` 仍照算（探针与旧载荷兼容），但不再参与得分。
+       */
+      unit.costScore = Number((Math.max(0, Number(unit.total) || 0)).toFixed(4));
       // 泛用性：**按组取尺子**（用户 2026-10-17 第 1 条：E6 只与 E6 比、E0/1/2 与 E0/1/2 比）。
       // ⚠️ 夹到 0：第 5 条把「不用抽就有」的角色排除在刻度样本之外，而它们的原始量是 0，
       //    不夹的话 `spanOf` 会给出负数分（界面上会印出「泛用性 −12.3 分」）。
