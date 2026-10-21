@@ -2160,10 +2160,11 @@ export const marginalCostOf = (members, availability, account = {}) => {
     if (charLimited) {
       // mine = -1 表示还没有这个角色：本体也要 1 抽，所以 need = 星魂数 + 1。
       const rawMine = owned.has(m.char) ? (eidolons.get(m.char) ?? 0) : -1;
-      // 账号快照可能仍记录 E3~E5，但推荐口径只有 E0/E1/E2/E6；
-      // 账号已有 E5、阵容要求 E6 时应显示 E2 → E6，并按 4 金计算。
-      const mine = rawMine < 0 ? -1 : eidolonTierOf(rawMine);
-      const target = eidolonTierOf(m.eidolon);
+      // 补金按**真实星魂级数**算差价，不再归并到 E0/E1/E2/E6（用户 2026-10-21 明确口径）：
+      // E3 = 3 个星魂 + 1 个本体 = 4 金；账号已有 E5、阵容要求 E6 时只补 1 金（E6 一个星魂）。
+      // 归并（`eidolonTierOf`）仍只用于「投稿聚合」这一处（`packKeyOf`），补金不再走它。
+      const mine = rawMine < 0 ? -1 : Math.max(0, Math.round(Number(rawMine) || 0));
+      const target = Math.max(0, Math.round(Number(m.eidolon) || 0));
       const need = Math.max(0, target - mine);
       if (need > 0) {
         pulls += need;

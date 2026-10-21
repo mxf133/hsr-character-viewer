@@ -745,8 +745,8 @@ check('marginalCostOf：本体与星魂按「还差几级」算', () => {
     eidolons: new Map([['OwnedE1', 5]]),
     cones: new Map(),
   });
-  assert.equal(e6.pulls, 4, '账号已有 E5 时仍按 E2 → E6 计算 4 金');
-  assert.equal(e6.items[0].from, 2);
+  assert.equal(e6.pulls, 1, '账号已有 E5 时补到 E6 只差 1 金（真实级数，不再归并 E2）');
+  assert.equal(e6.items[0].from, 5);
   assert.equal(e6.items[0].target, 6);
   assert.equal(teamPullsOf([{ char: 'OwnedE1', eidolon: 5 }], availability), 3 * 94,
     '队伍总成本也应把 E3~E5 归入 E2，而不是按原始 E5 计价');
