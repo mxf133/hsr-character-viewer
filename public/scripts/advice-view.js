@@ -53,6 +53,9 @@ import {
   versionWeightRows, versionWeightDefaultAt, VERSION_WEIGHT_MAX,
   versionWeightDefaults, versionWeightValues, normalizeVersionWeights,
   formatRate, frontierFactorsOf, avLinesOf, metricShortText, metricValueText, metricValueTextOf, ownedCharacters,
+  // `avUnitOf`：行动值型副本的成绩列头（绝境「行动值」/ 末日幻影「积分」）—— 与
+  // `metricValueTextOf()` 同一份量纲表，别在界面里再写一遍 if/else。
+  avUnitOf,
   ownedLightCones, perfAnchorsOf, perfLineWeightsOf, scorePercent,
   eidolonsOf, lightConeRanksOf, TIER_PLACEHOLDER, tierLabelsOf, tierMoveText, tierTextOf,
   // ⚠️ `eidolonTierOf`：泛用性的**归一区间是按星魂档分组**的（用户 2026-10-14 第 1 条），
@@ -5003,6 +5006,17 @@ const variantNamesText = (members) => (members || [])
 
 
 /**
+ * 这个关卡是**轮次型**还是行动值型（服务端 `envKindOf()` 的结论，随载荷下发）。
+ *
+ * ⚠️ 判据是 `kind !== 'av'` 而不是 `=== 'turn'`：服务端从 v4.6.130 重构起给的就是
+ *    `'av' | 'round'`（`gacha-score.js` 的 `envKindOf`），`'turn'` 这个值**从来没有
+ *    下发过** —— 于是卡片等式、脚注、分数浮层三处的「（轮次口径）」在混沌 / 虚构上
+ *    从来没亮过，全按行动值口径写（2026-10-21 修）。默认值取「轮次」也与
+ *    `envKindOf` 的兜底一致（未知关卡按轮次处理）。
+ */
+const planIsTurn = (plan) => plan?.kind !== 'av';
+
+/**
  * 方案卡片的「这个分数怎么来的」（2026-10-20）。
  *
  * 用户报的缺陷：「无法显示队伍强度得分的详情」—— 卡片上那行
@@ -5016,13 +5030,16 @@ const variantNamesText = (members) => (members || [])
  * 有几版投稿就列几行），读者能直接看出「这个分是哪一版挣的、别的版差多少」。
  */
 const planScoreTip = (row, plan, ws, wc) => {
-  const isTurn = plan.kind === 'turn';
+  const isTurn = planIsTurn(plan);
   const bestSeason = String(row.bestSeason ?? '');
   const rows = (row.seasons || []).map((s) => [
     `${s.season}${String(s.season) === bestSeason ? ' ·最佳' : ''}`,
     // ⚠️ v4.6.136 起差一档（target）投稿也进方案池：成绩那一列要如实标出来，
     //    否则「轮次 1」和「轮次 0」的队伍强度差异（1/2 vs 1）看起来像算错。
-    (isTurn ? `${s.score} 轮` : `行动值 ${s.score}`)
+    // ⚠️ 2026-10-21：按副本量纲写游戏内那个量（`metricValueTextOf`：轮次制 `0T` /
+    //    绝境 `行动值 285` / 末日幻影 `积分 3852`）。改前写死 `行动值 ${s.score}`，
+    //    末日幻影会把「积分 3852」印成「行动值 148」（内部存的是 4000 − 积分）。
+    metricValueTextOf(plan.mode, plan.stage, s.score)
       + (Number(s.tier) === 2 ? '（差一档）' : ''),
     Number(s.strengthPart ?? 0).toFixed(3),
     `补 ${row.gap} 金`,
@@ -5040,7 +5057,10 @@ const planScoreTip = (row, plan, ws, wc) => {
     //    `(ws × 强度 + wc × 性价比) × 版本权重`。两个权重都写**实际生效的值**，
     //    不写死 0.5 —— 用户拉满某一项时这里要跟着变。
     eq: `（队伍强度 × ${ws} + 性价比 × ${wc}）× 版本权重，逐版本取最大值`,
-    headers: ['版本', isTurn ? '轮次' : '行动值', '队伍强度', '补金', '性价比', '版本权重', '这一版的分'],
+    // 列头跟着量纲走：轮次制「轮次」、绝境「行动值」、末日幻影「积分」
+    // （`avUnitOf` 与 `metricValueTextOf` 同一份量纲表，见 import 处注释）。
+    headers: ['版本', isTurn ? '轮次' : avUnitOf(plan.mode, plan.stage),
+      '队伍强度', '补金', '性价比', '版本权重', '这一版的分'],
     rows,
     notes: [
       isTurn
@@ -5219,7 +5239,7 @@ const renderTeamPlan = () => {
     scoreWrap.appendChild(text('span', 'advice-plan-team-eq',
       `= 队伍强度 ${Number(row.strengthPart).toFixed(3)} × ${ws}`
       + ` + 性价比 ${Number(row.costPart).toFixed(3)} × ${wc}`
-      + `（${plan.kind === 'turn' ? '轮次' : '行动值'}口径）`));
+      + `（${planIsTurn(plan) ? '轮次' : '行动值'}口径）`));
     scoreWrap.appendChild(lazyTip(() => planScoreTip(row, plan, ws, wc)));
     head.appendChild(scoreWrap);
     card.appendChild(head);
@@ -5272,8 +5292,19 @@ const renderTeamPlan = () => {
     }
     facts.appendChild(goldLine);
     if (row.bestSeason) {
-      facts.appendChild(text('span', 'advice-plan-team-best muted small',
-        `最佳版本 ${row.bestSeason}`));
+      const best = text('span', 'advice-plan-team-best muted small',
+        `最佳版本 ${row.bestSeason}`);
+      // ★ 2026-10-21（用户原话：「最佳版本 x.x 旁边，需要有具体的成绩，例如 0T
+      //    或者行动值 xx」）：只写版本号不说「那版打得多快」—— 同一行里 0T 与 2T
+      //    的队伍可能挨着排，读者分不清谁强。按副本量纲写游戏内那个量
+      //    （`metricValueTextOf`：轮次制 `0T` / 绝境 `行动值 285` / 末日幻影
+      //    `积分 3852`），与总榜「表现」列、分数浮层的成绩列同一把尺子。
+      //    没有成绩（老载荷 `a=null`）时不印，不编数字。
+      const bestScore = metricValueTextOf(plan.mode, plan.stage, row.bestScore);
+      if (bestScore) {
+        best.appendChild(text('span', 'advice-plan-team-best-score', ` · ${bestScore}`));
+      }
+      facts.appendChild(best);
     }
     // 来源视频（用户 2026-10-14 第 6 条 + 2026-10-18「把视频接回来」）：
     // 服务端按「版本 + 角色名集合」匹配，所以它是**这套阵容**的某条投稿，不是这一分的。
@@ -5446,7 +5477,7 @@ const renderTeamPlan = () => {
   el.teamPlanBody.appendChild(text('p', 'muted small advice-plan-team-foot',
     `口径：只算「${plan.envLabel || plan.env}」这一个关卡，逐版本取**最大值**`
     + `（版本窗口 ${plan.window} 期，评分时乘版本权重）；`
-    + (plan.kind === 'turn'
+    + (planIsTurn(plan)
       ? '队伍强度 = ws ÷ (轮次 + 1)，0 轮最高；'
       : '队伍强度 = ws × (1 − 行动值 ÷ 500)，行动值越低越高；')
     + '性价比 = 1 − 补金 ÷ 10（补得越少越高，补满 10 金归零、再多转负）；'

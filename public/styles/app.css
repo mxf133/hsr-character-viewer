@@ -2956,6 +2956,12 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
    大一号。2026-10-17 显式钉回 11.5px，与总榜行 `.advice-unit-best`（12px）
    一样走**自己的字号**，不再靠继承撞运气。 */
 .advice-plan-team-best { font-size: 11.5px; }
+/* 「最佳版本 4.6 · 0T」里那个成绩（2026-10-21，用户要求「最佳版本旁边要有具体的
+   成绩」）：版本号只说「哪一版的分最高」，成绩才说「那版打得多快」—— 同一行里
+   0T 与 2T 的队伍可能挨着排。用正文色 + 600 字重让它从一整行 dim 小字里跳出来，
+   但**不另起一枚徽章**：这一行是「账面 / 补金 / 版本 / 视频」的事实行，加徽章会跟
+   档位徽章（`.advice-plan-tier`）抢注意力。 */
+.advice-plan-team-best-score { color: var(--text); font-weight: 600; }
 /* 抽卡方案的「人话」摘要：先告诉用户下一步，再让他展开分数来源。 */
 .advice-plan-team-recommendation {
   display: flex;
