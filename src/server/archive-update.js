@@ -2,7 +2,8 @@
 //
 // 流程（每一步都会通过 `emit` 上报，界面用 SSE 实时显示）：
 //   1. 先给现有数据留档（复制 theherta 数据文件到一个时间戳目录，不压缩）
-//   2. node tools/herta-update.mjs --json   只抓没同步过的期 + 还在收投稿的期（有并发上限与单请求超时）
+//   2. node tools/herta-update.mjs --json   刷排期 + 只抓没同步过/还在收投稿/
+//                                          宽限期内/轮转清扫命中的期（有并发上限与单请求超时）
 //   3. node tools/herta-availability.mjs   重新生成星级/限定表（参考表缺失时优雅降级，不会打断同步）
 //   4. node tools/herta-build.mjs           重新聚合出 archive.json
 //   5. 让服务端丢掉缓存的 archive，下一次请求读到新数据
@@ -98,14 +99,15 @@ const stamp = () => {
 };
 
 /**
- * 更新前留档。只复制会被改写的东西（archive.json 与 unit-availability.json）
- * 以及投稿索引，不复制 raw/（几十 MB，且这次抓取只会新增/覆盖其中的少量文件，
- * 被覆盖的那几个在留档目录里单独保存）。
+ * 更新前留档。只复制会被改写的东西（archive.json、unit-availability.json、
+ * manifest.json 与 submission_config.json —— 最后一项是 2026-10-21 加的：
+ * herta-update.mjs 现在会在抓取前刷新排期文件，排期改坏了判据就全错），
+ * 以及投稿索引。不复制 raw/（几十 MB，且这次抓取只会新增/覆盖其中的少量文件）。
  */
 const backup = async (emit) => {
   const target = join(OUT, 'backup', stamp());
   await mkdir(target, { recursive: true });
-  const files = ['archive.json', 'unit-availability.json', 'manifest.json'];
+  const files = ['archive.json', 'unit-availability.json', 'manifest.json', 'submission_config.json'];
   let n = 0;
   for (const name of files) {
     const src = join(OUT, name);
@@ -156,13 +158,14 @@ export const updateArchive = async (emit = () => {}) => {
           result.skipped = payload.skipped || 0;
           planned = payload.total || 0;
           emit(`计划：抓 ${payload.total} 个组合、跳过 ${payload.skipped} 个已结束的期`
-            + `（每个副本最新的一期永远重抓）`);
+            + `（最新一期 + 未结束 + 宽限期内必抓，另轮转清扫 ${payload.sweep ?? 2} 个最久没抓的组合）`);
         } else if (payload.type === 'progress') {
           emit(`[${payload.done}/${payload.total}] ${payload.message}`);
         } else if (payload.type === 'done') {
           result.added = payload.added || 0;
           result.updated = payload.updated || 0;
           result.errors = payload.errors || [];
+          result.shrunk = payload.shrunk || [];
         } else if (payload.type === 'failed') {
           fetchFailed = payload.message;
         }
@@ -192,6 +195,18 @@ export const updateArchive = async (emit = () => {}) => {
       }
       emit(`抓取结束：新增 ${result.added} 条、变化 ${result.updated} 条`
         + (comboErrors.length ? `，${comboErrors.length} 个组合失败（不影响其余）` : ''));
+
+      // ---- 缩水护栏（2026-10-21 加）：herta-update.mjs 发现「线上条数比本地少」时
+      // 不会覆盖本地文件，这里把保留决定明确报给界面 —— 不报的话用户只看到
+      // 「完成」，不知道这一期其实没更新。
+      if (result.shrunk?.length) {
+        emit(`⚠ ${result.shrunk.length} 个组合线上条数比本地少，已保留本地文件`
+          + `（站点删稿确认无误的话，重跑并在命令行加 --allow-shrink）：`);
+        for (const s of result.shrunk.slice(0, 8)) {
+          emit(`⚠   ${s.season} / ${s.mode}：线上 ${s.count} < 本地 ${s.existing}`);
+        }
+        if (result.shrunk.length > 8) emit(`⚠   …还有 ${result.shrunk.length - 8} 个，详见日志`);
+      }
 
       // ---- 重新生成单位表（星级/限定），再聚合
       // 参考表（.snapref/，gitignore）缺失时这一步会优雅降级并打印警告，退出码 0。
@@ -228,7 +243,8 @@ export const updateArchive = async (emit = () => {}) => {
       result.ok = true;
       result.delta = delta;
       emit(`完成。投稿总数变化 ${delta >= 0 ? '+' : ''}${delta} 条`
-        + (result.partial ? `（注意：有 ${result.errors.filter((e) => e.mode !== 'index').length} 个组合没抓到，数据可能不全）` : ''),
+        + (result.partial ? `（注意：有 ${result.errors.filter((e) => e.mode !== 'index').length} 个组合没抓到，数据可能不全）` : '')
+        + (result.shrunk?.length ? `（${result.shrunk.length} 个组合线上条数变少，已保留本地文件）` : ''),
       'done');
       return result;
     } catch (err) {
