@@ -3554,7 +3554,7 @@
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.135';
+export const PROGRAM_VERSION = '4.6.141';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';

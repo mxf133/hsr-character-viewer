@@ -11,6 +11,10 @@
        初值刻意不写某个角色的 CDN 地址 —— 数据集还没采集时它必然 404，而 emoji 一定画得出来。 -->
   <link id="appIcon" rel="icon"
     href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🚄</text></svg>">
+  <!-- PWA（安卓「添加到主屏幕」后全屏运行）。theme-color 与 app.css 的 --bg-base 对齐。 -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0a0f1d">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <link rel="stylesheet" href="/styles/app.css">
   <!-- 性价比详情**大窗口**的尺寸与内容中和规则。⚠️ 必须在 app.css **之后**：
        `.advice-tip-card` 与 app.css 的 `.char-panel-card` 同特异度（0,1,0），
