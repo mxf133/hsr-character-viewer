@@ -1374,6 +1374,12 @@ export const archiveUsage = async (options = {}) => {
       // 每条 frontier 行 = 一套配装的成绩。`n` 不存在时 `usageByBand` 按 1 记，
       // 与这里显式写 1 等价（它已经兜了 `null` / 缺字段两种情况）。
       m: (r.members || []).map((m) => `${m.char}|${m.eidolon}|${m.lc || '-'}|${m.superimp || 1}`),
+      // ⚠️ **必须透传真实投稿数**（`archive.js` 的 `frontierRows[].submissions`，建库侧 `n`）。
+      //    v4.6.135 及之前漏了它，`usageByBand()` / `bandSampleOf()` 只好按 1 记 ——
+      //    环心印的「条投稿」实际是**配装行数**（实测 17242 条投稿被印成 15604，
+      //    绝境 0 行动值 50 条被印成 25，少一半）。这与 v4.6.134 在 `gacha-plan-run.js`
+      //    的 `rowOf` 修掉的是同一类「上游带了、下游丢了」的 bug，别再让它回去。
+      n: r.submissions,
     }));
     const kind = envKindOf(env.mode, env.stage || '');
     envsOut.push({

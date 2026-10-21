@@ -4279,6 +4279,15 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
   color: var(--text);
 }
 
+/* 「占通关 x%」角标：四档不是四分互斥（0T ⊂ 通关；轮次型的通关 = 0T+1T+2T），
+   印出分母占比把这层结构挑明。它是背景信息，弱化处理 —— 别和标题抢注意力。 */
+.usage-donut-share {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .usage-donut {
   display: block;
   width: 100%;
@@ -4304,8 +4313,9 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
   .usage-donut-card:hover { transform: none; }
 }
 
-/* 环心：上面是角色数，下面是「角色」两个字。用 fill 显式取值 —— SVG 文本不继承
-   `.muted` 那套 class（它们只对 HTML 生效）。 */
+/* 环心：上面是投稿数，下面是「条投稿」三个字。用 fill 显式取值 —— SVG 文本不继承
+   `.muted` 那套 class（它们只对 HTML 生效）。（v4.6.136 更正：环心自 2026-10-19 起
+   印的就是投稿数，这条注释晚改了一步，还写着「角色数」。） */
 .usage-donut-total {
   fill: var(--text);
   font-family: var(--font);
@@ -4814,3 +4824,172 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
 }
 /* 面板主标题：21px 在 1600 宽下略散，收紧字距并抬一档字重。 */
 .panel-advice .dash-head h2 { letter-spacing: -0.01em; }
+
+/* ==========================================================================
+   「其它配装 / 次选」重做（2026-10-21 · 分支 fix/plan-card-details）
+   --------------------------------------------------------------------------
+   用户原话：「抽卡方案-其它配装和次选显示的效果都不够好」。
+
+   改前的样子（实测截图）：17 套配装平铺成 17 行，每行
+   `1.64  补 10 金  砂金·戏浪·向浪花掷下盛夏S5 / 不死途·烦恼着，幸福着S1 / 缇宝·… / 知更鸟·…  [BiliBili]`
+   —— 一行 60 多个字，17 行读下来抓不住任何东西；分数从 1.64 一路排到 **-0.79**，
+   全用同一个金色，看完不知道哪套值得看；折叠标题只是一行没有任何装饰的灰字。
+
+   这一层配合 `advice-view.js` 那两块的改动（画光锥图标 / 只列前 8 套 / 算出「换了几人」）：
+     · summary 做成胶囊按钮（箭头 + 数量已在文案里），看得出来**能点**；
+     · 行内改成「分数 → 补金 → 4 个光锥 → 视频」，宽屏铺 3 列 —— 8 套压成 3 行；
+     · 分数**分档着色**：接近代表行才用金色，负分压暗；
+     · 与代表行不同的光锥描金边（`.is-diff`）；
+     · 次选里「新换来的人」头像同样描金边，并在行内直接写「换 2 人：真珠、爻光」。
+   ========================================================================== */
+
+/* ---------------------------------------------------------- 折叠块（summary） */
+/* `<details>` 在卡片里是 grid 子项（`.advice-plan-team` 是 `display: grid`），
+   所以 summary 作为它的第一个子元素用 `inline-flex` —— 宽度跟着文字走，
+   不会拉成整行一条（那样像分隔线，不像按钮）。 */
+.advice-plan-team-variants > summary,
+.advice-plan-team-alts > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px 4px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.032);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  line-height: 1.5;
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out),
+    background var(--dur-base) var(--ease-out);
+}
+/* 收起 / 展开的三角自绘：`<summary>` 的默认标记在深色主题里是系统样式。 */
+.advice-plan-team-variants > summary::-webkit-details-marker,
+.advice-plan-team-alts > summary::-webkit-details-marker { display: none; }
+.advice-plan-team-variants > summary::before,
+.advice-plan-team-alts > summary::before {
+  content: '▸';
+  font-size: 9px;
+  line-height: 1;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.advice-plan-team-variants[open] > summary::before,
+.advice-plan-team-alts[open] > summary::before { transform: rotate(90deg); }
+.advice-plan-team-variants > summary:hover,
+.advice-plan-team-alts > summary:hover {
+  color: var(--text-dim);
+  border-color: rgba(150, 185, 255, 0.28);
+  background: rgba(255, 255, 255, 0.055);
+}
+.advice-plan-team-variants[open] > summary,
+.advice-plan-team-alts[open] > summary {
+  color: var(--text-dim);
+  border-color: rgba(150, 185, 255, 0.22);
+}
+/* 次选那一块用青色系，与「其它配装」（中性）区分开：两块都在卡片底部，
+   不加区别时读者会以为是同一条列表的两截。 */
+.advice-plan-team-alts > summary::before { color: var(--cyan); }
+
+/* ------------------------------------------------------------- 行列表 */
+/* 列宽下限 410px —— 不是随手取的：把 90 条行的「不换行所需宽度」量了一遍
+   （分数 38 + 补金 56 + 四把光锥 89 + 视频胶囊 70 + 间隙），
+   min 270 / p50 284 / p90 363 / **p99 = max = 407**；最宽的那批就是次选行
+   （多一段「换 1 人：三月七（巡猎）」）。下限取 320 时有 17 行被挤成两行，
+   头像和视频按钮会掉到第二行 —— 行高不齐，整片栅格看着像坏了。
+   `min(410px, 100%)` 是防窄屏：手机单列时 410px 会撑出横向滚动。
+   ⚠️ 用 `auto-fill` 而不是 `auto-fit`（2026-10-21）：`auto-fit` 会把空轨道折掉，
+      于是「17 套配装」的卡排 4 列、「2 套配装」的卡把两行拉成各占半张卡
+      —— 同一个区块在不同卡片上宽窄不一，翻页时整片节奏在跳。
+      `auto-fill` 保留空轨道，任何卡片的行宽都一致。 */
+.advice-plan-variant-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(410px, 100%), 1fr));
+  gap: 0 14px;
+  margin-top: 7px;
+  padding: 3px 2px 3px 11px;
+  /* 一条竖线把「折叠标题」和「它展开出来的行」绑在一起 —— 不然展开后这些行
+     看起来和卡片上方的补金顺序属于同一层。 */
+  border-left: 2px solid rgba(255, 255, 255, 0.07);
+}
+
+/* 行：原来是 `font-size: 11.5px` + 行间虚线。虚线在**两列栅格**里会出现在第一行
+   上方、且左右两列错位，改成悬停底色 —— 行内有个 `title`（完整角色·光锥串），
+   悬停时给个底就能看出「这一行有东西可看」。 */
+.advice-plan-variant {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+/* ⚠️ 中和 app.css 第 3071 行那条 `+ .advice-plan-variant` 的虚线：栅格里
+   每一行上方都会有一条，第一行也不例外，看起来像表格缺了表头。 */
+.advice-plan-variant + .advice-plan-variant { border-top: 0; }
+.advice-plan-variant:hover { background: rgba(255, 255, 255, 0.04); }
+
+/* 分数：**默认不再是金色**。17 行全金等于没有重点 —— 只有与代表行接近
+   （差 ≤ 0.2 分，由 `variantScoreChip()` 打 `is-top`）的才用金色；
+   负分（性价比项已转负，即比代表行多补 10 金以上）压暗，让视线跳过。 */
+.advice-plan-variant-score {
+  min-width: 38px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+.advice-plan-variant-score.is-top { color: var(--gold-bright); }
+.advice-plan-variant-score.is-negative {
+  color: var(--text-muted);
+  opacity: 0.72;
+  font-weight: 500;
+}
+
+/* 「补 N 金」定为定宽：不定宽时「补 9 金」比「补 12 金」窄 8px，同一列里
+   四把光锥跟着左右错开 —— 一行人眼扫下来是锯齿状的。56px 容得下「补 100 金」。 */
+.advice-plan-variant-gap {
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 56px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 次选的「换 2 人：真珠、爻光」：青色 = 新来的。
+   原来这里写「共享 4 人」，读者要先做一次 4 减 1 才知道换了几个。 */
+.advice-plan-variant-swap {
+  color: var(--cyan);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.advice-plan-variant.is-alt .advice-plan-variant-swap { color: #8fd9e9; }
+
+/* 与代表行**不同**的那把光锥（或新换来的那个人）描金边。
+   只描边不换底色：20px 的小图上加底色会糊成一团。 */
+.advice-plan-variant-icon.is-diff {
+  border-color: rgba(240, 198, 116, 0.78);
+  box-shadow: 0 0 0 1px rgba(240, 198, 116, 0.22);
+}
+
+/* 「还有 N 套更低分的没列」：收敛说明，比列表本身再弱一档。 */
+.advice-plan-variant-more {
+  margin: 6px 0 0;
+  padding-left: 13px;
+  line-height: 1.5;
+}
+
+/* ============================================================================
+   第三轮：「换 N 人」在窄屏不被挤爆（2026-10-21，分支 fix/plan-card-details）
+   ==========================================================================*/
+
+/* 「换 N 人：XXX」参与 flex 收缩。
+   ⚠️ 共享 ≥2 是 `alternativesOf()` 的硬门槛，所以换了的人最多 2 个 —— 文案本身不长，
+      真正要防的是**窄屏单列**：那时 320px 的下限会把这一行挤到溢出。 */
+.advice-plan-variant-swap {
+  min-width: 0;
+  flex: 0 1 auto;
+}
