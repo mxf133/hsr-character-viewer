@@ -481,6 +481,17 @@ export const buildPlanPool = (scored, options = {}) => {
       // ★ 方案分 = 逐版本取最大值（用户 2026-10-18 决策）
       score: best ? best.planScore : 0,
       bestSeason: best ? best.season : null,
+      /**
+       * 最佳版本的**原始成绩**（数据集内部值，即 `scoreEnvRows` 行上的 `a`）：
+       * 轮次制 = 轮次、绝境 = 行动值、末日幻影 = 4000 − 积分。
+       *
+       * 为什么单给一份：卡片上只有 `score`（加权后的推荐分）时，读者对「这队到底
+       * 打多快」没有概念 —— 用户 2026-10-21 要求在「最佳版本 x.x」旁边印出具体
+       * 成绩（`0T` / `行动值 285` / `积分 3852`）。`seasons[]` 里每一版也带同一个
+       * 量（`score` 字段），这里单独摘一份是免得界面为了印一个数去扫整张逐版本表。
+       * 缺失（`a=null`）时给 null，界面据此不印，不编数字。
+       */
+      bestScore: best ? finiteOf(best.row.a) : null,
       strengthPart: best ? best.row.strengthPart ?? 0 : 0,
       costPart: best ? planCostPartOf(gap) : 0,
       gap,
@@ -636,6 +647,10 @@ export const materializePlanRow = (row, state) => {
     })),
     score: Number(row.score.toFixed(4)),
     bestSeason: row.bestSeason,
+    // 最佳版本的原始成绩（轮次 / 行动值 / 4000 − 积分，量纲由前端按 mode/stage 翻）。
+    // 不给 toFixed：轮次与行动值本来就是整数，末日幻影的 `4000 − 积分` 也取整过，
+    // 这里保留原值，格式化一律走 `metricValueTextOf()`（与总榜「表现」列同一把尺子）。
+    bestScore: row.bestScore ?? null,
     strengthPart: Number(row.strengthPart.toFixed(4)),
     costPart: Number(row.costPart.toFixed(4)),
     seasons: seasonsDetailOf(row.entry, ws, wc, row.gap).map((s) => ({

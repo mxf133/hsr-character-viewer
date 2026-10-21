@@ -368,6 +368,12 @@ console.log('\n[buildPlan — 方案分 / 逐版本取最大 / 分页]');
   check('逐版本**取最大值**（不是一个加权平均）', Math.max(expect45, expect44) === expect45
     && near('方案分 = max(各版本分)', main.score, expect45, 1e-4));
   eq('最高分来自哪一版要带出来（UI 要能标）', main.bestSeason, '4.5');
+  // ★ 2026-10-21：最佳版本的**原始成绩**（`bestScore`）也要带出来 —— 卡片上
+  //    「最佳版本 4.6」旁边要印「0T / 行动值 285」，没有这个数界面就只能干写版本号。
+  //    夹具里 4.5 那条的行动值就是 100（见 FIXTURE）。
+  eq('最高分那一版的原始成绩一起带出来（UI 印具体成绩用）', main.bestScore, 100);
+  const best45 = main.seasons.find((s) => s.season === main.bestSeason);
+  eq('bestScore 与 seasons 里最佳那一版是同一个量', main.bestScore, best45.score);
   eq('★ 列出**所有**版本的成绩', main.seasons.length, 2);
   eq('seasons 按分数降序，第一条就是最高那一版',
     main.seasons.map((s) => s.season), ['4.5', '4.4']);
@@ -383,6 +389,17 @@ console.log('\n[buildPlan — 方案分 / 逐版本取最大 / 分页]');
   check('每条方案都算出了补金明细', main.fill.length > 0);
   eq('pullsExpected = Σ fill 的期望抽数',
     main.pullsExpected, main.fill.reduce((n, f) => n + f.pullsExpected, 0));
+}
+
+{
+  // 成绩缺失（`a=null`）→ bestScore 给 null，界面据此**不印**，不编数字。
+  // （`runPlan()` 建池前会滤掉 null 成绩的行，这里钉 `buildPlan()` 被直接喂的口径。）
+  const rows = [{ season: '4.5', c: 9, a: null, n: 1, t: 3, m: ROSTER_MAIN }];
+  const nullPlan = buildPlan(
+    scoreEnvRows(rows, { mode: 'aa', stage: 'plight', ws: 1, wc: 1, versionWeightOf }).scored,
+    { availability: AVAIL, wc: 1, maxRows: 20 },
+  );
+  eq('成绩缺失时 bestScore = null（不印，不编）', nullPlan.rows[0]?.bestScore ?? null, null);
 }
 
 {

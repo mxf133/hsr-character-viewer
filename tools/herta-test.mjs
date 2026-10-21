@@ -1033,6 +1033,26 @@ check('抽卡方案卡片：「全队金数」不许印两遍（用户 2026-10-1
   assert.ok(!/bestTeamGold/.test(block), '旧「证据金数」（bestTeamGold）不许回来 —— 它就是重复印金数的源头');
 });
 
+check('抽卡方案的关卡量纲判据不许再写 kind === turn（服务端下发的是 av / round）', () => {
+  /**
+   * 源码级护栏（2026-10-21，v4.6.142）。
+   *
+   * 卡片等式、脚注、分数浮层三处都要区分「轮次型 / 行动值型」，判据来自服务端下发的
+   * `plan.kind` —— `envKindOf()` 从 v4.6.130 重构起给的就是 `'av' | 'round'`。改之前
+   * 三处都写 `plan.kind === 'turn'`，那个值**从来没有下发过**，判据恒假：混沌 / 虚构
+   * （轮次型）上「（轮次口径）」从来没亮过，全按行动值口径写。现在统一走
+   * `planIsTurn()`（`kind !== 'av'`，与 `envKindOf` 的兜底一致）。
+   */
+  const src = readFileSync(resolve('public/scripts/advice-view.js'), 'utf8');
+  const strip = (line) => line.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
+  const offenders = src.split('\n')
+    .map((line, i) => ({ no: i + 1, code: strip(line) }))
+    .filter(({ code }) => /kind === 'turn'/.test(code))
+    .map(({ no, code }) => `advice-view.js:${no} ${code.trim()}`);
+  assert.deepEqual(offenders, [],
+    `这些行还在跟一个不存在的 turn 比（应走 planIsTurn()）：\n${offenders.join('\n')}`);
+});
+
 check('强度详情窗口：投入项与单调包络的文案都不许回来（用户 2026-10-17 第 2 条）', () => {
   /**
    * 源码级护栏（与上面那条「不许写满分 / 达标 / 及格」同一个路数）。

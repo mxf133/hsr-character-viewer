@@ -2585,6 +2585,17 @@
 //            `_probe-strength-gap.mjs`（90 天花板 / 缺副本 / 覆盖率修正）、
 //            `_probe-strength-why.mjs`（单角色逐副本 / 逐版本对比「现状行 vs 最快行」）、
 //
+//   v4.6.142 2026-10-21：**抽卡方案「最佳版本」旁边印具体成绩**（分支
+//             `feat/plan-best-season-score`，用户：「最佳版本 x.x 旁边，需要有具体的
+//             成绩，例如 0T 或者行动值 xx」）。卡片事实行从「最佳版本 4.6」改成
+//             「最佳版本 4.6 · 0T」（绝境「行动值 285」/ 末日幻影「积分 3852」）——
+//             版本号只说哪一版的补金推荐分最高，成绩才说那版打得多快。服务端
+//             `buildPlanPool()` 的池行带出 `bestScore`（最佳那一版的原始成绩），
+//             前端按副本量纲走 `metricValueTextOf()`（与总榜「表现」列同一把尺子）。
+//             同轮修掉三处恒假判据 `plan.kind === 'turn'`（服务端下发的是
+//             `'av' | 'round'`，「（轮次口径）」在混沌 / 虚构上从来没亮过），
+//             分数浮层的成绩列也不再会把末日幻影印成「行动值 148」。
+//
 //   v4.6.141 2026-10-21：**补金按真实星魂级数算差价**（分支 `feat/character-detail-algo-fix`，
 //             用户明确口径「限定角色的 E3 = 3 个星魂 + 1 个本体 = 4 金」）。
 //             `marginalCostOf()` 的 `mine` / `target` 不再过 `eidolonTierOf` 归并：
@@ -3676,7 +3687,7 @@
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.141';
+export const PROGRAM_VERSION = '4.6.142';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';
