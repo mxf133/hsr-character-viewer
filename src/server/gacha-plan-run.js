@@ -178,9 +178,17 @@ export const planCacheStats = () => ({
  *
  * ⚠️ 四个字段名别改：`a` 成绩（行动值 / 轮次）、`c` 用金、`n` 投稿数、`m` 成员串。
  *    这几个是数据集的原生写法（见 `herta-build.mjs` 的产出），`gacha-score.js` 全程按它读。
- * ⚠️ `tier === 'perfect'` 才算投稿：建库侧把 `target`（差一档）也写进 frontier，
- *    但「差一档」不是成绩 —— 拿它进方案会让「没打满的队」白得高分。
- *    需求文档 §一 的判据就是「通关 / 0T / <500 行动值」，不含差一档。
+ * ⚠️ v4.6.139 起 `target`（差一档）**也进方案池**。此前只取 `perfect`，但满分档的
+ *    成绩恒为满分（轮次型 `a=0`、末日积分满 ⇒ `a=0`），实测 20913 条满分行的
+ *    `a` 全是 0（见 `audit/algo-review` 的审计记录）—— 方案池里「队伍强度」恒 1.000、
+ *    零区分度，moc 首页 20 行只有 2 个分值、榜首 13 支并列。差一档行带着真实成绩
+ *    （忘却 a∈{1,2}、末日 a∈(0,300]），强度有梯度；它的分数自然靠后，不存在
+ *    「没打满的队白得高分」（旧注释的顾虑在新公式下不成立：强度项按真实成绩打折）。
+ *    同阵容同版本的 perfect/target 冲突由 `groupRosters()` 裁决：**档位优先**。
+ * ⚠️ 成绩缺失（`a=null`）的行**排除**而不是按 0 分进池：强度 0 的「幽灵候选」
+ *    会静默沉底，污染「来自 M 条投稿」的分母。旧过滤
+ *    `Number.isFinite(Number(r.actionValue)) !== false` 恒为真（`Number(null)=0`
+ *    是 finite），滤不住 null —— 已修。
  */
 const rowOf = (r) => ({
   season: r.season,
@@ -191,6 +199,9 @@ const rowOf = (r) => ({
   n: Math.max(1, Number(r.submissions) || 1),
   m: (r.members || []).map((m) => `${m.char}|${m.eidolon}|${m.lc || '-'}|${m.superimp || 1}`),
   tier: r.tier,
+  // 档位的**数字**形式（3=满分 2=差一档），与建库侧 `TIER_CODE` 同刻度。
+  // `groupRosters()` 的同版本裁决和池行的 `tier` 字段都读它；缺失当满分（老夹具没这字段）。
+  t: r.tier === 'target' ? 2 : 3,
   video: r.video || null,
 });
 
@@ -291,7 +302,11 @@ export const runPlan = async (options = {}) => {
     };
 
     const rows = (f.frontierRows || [])
-      .filter((r) => r.tier === 'perfect' && Number.isFinite(Number(r.actionValue)) !== false)
+      // ⚠️ v4.6.139：`target`（差一档）也进池（理由见 `rowOf` 上方的审计注释）；
+      //   成绩缺失的行排除 —— 旧条件 `isFinite(Number(av)) !== false` 恒真、滤不住 null。
+      .filter((r) => (r.tier === 'perfect' || r.tier === 'target')
+        && r.actionValue !== null && r.actionValue !== undefined
+        && Number.isFinite(Number(r.actionValue)))
       .map(rowOf)
       .filter((r) => r.m.length);
 

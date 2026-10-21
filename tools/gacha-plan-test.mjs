@@ -200,6 +200,39 @@ check('主角阵容在两个版本都有成绩', mainEntry?.bySeason.size === 2,
 check('同一阵容的代表永远带着 4 个成员', mainEntry?.members.length === 4);
 
 {
+  // ---- v4.6.136：target（差一档）进池后的同版本裁决（审计 audit/algo-review 的修复）----
+  console.log('\n[同版本裁决 — 档位优先于投稿得分]');
+  const ROSTER_T = ['Alpha|6|AlphaLC|5', 'Beta|0||0', 'Ceta|0||0', 'Dee|0||0'];
+  // 同一套阵容、同一版本：满分（贵）vs 差一档（便宜）。§一投稿得分 = 强度 + wc × baseline/c，
+  // 便宜那条的 costPart 完全可能反超 —— 构造的就是这种「分数反超」的场景。
+  const dup = [
+    { season: '4.5', c: 12, a: 0, n: 1, t: 3, m: ROSTER_T },
+    { season: '4.5', c: 4, a: 2, n: 1, t: 2, m: ROSTER_T },
+  ];
+  const gT = [...groupRosters(scoreEnvRows(dup, { mode: 'moc', stage: '' }).scored).values()];
+  check('同阵容同版本只留一条', gT.length === 1 && gT[0]?.bySeason.size === 1,
+    `groups=${gT.length}`);
+  const rep = gT[0]?.bySeason.get('4.5');
+  check('代表行是**满分**那条（档位优先，即使差一档那条投稿得分更高）',
+    Number(rep?.t) === 3 && Number(rep?.a) === 0, `t=${rep?.t} a=${rep?.a}`);
+  check('代表行的强度 = 1（轮次型 0 轮）', Math.abs(rep?.strengthPart - 1) < 1e-9,
+    String(rep?.strengthPart));
+  // 差一档单独出现时照常进池（不能因为档位低被整个丢掉）
+  const solo = [{ season: '4.5', c: 4, a: 2, n: 1, t: 2, m: ROSTER_T }];
+  const repS = [...groupRosters(scoreEnvRows(solo, { mode: 'moc', stage: '' }).scored).values()][0]
+    ?.bySeason.get('4.5');
+  check('只有差一档投稿的阵容照常进池', Number(repS?.a) === 2, `a=${repS?.a}`);
+  // 轮次型强度按真实成绩打折：a=2 → 1/(2+1)。这正是纳入 target 的意义：有梯度。
+  check('差一档行的强度按真实成绩打折（轮次型 1/(a+1)）',
+    Math.abs(repS?.strengthPart - 1 / 3) < 1e-9, String(repS?.strengthPart));
+  // 老夹具 / 老载荷没有 `t` 字段 —— 缺失必须当满分，否则整池代表行全换成「档位未知」。
+  const legacy = [{ season: '4.5', c: 4, a: 0, n: 1, m: ROSTER_T }];
+  const repL = [...groupRosters(scoreEnvRows(legacy, { mode: 'moc', stage: '' }).scored).values()][0]
+    ?.bySeason.get('4.5');
+  check('没有 t 字段的行按满分对待（向后兼容）', Number(repL?.t ?? 3) === 3);
+}
+
+{
   // 同一版本塞两条成绩，看会不会只留高的那条。
   const dupe = [
     { season: '4.5', c: 9, a: 300, n: 1, t: 1, m: ROSTER_MAIN },

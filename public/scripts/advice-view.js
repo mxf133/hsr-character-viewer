@@ -4926,7 +4926,10 @@ const planScoreTip = (row, plan, ws, wc) => {
   const bestSeason = String(row.bestSeason ?? '');
   const rows = (row.seasons || []).map((s) => [
     `${s.season}${String(s.season) === bestSeason ? ' ·最佳' : ''}`,
-    isTurn ? `${s.score} 轮` : `行动值 ${s.score}`,
+    // ⚠️ v4.6.136 起差一档（target）投稿也进方案池：成绩那一列要如实标出来，
+    //    否则「轮次 1」和「轮次 0」的队伍强度差异（1/2 vs 1）看起来像算错。
+    (isTurn ? `${s.score} 轮` : `行动值 ${s.score}`)
+      + (Number(s.tier) === 2 ? '（差一档）' : ''),
     Number(s.strengthPart ?? 0).toFixed(3),
     `补 ${row.gap} 金`,
     Number(s.costPart ?? 0).toFixed(3),
@@ -4949,6 +4952,8 @@ const planScoreTip = (row, plan, ws, wc) => {
       isTurn
         ? '队伍强度 = ws ÷（轮次 + 1），0 轮最高。'
         : '队伍强度 = ws ×（1 − 行动值 ÷ 500），行动值越低越高。',
+      '「差一档」= 这套阵容在该版本的最好成绩落在「次好一档」（如 1T / 积分未到顶格线），'
+      + '强度按真实成绩计 —— 同一套阵容若有「最好一档」的投稿，以那一版为准。',
       `性价比 = 1 − 补金 ÷ 10：补得越少越高，补满 10 金归零、再多转负。`
       + `这套要补 ${Number(row.gap)} 金 → ${costPartNow.toFixed(2)}（已齐时取 1）。`,
       '版本权重只决定「哪一版的分更高」，不改变队伍强度本身；同一套四人只占一行，'

@@ -145,8 +145,17 @@ export const groupRosters = (scored) => {
     // packKeys 跟着走：下游算 Δgold 时要按它缓存，别再算一遍 `packKeyOf`。
     if (!entry) groups.set(key, (entry = { key, members, packKeys, bySeason: new Map() }));
     const prev = entry.bySeason.get(row.season);
-    // 同版本取最高分那条代表这一版的成绩。
-    if (!prev || (row.score ?? 0) > (prev.score ?? 0)) entry.bySeason.set(row.season, row);
+    // 同版本取代表行。⚠️ v4.6.139 起 `target`（差一档）也进池，同一套阵容在同一版本
+    // 可能同时有满分行和差一档行 —— 裁决必须**档位优先**，不能只比 `score`：
+    // `score` 是 §一那条链的投稿得分（强度 + wc × baseline/cost），一套便宜的差一档
+    // 阵容的 costPart 完全可能反超昂贵的满分阵容（实测构造：base=9、wc=0.5 时
+    // target 1.625 > perfect 1.5），只比分会让「0 轮通关」的成绩被「差一档」顶掉。
+    // 档位数字 `t`：3=满分 2=差一档；缺失当满分（老夹具 / 老载荷没这字段）。
+    const rankOf = (r) => (Number(r.t) === 2 ? 1 : 2);
+    if (!prev || rankOf(row) > rankOf(prev)
+      || (rankOf(row) === rankOf(prev) && (row.score ?? 0) > (prev.score ?? 0))) {
+      entry.bySeason.set(row.season, row);
+    }
   }
   return groups;
 };
