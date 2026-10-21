@@ -381,7 +381,8 @@ export const bandSampleOf = (rows, band) => {
 export const usageSummaryOf = (rows, kind, options = {}) => {
   const { top = 10, otherLabel = '其它' } = options;
   const bands = USAGE_BANDS_OF[kind] || USAGE_BANDS_OF.round;
-  return bands.map((band) => {
+  // 先落到 `out`，下面统一补 `shareOfClear` 再返回。
+  const out = bands.map((band) => {
     const counts = usageByBand(rows, band);
     const { submissions, entries } = bandSampleOf(rows, band);
     const head = counts.slice(0, top).map((it) => ({ ...it, other: false }));
@@ -397,6 +398,20 @@ export const usageSummaryOf = (rows, kind, options = {}) => {
     }
     return { key: band.key, label: band.label, submissions, entries, items: head };
   });
+  // v4.6.136 起，非通关档各带一个 `shareOfClear`（该档投稿数 ÷ 通关档投稿数）。
+  //
+  // 为什么要有它：四档**不是四分互斥** —— 轮次型的「通关」被 0T / 1T / 2T 精确切分
+  // （混沌回忆近 6 期实测 5259 = 5104 + 84 + 71），行动值型的「0 行动值」嵌在
+  // 「<300 行动值」内部。四张 Σ=100% 的环形图并排，读者很容易读成互斥的四类；
+  // UI 在卡片标题旁印「占通关 x%」就是把这层结构挑明。它还兼任「这两张饼是不是
+  // 几乎一样」的提示 —— 末日幻影的 <300 占通关 99.8%，两张饼肉眼无法区分。
+  // 「通关」档自己是分母，不设该字段（前端据此不印）。
+  const clearSubs = out.find((b) => b.key === 'clear')?.submissions ?? 0;
+  for (const band of out) {
+    if (band.key === 'clear') continue;
+    band.shareOfClear = clearSubs > 0 ? band.submissions / clearSubs : null;
+  }
+  return out;
 };
 
 /**

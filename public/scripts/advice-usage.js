@@ -7,7 +7,7 @@
  *
  * 设计要点：
  *   * **环形图而不是实心饼**：中间那个洞能放「样本量」，读者一眼知道这块饼有多可信
- *     （绝境 0 行动值只有 25 条，与混沌 4844 条不是同一个量级 —— 这正是 v4.6.129 那条
+ *     （绝境 0 行动值只有 50 条投稿，与混沌 5259 条不是同一个量级 —— 这正是 v4.6.129 那条
  *     「0 行动值达成率折价」的由来）。
  *   * **`stroke-dasharray` 画弧**，不用 canvas / SVG path 计算：每一步只是一段
  *     `dash` + `offset` 的算术，DOM 里能直接读到数值，也方便做 CSS 过渡。
@@ -90,6 +90,16 @@ const renderDonut = (band, envLabel) => {
   const head = document.createElement('div');
   head.className = 'usage-donut-head';
   head.appendChild(text('span', 'usage-donut-title', band.label));
+  // 「占通关 x%」：四档**不是四分互斥** —— 轮次型的通关被 0T/1T/2T 精确切分，
+  // 行动值型的「0 行动值」嵌在「<300 行动值」内部（见 gacha-score.js 里
+  // `shareOfClear` 那段）。并排的 Σ=100% 环形图极易被读成互斥的四类，这个角标
+  // 把分母挑明；顺带提示「这两张饼几乎一样」（末日幻影的 <300 占通关 99.8%）。
+  // 通关档自己是分母（服务端不设该字段），所以不印。
+  if (band.shareOfClear != null) {
+    const pct = band.shareOfClear * 100;
+    const shown = pct >= 10 ? `${Math.round(pct)}%` : `${pct.toFixed(1)}%`;
+    head.appendChild(text('span', 'usage-donut-share', `占通关 ${shown}`));
+  }
   // ⚠️ 2026-10-19：样本量**只在环心写一次**。原来右上也印「4844 条投稿」，与环心重复；
   // 而环心当时印的是 `items.length`（恒为 11 = 前 10 + 其它），那个数字没有任何信息量
   // —— 读者既不知道这 11 是什么，也看不出这块饼可不可信。现在环心给投稿数，右上留空。
@@ -130,7 +140,9 @@ const renderDonut = (band, envLabel) => {
   }
 
   // 环心：**投稿数**（不是角色数）。这是判断「这块饼有多可信」的唯一线索 ——
-  // 「300~500 行动值」只有 4 条投稿、而「通关」有 4844 条，两者的百分比不该被同等看待。
+  // 末日幻影的「300~500 行动值」只有 5 条投稿、而「通关」有 2491 条，
+  // 两者的百分比不该被同等看待。（这两个数是 v4.6.136 修完 n 透传后的**真实投稿数**；
+  // 之前这里印的 4 条 / 4844 条是配装行数，还把混沌的数安到了末日头上。）
   const centerValue = svgEl('text', {
     x: mid, y: mid - 2, 'text-anchor': 'middle', class: 'usage-donut-total',
   });

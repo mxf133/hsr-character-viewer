@@ -4279,6 +4279,15 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
   color: var(--text);
 }
 
+/* 「占通关 x%」角标：四档不是四分互斥（0T ⊂ 通关；轮次型的通关 = 0T+1T+2T），
+   印出分母占比把这层结构挑明。它是背景信息，弱化处理 —— 别和标题抢注意力。 */
+.usage-donut-share {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .usage-donut {
   display: block;
   width: 100%;
@@ -4304,8 +4313,9 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
   .usage-donut-card:hover { transform: none; }
 }
 
-/* 环心：上面是角色数，下面是「角色」两个字。用 fill 显式取值 —— SVG 文本不继承
-   `.muted` 那套 class（它们只对 HTML 生效）。 */
+/* 环心：上面是投稿数，下面是「条投稿」三个字。用 fill 显式取值 —— SVG 文本不继承
+   `.muted` 那套 class（它们只对 HTML 生效）。（v4.6.136 更正：环心自 2026-10-19 起
+   印的就是投稿数，这条注释晚改了一步，还写着「角色数」。） */
 .usage-donut-total {
   fill: var(--text);
   font-family: var(--font);
