@@ -2585,6 +2585,12 @@
 //            `_probe-strength-gap.mjs`（90 天花板 / 缺副本 / 覆盖率修正）、
 //            `_probe-strength-why.mjs`（单角色逐副本 / 逐版本对比「现状行 vs 最快行」）、
 //
+//   v4.6.141 2026-10-21：**补金按真实星魂级数算差价**（分支 `feat/character-detail-algo-fix`，
+//             用户明确口径「限定角色的 E3 = 3 个星魂 + 1 个本体 = 4 金」）。
+//             `marginalCostOf()` 的 `mine` / `target` 不再过 `eidolonTierOf` 归并：
+//             账号缺本体、目标 E3 → 4 金（本体 1 + 星魂 3）；账号已有 E5、目标 E6 → 1 金。
+//             归并（`eidolonTierOf`）仍只用于「投稿聚合」（`packKeyOf`），补金不再走它。
+//
 //   v4.6.140 2026-10-21：**增量同步不再漏投稿**（分支 `audit/herta-sync-coverage`，
 //             审计与修复一体，结论见 docs/同步漏投稿审计.md）。四个根因与修法：
 //             ① 期一过 expireDate 就永久跳过，而站方收录滞后 ≥2 周（4.5 异相一条
@@ -3670,7 +3676,7 @@
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.140';
+export const PROGRAM_VERSION = '4.6.141';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';
