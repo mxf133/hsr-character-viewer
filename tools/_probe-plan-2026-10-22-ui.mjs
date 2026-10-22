@@ -104,6 +104,15 @@ check('提示行印出上限', await evaluate(
 const cards = await evaluate("document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team').length");
 const btns = await evaluate("document.querySelectorAll('.advice-plan-exclude-btn').length");
 check('每张卡都有「排除此配队」', btns === cards, `${btns} / ${cards}`);
+// 按钮要**靠左**（用户 2026-10-22）：在分数左边、紧跟名次。
+const btnPos = await evaluate(`(() => {
+  const head = document.querySelector('#adviceTeamPlanBody .advice-plan-team-head');
+  const btn = head?.querySelector('.advice-plan-exclude-btn');
+  const score = head?.querySelector('.advice-plan-team-score');
+  if (!btn || !score) return null;
+  return { btn: Math.round(btn.getBoundingClientRect().left), score: Math.round(score.getBoundingClientRect().left) };
+})()`);
+check('「排除此配队」靠左（在分数左边）', !!btnPos && btnPos.btn < btnPos.score, JSON.stringify(btnPos));
 
 // 先把首张卡的四个角色名记下来：排除之后它必须换人（角色是**整队剔除**）。
 const beforeMembers = await evaluate(
@@ -153,19 +162,47 @@ check('「最佳版本」旁边印了首领名', waitCards && bossCount > 0, `${
 const bossSample = await evaluate("document.querySelector('.advice-plan-boss-name')?.textContent || ''");
 check('首领名是中文', /[一-龥]/.test(bossSample), bossSample);
 
-// ④ 「其它配装」的完整配装文字
-const variantRows = await evaluate("document.querySelectorAll('.advice-plan-variant.is-alt').length");
-const variantNamed = await evaluate("document.querySelectorAll('.advice-plan-variant-names').length");
-check('「其它配装」每行都印完整配装文字', variantNamed > 0, `${variantNamed} 行（次选 ${variantRows} 行不计）`);
-const variantText = await evaluate(
-  "document.querySelector('.advice-plan-variant-names')?.textContent || ''");
-check('配装文字含「E数字」与「S数字」', /E[0-9]/.test(variantText) && /S[0-9]/.test(variantText),
-  variantText.slice(0, 60));
+// ④ 「其它配装」每行都是**四个位置的完整配队**（2026-10-22 起换成 `.advice-lineup`）
+const variantLineups = await evaluate(
+  "document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team-variants .advice-lineup').length");
+const variantSlots = await evaluate(`(() => {
+  const g = document.querySelector('#adviceTeamPlanBody .advice-plan-team-variants .advice-lineup');
+  return g ? g.querySelectorAll('.advice-lineup-slot').length : 0;
+})()`);
+check('「其它配装」每行都是四个位置的完整配队',
+  variantLineups > 0 && variantSlots === 4, `${variantLineups} 行 / 首行 ${variantSlots} 格`);
+const slotText = await evaluate(
+  "document.querySelector('.advice-plan-team-variants .advice-lineup-slot')?.textContent || ''");
+check('每个位置印了角色 E 档与光锥 S 档', /E[0-9]/.test(slotText) && /S[0-9]/.test(slotText),
+  slotText.slice(0, 60));
 
-// ⑤ 视频来源
+// ④b 「你现在就能打的队」（补 0 金摘要）
+const ownedRows = await evaluate("document.querySelectorAll('.advice-plan-owned-row').length");
+const ownedSlots = await evaluate(`(() => {
+  const g = document.querySelector('.advice-plan-owned-row .advice-lineup');
+  return g ? g.querySelectorAll('.advice-lineup-slot').length : 0;
+})()`);
+check('「你现在就能打的队」列出补 0 金的队（每支四个位置）',
+  ownedRows > 0 && ownedSlots === 4, `${ownedRows} 支 / 首支 ${ownedSlots} 格`);
+
+// ⑤ 视频来源 + 「尽量有 B 站来源」
 const primary = await evaluate("document.querySelectorAll('.advice-team-video').length");
 const more = await evaluate("document.querySelectorAll('.advice-plan-video-more').length");
 check('卡片有来源视频按钮', primary > 0, `${primary} 枚`);
+const videoStats = await evaluate(`(() => {
+  const cards = [...document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team')];
+  let bili = 0; let search = 0; let bad = 0;
+  for (const card of cards) {
+    const links = [...card.querySelectorAll('.advice-plan-team-facts .advice-team-video')];
+    const hasBili = links.some((a) => a.classList.contains('is-bilibili') && !a.classList.contains('is-search'));
+    const hasSearch = links.some((a) => a.classList.contains('is-search'));
+    if (hasBili) bili += 1;
+    if (hasSearch) search += 1;
+    if (!hasBili && !hasSearch) bad += 1;
+  }
+  return { cards: cards.length, bili, search, bad };
+})()`);
+check('没有 B 站来源的卡都补了「B站搜索」', videoStats.bad === 0, JSON.stringify(videoStats));
 console.log(`  · 其中「另 N 条来源」折叠块 ${more} 个（同一套阵容只有一条来源时不出）`);
 
 // ⑥ 无 JS 异常

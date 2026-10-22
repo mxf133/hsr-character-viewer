@@ -3269,6 +3269,126 @@ const planBossNode = (boss) => {
   return wrap;
 };
 
+/**
+ * 一排**完整配队的紧凑写法**（2026-10-22）。
+ *
+ * 用户两条要求的同一份答案：「其它配装也需要显示详细的配队，如同最高分的投稿一样」+
+ * 「用户已有配队也需要显示在抽卡方案」。两处要的都是「四个位置分别是谁、E 几、用什么光锥、
+ * S 几」——所以一份实现，两处共用，口径不会分叉。
+ *
+ * 与卡片顶部那四个大格子（`.advice-plan-team-slot`，带大字号的「已有 / 缺」徽章）的区别只在
+ * **密度**：这里是给「一屏要看好几支队」的场景用的（摘要 + 折叠列表）。
+ *
+ * @param members     服务端给的位置数组（`char / charCn / eidolon / lc / lcCn / superimp / owned`）
+ * @param options.baseMembers 代表行；给了就**把与它不同的位置描金**（「其它配装」看差异用）
+ */
+const planLineupGrid = (members, options = {}) => {
+  const { baseMembers = null } = options;
+  const base = baseMembers ? new Map(baseMembers.map((m) => [m.char, m])) : null;
+  const sigOf = (m) => `${m?.lc || ''}|${Number(m?.superimp) || 1}`;
+  const wrap = text('div', 'advice-lineup');
+  for (const m of members || []) {
+    if (!m?.char) continue;
+    const slot = text('div', `advice-lineup-slot${m.owned === false ? ' is-missing' : ''}`);
+    const icon = iconUrlOf('char', m.char);
+    if (icon) slot.appendChild(iconImg(icon, 'advice-lineup-icon'));
+    const body = text('span', 'advice-lineup-body');
+    const nameRow = text('span', 'advice-lineup-char');
+    nameRow.appendChild(text('strong', '', m.charCn || cn(m.char)));
+    nameRow.appendChild(text('span', 'advice-lineup-eidolon', `E${Number(m.eidolon) || 0}`));
+    // 「缺」不占一整枚徽章（这一行字已经够密），只用颜色 + 悬停说明标出来。
+    if (m.owned === false) {
+      nameRow.appendChild(text('span', 'advice-lineup-gap', '缺'));
+    }
+    body.appendChild(nameRow);
+    if (m.lc) {
+      const coneRow = text('span', 'advice-lineup-cone');
+      const coneIcon = iconUrlOf('cone', m.lc);
+      if (coneIcon) coneRow.appendChild(iconImg(coneIcon, 'advice-lineup-cone-icon'));
+      coneRow.appendChild(text('span', '', `${m.lcCn || cnCone(m.lc)} S${Number(m.superimp) || 1}`));
+      body.appendChild(coneRow);
+    } else {
+      body.appendChild(text('span', 'advice-lineup-cone', '无光锥'));
+    }
+    slot.appendChild(body);
+    // ⚠️ 描边口径沿用 2026-10-21 的结论：**只标「光锥一样、只有命座不同」**。
+    //    「任何差异都描边」试过 —— 实测 116 套变体里 113 套换过光锥、平均 2.6 格发亮，
+    //    满屏金框等于没有重点；而现在每格都印着光锥名与 S 数，换了什么都读得出来。
+    const b = base?.get(m.char);
+    if (b && sigOf(b) === sigOf(m) && (Number(b.eidolon) || 0) !== (Number(m.eidolon) || 0)) {
+      slot.classList.add('is-diff');
+    }
+    wrap.appendChild(slot);
+  }
+  return wrap;
+};
+
+/**
+ * 「去 B 站搜这套配队」（2026-10-22，用户：「尽量有 b 站来源」）。
+ *
+ * 数据侧已经把首选改成「B 站优先」了（`videoRankOf`），但仍有大约四成阵容的投稿**只有
+ * YouTube**（实测原始 30,879 条里 B 站占 38.3%）。那种卡片原来只有一枚 YouTube 按钮 ——
+ * 用户要的是「尽量有 B 站来源」，所以再挂一个**站内搜索**：点开就是 B 站按四个角色名
+ * 搜出来的结果页，比自己再手打一遍强。
+ *
+ * ⚠️ 它是**搜索**、不是「这套阵容的某条投稿」——所以文案写「B站搜索」，图标用 B 站的站标，
+ *    与真正的来源按钮（写站名 `BiliBili`）区分开。
+ */
+const bilibiliSearchLink = (members) => {
+  const names = (members || []).map((m) => m?.charCn || (m?.char ? cn(m.char) : null)).filter(Boolean);
+  if (!names.length) return null;
+  const a = document.createElement('a');
+  a.className = 'advice-team-video is-bilibili is-search';
+  a.href = `https://search.bilibili.com/all?keyword=${encodeURIComponent(names.join(' '))}`;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  const title = `在 B 站搜索这套配队（${names.join(' / ')}）`;
+  a.title = title;
+  a.setAttribute('aria-label', title);
+  if (VIDEO_ICON_SVG.bilibili) a.innerHTML = VIDEO_ICON_SVG.bilibili;
+  else a.appendChild(text('span', 'advice-team-video-glyph', '▶'));
+  a.appendChild(text('span', 'advice-team-video-label', 'B站搜索'));
+  return a;
+};
+
+/**
+ * 「你现在就能打的队」（2026-10-22，用户：「用户已有配队也需要显示在抽卡方案」）。
+ *
+ * 「已有」= **补 0 金**（四个位置的星魂 / 光锥都齐了）。这些队在榜里本来就有，但按分数排
+ * 常常落在好几页之后；这里把分最高的几支摘到最上面，用户一眼就知道「手上已经有什么」。
+ * 数据由服务端给（`plan.ownedTeams` / `plan.ownedCount`，与榜面同源，不另算一遍）。
+ */
+const planOwnedTeams = (plan) => {
+  const teams = Array.isArray(plan.ownedTeams) ? plan.ownedTeams : [];
+  if (!teams.length) return null;
+  const box = text('div', 'advice-plan-owned');
+  const head = text('div', 'advice-plan-owned-head');
+  head.appendChild(text('span', 'advice-plan-owned-title', '你现在就能打的队'));
+  head.appendChild(text('span', 'muted small',
+    `补 0 金 · 全池共 ${Number(plan.ownedCount) || teams.length} 支，这里列分最高的 ${teams.length} 支`));
+  box.appendChild(head);
+  for (const team of teams) {
+    const row = text('div', 'advice-plan-owned-row');
+    row.appendChild(text('span', 'advice-plan-owned-score', Number(team.score).toFixed(2)));
+    row.appendChild(planLineupGrid(team.members));
+    const facts = text('span', 'advice-plan-owned-facts muted small');
+    if (team.bestSeason) {
+      const best = metricValueTextOf(plan.mode, plan.stage, team.bestScore);
+      facts.appendChild(text('span', '', `最佳版本 ${team.bestSeason}${best ? ` · ${best}` : ''}`));
+    }
+    row.appendChild(facts);
+    // 「尽量有 B 站来源」：这套阵容没有 B 站投稿时补一枚站内搜索（与卡片同一条规则）。
+    const video = videoLink(team.video);
+    if (video) row.appendChild(video);
+    if (!team.video || videoPlatformOf(team.video) !== 'bilibili') {
+      const bili = bilibiliSearchLink(team.members);
+      if (bili) row.appendChild(bili);
+    }
+    box.appendChild(row);
+  }
+  return box;
+};
+
 const planVideoSources = (sources, primaryUrl, scoreText) => {
   const rest = (sources || []).filter((s) => s && s.url && s.url !== primaryUrl);
   if (!rest.length) return null;
@@ -4836,46 +4956,6 @@ const variantScoreChip = (score, baseScore) => {
 };
 
 /**
- * 配装变体的「4 把光锥」（2026-10-21）。
- *
- * 这 17 套配装的**四个角色完全相同**，只换光锥 / 叠影 / 命座 —— 原来每行印
- * 「砂金·戏浪·向浪花掷下盛夏S5 / 不死途·烦恼着，幸福着S1 / …」这种 60 字的串，
- * 17 行读下来一个字都抓不住，而重复的四个角色名本身没有信息量。改成画 4 把光锥。
- * 完整名字（角色 · 命座 · 光锥 S 数）留在行的 `title` 里，要核对时悬停就有。
- * 没装光锥的位置退回角色头像（「空位」本身也是差异）。
- *
- * ⚠️ **描边只标「只差命座」的那一种**（2026-10-21 两次踩坑后定的口径）：
- *    ① 先做成「任何差异都描金边」—— 实测 116 套变体里 **113 套换过光锥**，
- *       四格里平均 **2.6 格**都会亮（305/464 个图标），满屏橙框反而没有重点；
- *    ② 再给命座加 E 角标 —— 20px 的图上角标必然压到**右边那一格**，
- *       实测四格里两个角标就糊成一片。
- *    最终：**光锥换了就让图标本身去表达**（那把光锥的画本来就不一样，不需要再描边）；
- *    只有「光锥一模一样、只有命座变了」时图标看不出差别，才给它描金边 ——
- *    实测这种情况只有 3/116 套，标出来是有效信息而不是噪声。
- */
-const variantConeIcons = (members, baseMembers) => {
-  const wrap = text('span', 'advice-plan-variant-icons');
-  // 光锥签名**不含命座**：命座单独判（见上）。`lineup` 的键只有四个角色名
-  // （`lineupKeyOf`），所以折叠进来的这一批光锥和命座都可能不同。
-  const sigOf = (m) => `${m?.lc || ''}|${Number(m?.superimp) || 1}`;
-  const base = new Map((baseMembers || []).map((m) => [m.char, m]));
-  for (const m of members || []) {
-    const url = (m.lc && iconUrlOf('cone', m.lc)) || iconUrlOf('char', m.char);
-    if (!url) continue;
-    const lcName = m.lc ? `${m.lcCn || cnCone(m.lc)} S${Number(m.superimp) || 1}` : '无光锥';
-    const eidolon = Number(m.eidolon) || 0;
-    const b = base.get(m.char);
-    const eidolonOnly = !!b
-      && sigOf(b) === sigOf(m)
-      && (Number(b.eidolon) || 0) !== eidolon;
-    wrap.appendChild(iconImg(url,
-      eidolonOnly ? 'advice-plan-variant-icon is-diff' : 'advice-plan-variant-icon',
-      `${m.charCn || cn(m.char)} E${eidolon} · ${lcName}`));
-  }
-  return wrap;
-};
-
-/**
  * 一行配装的完整写法（角色 · 命座 · 光锥 S 数）。
  *
  * ⚠️ 2026-10-22 起**直接印在界面上**（用户：「其它配装也要显示完整的介绍」）。
@@ -5227,6 +5307,12 @@ const renderTeamPlan = () => {
     return;
   }
 
+  // ---- 你现在就能打的队（2026-10-22，用户：「用户已有配队也需要显示在抽卡方案」）----
+  // 补 0 金的队（四个位置的星魂 / 光锥都齐了）在榜里本来就有，但按分数排常常落在好几页之后。
+  // 摘到最上面，用户一眼就知道「手上已经有什么」，也才知道「再补一队」到底缺在哪。
+  const ownedBlock = planOwnedTeams(plan);
+  if (ownedBlock) el.teamPlanBody.appendChild(ownedBlock);
+
   rows.forEach((row, i) => {
     const card = text('div', 'advice-plan-team');
     const head = text('div', 'advice-plan-team-head');
@@ -5295,7 +5381,9 @@ const renderTeamPlan = () => {
       };
       applyPlanExclude();
     });
-    head.appendChild(excludeBtn);
+    // **靠左**（用户 2026-10-22）：原来是 `margin-left: auto` 顶在等式最右边，离名次和分数都远，
+    // 看着像另一个区块的按钮。现在紧跟在 `#名次` 之后 —— 它是「这一行」的操作，不是页面的。
+    head.insertBefore(excludeBtn, head.children[1] || null);
     card.appendChild(head);
 
     // ---- 四个位置 ------------------------------------------------------------
@@ -5307,10 +5395,13 @@ const renderTeamPlan = () => {
       const label = text('div', 'advice-plan-team-label');
       const nameRow = text('div', 'advice-plan-team-name');
       nameRow.appendChild(text('strong', 'advice-plan-team-char', m.charCn || cn(m.char)));
+      // 2026-10-22（「继续更彻底地优化界面」）：`E6` 原来独占一行，四个格子因此都高了一行、
+      // 卡片整体显得空。挪进名字那一行（`.advice-plan-team-eidolon` 自带左间距），
+      // 于是「名字 已有 E6」一行、「光锥 S5」一行 —— 与紧凑配队（`.advice-lineup`）同一读法。
+      nameRow.appendChild(text('span', 'advice-plan-team-eidolon', `E${Number(m.eidolon) || 0}`));
       nameRow.appendChild(text('span', `advice-own-badge${m.owned ? '' : ' is-gap'}`,
         m.owned ? '已有' : '缺'));
       label.appendChild(nameRow);
-      label.appendChild(text('span', 'advice-plan-team-eidolon', `E${Number(m.eidolon) || 0}`));
       if (m.lc) {
         const cone = text('span', 'advice-plan-team-cone');
         const coneIcon = iconUrlOf('cone', m.lc);
@@ -5372,6 +5463,13 @@ const renderTeamPlan = () => {
     //    用户报「缺少了很多 b 站的投稿来源」，而每套阵容其实有 2~6 条投稿视频。
     const video = videoLink(row.video);
     if (video) facts.appendChild(video);
+    // 「尽量有 B 站来源」（用户 2026-10-22）：这套阵容的投稿里**没有 B 站**时（实测原始
+    // 30,879 条里 B 站只占 38.3%，所以四成左右的队只有 YouTube），补一枚 B 站站内搜索 ——
+    // 点开就是这四个角色名的搜索结果页。
+    if (!row.video || videoPlatformOf(row.video) !== 'bilibili') {
+      const bili = bilibiliSearchLink(row.members);
+      if (bili) facts.appendChild(bili);
+    }
     const moreSources = planVideoSources(row.videoSources, row.video,
       (av) => metricValueTextOf(plan.mode, plan.stage, av));
     if (moreSources) facts.appendChild(moreSources);
@@ -5462,15 +5560,24 @@ const renderTeamPlan = () => {
       const list = text('div', 'advice-plan-variant-list');
       for (const v of row.variants) {
         const line = text('div', 'advice-plan-variant');
-        line.appendChild(variantScoreChip(v.score, row.score));
-        line.appendChild(text('span', 'advice-plan-variant-gap', `补 ${v.gap} 金`));
-        line.appendChild(variantConeIcons(v.members, row.members));
+        // 第一行：分数 / 补金 / 来源视频（**状态**）；第二行：四个位置的完整配队（**内容**）。
+        // 2026-10-22（用户：「其它配装也需要显示详细的配队，如同最高分的投稿一样」）：
+        // 原来只有 4 把光锥图标 + 一行挤在一起的名字，读者要自己把「图标 → 光锥名」对上；
+        // 现在直接画成四个位置（头像 + 名字 E档 + 光锥 S档），与卡片顶部那四个格子同一份信息。
+        const head = text('div', 'advice-plan-variant-head');
+        head.appendChild(variantScoreChip(v.score, row.score));
+        head.appendChild(text('span', 'advice-plan-variant-gap', `补 ${v.gap} 金`));
         const vv = videoLink(v.video);
-        if (vv) line.appendChild(vv);
-        // 完整的配装文字（换行到第二行，见 `.advice-plan-variant-names`）：
-        // 「砂金 E6 · 向浪花掷下盛夏 S5 / 不死途 E2 · 烦恼着，幸福着 S1 / …」。
-        line.appendChild(text('span', 'advice-plan-variant-names',
-          variantNamesText(v.members)));
+        if (vv) head.appendChild(vv);
+        // 「尽量有 B 站来源」（用户 2026-10-22）：这条配装没有 B 站投稿时，给一枚站内搜索。
+        if (!v.video || videoPlatformOf(v.video) !== 'bilibili') {
+          const bili = bilibiliSearchLink(v.members);
+          if (bili) head.appendChild(bili);
+        }
+        line.appendChild(head);
+        line.appendChild(planLineupGrid(v.members, { baseMembers: row.members }));
+        // 完整名字串仍留一份在 `title`（窄屏折行时想一次看全可以悬停）。
+        line.title = variantNamesText(v.members);
         list.appendChild(line);
       }
       details.appendChild(list);

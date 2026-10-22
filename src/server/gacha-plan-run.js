@@ -118,6 +118,9 @@ export const accountOf = (raw) => ({
 //     于是「用了我那把唯一的光锥」的配队会多出补金，而配队本身仍然列出 ——
 //     这正是「占用」的语义：锥还在，但这一队用不上了。
 
+/** 「你现在就能打的队」摘要里最多列几支（用户 2026-10-22：「用户已有配队也需要显示在抽卡方案」）。 */
+export const OWNED_TEAMS_MAX = 4;
+
 /** 每一类最多能排除几个（用户：「至多 4 个角色 / 光锥」，角色与光锥各 4）。 */
 export const MAX_EXCLUDE_PER_KIND = 4;
 
@@ -582,6 +585,35 @@ export const runPlan = async (options = {}) => {
 
   const { tierCounts, boardCount } = poolState.merged;
 
+  // ---- 「你现在就能打的队」（2026-10-22，用户：「用户已有配队也需要显示在抽卡方案」）----
+  //
+  // 「已有」= **补 0 金**（四个位置的星魂 / 光锥你都齐了），也就是这支队伍你现在就能直接打。
+  // 这些队在榜里本来就有，但它们按分数排、常常落在好几页之后；用户要的是「一眼看到我手上
+  // 已经有什么」。所以单独摘一份：**按分数取前 N 支**，随每页一起下发。
+  //
+  // ⚠️ 只取「合并后条目表」里的行（`merged.entries`），与榜面同源 —— 不另算一遍，否则
+  //    「已有的队」和榜里的同一支队会出现两个分数。
+  // ⚠️ 数量上限 `OWNED_TEAMS_MAX`：这一块是「摘要」，不是第二个榜；全量靠翻页 / 搜索。
+  const ownedTeams = [];
+  let ownedCount = 0;
+  for (const entry of poolState.merged.entries) {
+    const row = entry.row;
+    if ((row.gap ?? 0) > 0) continue;
+    ownedCount += 1;
+    if (ownedTeams.length >= OWNED_TEAMS_MAX) continue;
+    ownedTeams.push({
+      key: row.key,
+      lineup: row.lineup,
+      score: Number((row.score ?? 0).toFixed(4)),
+      bestSeason: row.bestSeason,
+      bestScore: row.bestScore ?? null,
+      tier: row.tier || 'perfect',
+      gold: row.gold,
+      members: row.members,
+      video: row.video ?? null,
+    });
+  }
+
   const i18n = await loadI18n();
   const zh = (name) => (name ? (zhName(i18n, 'characters', name) || null) : null);
   const zhCone = (name) => (name ? (zhName(i18n, 'lightCones', name) || null) : null);
@@ -635,6 +667,13 @@ export const runPlan = async (options = {}) => {
     pages: page.pages,
     start: page.start,
     total: page.total,
+    // 「你现在就能打的队」：`ownedTeams` 只给前 N 支（按分数），`ownedCount` 是全池里
+    // 补 0 金的总数（摘要行的「共 N 支」用它）。
+    ownedTeams: ownedTeams.map((team) => ({
+      ...team,
+      members: team.members.map(withCn),
+    })),
+    ownedCount,
     // 全池规模：`lineups` = **能翻到的总条数**（满分 + 非满分），
     // `boardLineups` = 其中满分那部分（= 榜面名次的上界），
     // `poolRows` = 该关卡窗口内的投稿记录数，`submissions` = 这些记录背后的真实投稿条数
