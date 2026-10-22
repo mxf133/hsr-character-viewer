@@ -3428,8 +3428,10 @@ const planVideoSources = (sources, primaryUrl, scoreText, members) => {
   const details = document.createElement('details');
   details.className = 'advice-plan-video-more';
   // 2026-10-22（用户：「另外的来源需要显示完全相同的配装，但投稿不同」）：
-  // 服务端的视频索引改成按**整包**做键了（`videoIndexOf` 的 `season|角色|E|光锥|S`），
-  // 所以这个桶里每一条投稿都必然是**同一套配装**。这里把它显式印一次（而不是逐条重复
+  // 服务端的视频索引按**整包**做键（`videoIndexOf` 的 `season|角色|E|光锥|S`）。
+  // ⚠️ v4.6.151 之前这句是假话：键细了，桶里装的还是阵容级（`teams[].videos`）的
+  // 混合配装投稿。现在建库侧 `teams[].videosByPack` 按整包分桶、读侧按 frontier 行的
+  // 整包键取，桶里每一条才真正是**同一套配装**。这里把它显式印一次（而不是逐条重复
   // 四格）：读者一眼能确认「换的只是投稿，配装没变」。
   details.appendChild(text('summary', '', `另 ${rest.length} 条来源 · 同一套配装`));
   if (members && members.length) {

@@ -1,5 +1,10 @@
-// 给**已有的** `theherta/archive.json` 补上 `teams[].videos[]`（该阵容的全部投稿视频），
+// 给**已有的** `theherta/archive.json` 补上 `teams[].videos[]`（该阵容的全部投稿视频）
+// 与 `teams[].videosByPack`（同一批视频再按**整包键**分一层，2026-10-22 晚），
 // **不动任何统计量**（runCount / frontier / 分数 / 名次全都不重算）。
+//
+// 为什么还要 videosByPack：`videos[]` 的键只有四个角色名，同一套四人的 E2S1 与 E6S5
+// 投稿混在一批 —— 抽卡方案「另 N 条来源 · 同一套配装」要求配装完全一致，所以读侧
+// （archive.js）优先按整包键取 `videosByPack`，取不到才退回阵容级 `videos`。
 //
 // ## 为什么需要这个脚本，而不是直接 `herta-build.mjs`
 //
@@ -33,13 +38,41 @@ const arg = (name, dflt) => {
 const DRY = process.argv.includes('--dry');
 const FROM = arg('from', TARGET);
 
-/** 站点用「叠影 0」表示这一位没装光锥（与 herta-build 的 superimpOf 同口径）。 */
+/** 站点用「叠影 0」表示这一位没装光锥；字段缺失才是「未知」（按满叠影，同 herta-build）。 */
+const superimpOf = (value) => {
+  if (value === undefined || value === null || value === '') return 5;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 5;
+  return Math.max(0, Math.min(5, Math.round(n)));
+};
+
+/** 星魂比较档（0/1/2/6）：与 `src/server/gacha-score.js` 的 `eidolonTierOf` 逐字同源。 */
+const eidolonTierOf = (level) => {
+  const n = Number(level);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (n >= 6) return 6;
+  if (n >= 2) return 2;
+  return 1;
+};
+
+/** 整包键（`角色|E档|光锥|S档` 排序拼 `~`）：与 `gacha-score.js` 的 `packKeyOf` 同口径。 */
+const packKeyOf = (members) => members
+  .map((m) => `${m.char}|E${eidolonTierOf(m.eidolon)}|${m.lc || '-'}|S${m.superimp}`)
+  .sort().join('~');
+
+/** 每个位置的**完整配装**（角色 + 星魂 + 光锥 + 叠影）—— 整包分桶靠它。 */
 const membersOf = (run) => {
   const out = [];
   for (let i = 1; i <= 4; i += 1) {
     const char = run[`p${i}_char`];
     if (typeof char !== 'string' || !char.trim()) continue;
-    out.push(String(char).trim());
+    out.push({
+      char: char.trim(),
+      eidolon: Math.max(0, Number(run[`p${i}_eidolon`]) || 0),
+      lc: typeof run[`p${i}_lc`] === 'string' && run[`p${i}_lc`].trim()
+        ? run[`p${i}_lc`].trim() : null,
+      superimp: superimpOf(run[`p${i}_superimp`]),
+    });
   }
   return out;
 };
@@ -52,8 +85,10 @@ const archive = JSON.parse(await readFile(FROM, 'utf8'));
 console.log(`底稿：${FROM}（${(JSON.stringify(archive).length / 1024 / 1024).toFixed(1)} MB 量级）`);
 
 // ---- 一、从 raw 汇总「每个赛季 × 每套阵容」的全部视频 ---------------------------
-/** `${mode}|${stage}|${season}|${roster}` → `[{url, author, date, av, sub}]` */
+/** `${mode}|${stage}|${season}|${roster}` → `[{url, author, date, av, sub}]`（阵容级） */
 const byTeam = new Map();
+/** 同上（前半段键相同）→ `Map<整包键, [{url, …}]`（整包级，2026-10-22 晚新增）。 */
+const byPack = new Map();
 let rawFiles = [];
 try {
   rawFiles = (await readdir(RAW)).filter((f) => f.endsWith('.json'));
@@ -76,22 +111,32 @@ for (const file of rawFiles) {
     const season = String(run.season || '');
     const mode = String(run.mode || '');
     const stage = stageOf(mode, run.boss_name);
-    const roster = members.slice().sort().join(' + ');
+    const roster = members.map((m) => m.char).sort().join(' + ');
     const key = `${mode}|${stage}|${season}|${roster}`;
     let list = byTeam.get(key);
     if (!list) byTeam.set(key, (list = []));
     if (list.some((v) => v.url === url)) continue;
     const av = Number(run.action_value);
-    list.push({
+    const entry = {
       url,
       author: run.author_name ?? null,
       date: run.video_date ?? null,
       av: Number.isFinite(av) ? av : null,
       sub: run.subcategory ?? null,
-    });
+    };
+    list.push(entry);
+    // 同一条视频按这条投稿**自己的配装**归进整包桶（键与读侧 `packKeyOf` 同源）。
+    let packs = byPack.get(key);
+    if (!packs) byPack.set(key, (packs = new Map()));
+    const pk = packKeyOf(members);
+    let plist = packs.get(pk);
+    if (!plist) packs.set(pk, (plist = []));
+    plist.push(entry);
   }
 }
-console.log(`raw 里汇总出 ${byTeam.size} 套「赛季 × 阵容」的视频清单`);
+let packBuckets = 0;
+for (const packs of byPack.values()) packBuckets += packs.size;
+console.log(`raw 里汇总出 ${byTeam.size} 套「赛季 × 阵容」的视频清单（整包桶 ${packBuckets} 个）`);
 
 // ---- 二、把这些视频贴到存档里的每套阵容上 -------------------------------------
 let teams = 0;
@@ -111,6 +156,8 @@ for (const [mode, modeEntry] of Object.entries(archive.modes || {})) {
           continue;
         }
         team.videos = list;
+        const packs = byPack.get(`${mode}|${stage}|${season}|${roster}`);
+        if (packs?.size) team.videosByPack = Object.fromEntries(packs);
         filled += 1;
         videos += list.length;
       }
