@@ -185,24 +185,24 @@ const ownedSlots = await evaluate(`(() => {
 check('「你现在就能打的队」列出补 0 金的队（每支四个位置）',
   ownedRows > 0 && ownedSlots === 4, `${ownedRows} 支 / 首支 ${ownedSlots} 格`);
 
-// ⑤ 视频来源 + 「尽量有 B 站来源」
+// ⑤ 视频来源：只剩**真实投稿**那一枚（2026-10-22 第二版：用户「不要 b 站搜索」）
 const primary = await evaluate("document.querySelectorAll('.advice-team-video').length");
 const more = await evaluate("document.querySelectorAll('.advice-plan-video-more').length");
 check('卡片有来源视频按钮', primary > 0, `${primary} 枚`);
-const videoStats = await evaluate(`(() => {
-  const cards = [...document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team')];
-  let bili = 0; let search = 0; let bad = 0;
-  for (const card of cards) {
-    const links = [...card.querySelectorAll('.advice-plan-team-facts .advice-team-video')];
-    const hasBili = links.some((a) => a.classList.contains('is-bilibili') && !a.classList.contains('is-search'));
-    const hasSearch = links.some((a) => a.classList.contains('is-search'));
-    if (hasBili) bili += 1;
-    if (hasSearch) search += 1;
-    if (!hasBili && !hasSearch) bad += 1;
-  }
-  return { cards: cards.length, bili, search, bad };
+const searchLinks = await evaluate("document.querySelectorAll('.advice-team-video.is-search').length");
+check('没有「B站搜索」这类兜底按钮（用户：不要）', searchLinks === 0, `${searchLinks} 枚`);
+const biliLinks = await evaluate("document.querySelectorAll('.advice-team-video.is-bilibili').length");
+check('首选仍是 B 站优先（有 B 站投稿的队直接给 B 站）', biliLinks > 0, `${biliLinks} 枚 B 站`);
+// 2026-10-22 第二版：紧凑配队里的图标要**小**（用户：「其它配装的图标太大了」）。
+const iconSize = await evaluate(`(() => {
+  const img = document.querySelector('.advice-plan-variant .advice-lineup-icon')
+    || document.querySelector('.advice-lineup-icon');
+  if (!img) return null;
+  const r = img.getBoundingClientRect();
+  return { w: Math.round(r.width), h: Math.round(r.height) };
 })()`);
-check('没有 B 站来源的卡都补了「B站搜索」', videoStats.bad === 0, JSON.stringify(videoStats));
+check('紧凑配队的头像 ≤ 18px（实测 16px）', !!iconSize && iconSize.w <= 18,
+  iconSize ? `${iconSize.w}×${iconSize.h}` : '找不到头像');
 console.log(`  · 其中「另 N 条来源」折叠块 ${more} 个（同一套阵容只有一条来源时不出）`);
 
 // ⑥ 无 JS 异常

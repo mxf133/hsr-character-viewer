@@ -3324,34 +3324,6 @@ const planLineupGrid = (members, options = {}) => {
 };
 
 /**
- * 「去 B 站搜这套配队」（2026-10-22，用户：「尽量有 b 站来源」）。
- *
- * 数据侧已经把首选改成「B 站优先」了（`videoRankOf`），但仍有大约四成阵容的投稿**只有
- * YouTube**（实测原始 30,879 条里 B 站占 38.3%）。那种卡片原来只有一枚 YouTube 按钮 ——
- * 用户要的是「尽量有 B 站来源」，所以再挂一个**站内搜索**：点开就是 B 站按四个角色名
- * 搜出来的结果页，比自己再手打一遍强。
- *
- * ⚠️ 它是**搜索**、不是「这套阵容的某条投稿」——所以文案写「B站搜索」，图标用 B 站的站标，
- *    与真正的来源按钮（写站名 `BiliBili`）区分开。
- */
-const bilibiliSearchLink = (members) => {
-  const names = (members || []).map((m) => m?.charCn || (m?.char ? cn(m.char) : null)).filter(Boolean);
-  if (!names.length) return null;
-  const a = document.createElement('a');
-  a.className = 'advice-team-video is-bilibili is-search';
-  a.href = `https://search.bilibili.com/all?keyword=${encodeURIComponent(names.join(' '))}`;
-  a.target = '_blank';
-  a.rel = 'noopener noreferrer';
-  const title = `在 B 站搜索这套配队（${names.join(' / ')}）`;
-  a.title = title;
-  a.setAttribute('aria-label', title);
-  if (VIDEO_ICON_SVG.bilibili) a.innerHTML = VIDEO_ICON_SVG.bilibili;
-  else a.appendChild(text('span', 'advice-team-video-glyph', '▶'));
-  a.appendChild(text('span', 'advice-team-video-label', 'B站搜索'));
-  return a;
-};
-
-/**
  * 「你现在就能打的队」（2026-10-22，用户：「用户已有配队也需要显示在抽卡方案」）。
  *
  * 「已有」= **补 0 金**（四个位置的星魂 / 光锥都齐了）。这些队在榜里本来就有，但按分数排
@@ -3377,13 +3349,10 @@ const planOwnedTeams = (plan) => {
       facts.appendChild(text('span', '', `最佳版本 ${team.bestSeason}${best ? ` · ${best}` : ''}`));
     }
     row.appendChild(facts);
-    // 「尽量有 B 站来源」：这套阵容没有 B 站投稿时补一枚站内搜索（与卡片同一条规则）。
+    // ⚠️ 2026-10-22 第二版：用户明确说「不要 b 站搜索」，这里只保留**真实来源**的那枚按钮
+    //    （`videoLink()`；首选已经是 B 站优先，见 `advice.js` 的 `videoRankOf`）。
     const video = videoLink(team.video);
     if (video) row.appendChild(video);
-    if (!team.video || videoPlatformOf(team.video) !== 'bilibili') {
-      const bili = bilibiliSearchLink(team.members);
-      if (bili) row.appendChild(bili);
-    }
     box.appendChild(row);
   }
   return box;
@@ -5461,15 +5430,11 @@ const renderTeamPlan = () => {
     // 服务端按「版本 + 角色名集合」匹配，所以它是**这套阵容**的某条投稿，不是这一分的。
     // ⚠️ 2026-10-22：首选那条现在**优先 B 站**（`videoRankOf`），其余来源收进折叠块 ——
     //    用户报「缺少了很多 b 站的投稿来源」，而每套阵容其实有 2~6 条投稿视频。
+    // ⚠️ 2026-10-22 第二版：用户明确说「不要 b 站搜索」—— 只留**真实来源**这一枚按钮。
+    //    「尽量有 B 站」这件事仍然成立，但由数据侧解决（`videoRankOf`：B 站优先），
+    //    不再用站内搜索去凑数。
     const video = videoLink(row.video);
     if (video) facts.appendChild(video);
-    // 「尽量有 B 站来源」（用户 2026-10-22）：这套阵容的投稿里**没有 B 站**时（实测原始
-    // 30,879 条里 B 站只占 38.3%，所以四成左右的队只有 YouTube），补一枚 B 站站内搜索 ——
-    // 点开就是这四个角色名的搜索结果页。
-    if (!row.video || videoPlatformOf(row.video) !== 'bilibili') {
-      const bili = bilibiliSearchLink(row.members);
-      if (bili) facts.appendChild(bili);
-    }
     const moreSources = planVideoSources(row.videoSources, row.video,
       (av) => metricValueTextOf(plan.mode, plan.stage, av));
     if (moreSources) facts.appendChild(moreSources);
@@ -5569,11 +5534,6 @@ const renderTeamPlan = () => {
         head.appendChild(text('span', 'advice-plan-variant-gap', `补 ${v.gap} 金`));
         const vv = videoLink(v.video);
         if (vv) head.appendChild(vv);
-        // 「尽量有 B 站来源」（用户 2026-10-22）：这条配装没有 B 站投稿时，给一枚站内搜索。
-        if (!v.video || videoPlatformOf(v.video) !== 'bilibili') {
-          const bili = bilibiliSearchLink(v.members);
-          if (bili) head.appendChild(bili);
-        }
         line.appendChild(head);
         line.appendChild(planLineupGrid(v.members, { baseMembers: row.members }));
         // 完整名字串仍留一份在 `title`（窄屏折行时想一次看全可以悬停）。

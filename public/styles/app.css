@@ -2903,11 +2903,11 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 .advice-lineup-slot {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   min-width: 0;
-  padding: 3px 6px;
+  padding: 2px 5px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: 6px;
   background: rgba(255, 255, 255, 0.025);
 }
 /* 描边口径沿用 2026-10-21 的结论：只标「光锥一样、只有命座不同」那一格。 */
@@ -2916,10 +2916,13 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   background: rgba(240, 198, 116, 0.08);
 }
 .advice-lineup-slot.is-missing { border-color: rgba(240, 198, 116, 0.26); }
+/* ⚠️ 2026-10-22 第二版（用户：「其它配装的图标太大了」）：头像 22 → **16px**、光锥 14 → **12px**。
+   这一行是「一屏要看 4 支」的密度场景，头像只是识别用的锚点，不需要当主角；
+   16px 与左侧的名字（11px）放一起刚好齐眼。 */
 .advice-lineup-icon {
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -2932,8 +2935,8 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 .advice-lineup-char {
   display: flex;
   align-items: baseline;
-  gap: 5px;
-  font-size: 11.5px;
+  gap: 4px;
+  font-size: 11px;
   line-height: 1.25;
 }
 .advice-lineup-eidolon { font-size: 10.5px; color: var(--text-dim); }
@@ -2943,7 +2946,7 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   align-items: center;
   gap: 4px;
   min-width: 0;
-  font-size: 10.5px;
+  font-size: 10px;
   color: var(--text-dim);
 }
 /* 光锥名**不许省略号**（2026-10-22 第二版）：两列布局里每格约 150px，「向浪花掷下盛夏」
@@ -2956,8 +2959,8 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 }
 .advice-lineup-cone-icon {
   flex: none;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 3px;
   object-fit: cover;
 }
@@ -3018,10 +3021,7 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   .advice-plan-owned-row .advice-lineup { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* 「B站搜索」那枚：与真正的来源按钮同色，但用**虚线**边框区分 —— 它是站内搜索，
-   不是这套阵容的某条投稿（文案也写「B站搜索」）。 */
-.advice-team-video.is-search { border-style: dashed; opacity: 0.9; }
-.advice-team-video.is-search:hover { opacity: 1; }
+/* 2026-10-22 第二版：用户明确「不要 b 站搜索」，那枚 `.is-search` 的样式随之删除。 */
 /* 卡片右上角的「排除此配队」：`margin-left: auto` 顶到等式右边。
    默认低对比 —— 它是**破坏性**动作（会把整队从榜上抹掉），悬停才变金。 */
 .advice-plan-exclude-btn {
