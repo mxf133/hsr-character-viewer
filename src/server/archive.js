@@ -14,6 +14,10 @@ import {
   VERSION_WEIGHTS, envWeightOf, normalizeVersionWeights, versionWeightOf,
   videoUrlOf, sortVideosOf,
 } from '../../public/scripts/advice.js';
+// 整包键的唯一实现在 `gacha-score.js`（`角色|E档|光锥|S档`，星魂过 `eidolonTierOf`）。
+// 抽卡方案的视频索引（`gacha-plan-run.js` 的 `videoIndexOf`）就用它做桶键 —— 这里给
+// frontier 行配视频时必须用**同一把尺子**，否则建库侧按整包分好的桶一把也对不上。
+import { packKeyOf } from './gacha-score.js';
 import { applyCharacterIdOverrides } from './character-icon-ids.js';
 import { buildDebutOrder, FORM_AVATAR_ID, DEBUT_ID_ALIASES } from './character-debut.js';
 import { ELEMENT_BY_AVATAR_ID } from './character-elements.js';
@@ -46,7 +50,8 @@ const superimpOf = (value) => {
  *   * `url`  真正的 http(s) 地址（`douyin:<id>` / `tiktok:<id>` 伪串被 `videoUrlOf` 挡掉）；
  *   * `av`   这条投稿的行动值 / 轮次（建库侧原值，`null` = 该项目没有这个量）。
  */
-const videosOfTeam = (team) => {
+/** 一份建库侧视频清单 → 读侧形状（去伪串 / 去重 / 排序），阵容级与整包级共用。 */
+const videosOfList = (list) => {
   const out = [];
   const seen = new Set();
   const push = (url, meta = {}) => {
@@ -61,12 +66,23 @@ const videosOfTeam = (team) => {
       av: Number.isFinite(av) ? av : null,
     });
   };
-  for (const video of team?.videos || []) push(video?.url ?? video, video || {});
-  push(team?.sample?.video, {
-    author: team?.sample?.author ?? null,
-    date: team?.sample?.date ?? null,
-    av: team?.sample?.actionValue,
-  });
+  for (const video of list || []) push(video?.url ?? video, video || {});
+  return sortVideosOf(out);
+};
+
+const videosOfTeam = (team) => {
+  const out = videosOfList(team?.videos);
+  const seen = new Set(out.map((v) => v.url));
+  const clean = videoUrlOf(team?.sample?.video);
+  if (clean && !seen.has(clean)) {
+    const av = Number(team?.sample?.actionValue);
+    out.push({
+      url: clean,
+      author: team?.sample?.author ?? null,
+      date: team?.sample?.date ?? null,
+      av: Number.isFinite(av) ? av : null,
+    });
+  }
   return sortVideosOf(out);
 };
 
@@ -823,12 +839,32 @@ export const archiveFrontier = async (mode, options = {}) => {
   // 原来这里只拿 `sample` 一条 —— 用户报的「缺少了很多 b 站的投稿来源」就是它造成的：
   // 每套阵容只暴露一条，且那条是按「metric 严格更小」挑的，同成绩时文件里排第一的胜出。
   const videosByRoster = new Map();
+  // 2026-10-22 晚（用户报「另 N 条来源显然不是同一配装」）：`teams[].videos` 是
+  // **阵容级**的（键只有四个角色名），同一套四人的 E2S1 与 E6S5 投稿混在同一批里 ——
+  // v4.6.149 把 `videoIndexOf` 的桶键改成整包时，桶里装的还是这批混合视频，
+  // 「同一套配装」是假话。建库侧现在把同一批视频再按**整包键**分一层
+  // （`teams[].videosByPack`，键与 `packKeyOf` 逐字同口径），读侧优先按整包取；
+  // 旧档案没有这个字段时才退回阵容级（退回 = 旧行为、会混配装，补一次
+  // `herta-add-team-videos.mjs` 即可消除）。
+  const videosByPack = new Map();
+  // 这套阵容**有没有**整包分桶数据：有（= 新档案）就说明「某个整包桶查不到」是
+  // 真没有 —— 该配装的投稿里没有一条带视频，此时如实留空，**不**退回阵容级
+  // （退回去又会混进别的配装的投稿，正是这次要修的假话）。只有旧档案（team 上
+  // 连 `videosByPack` 字段都没有）才退阵容级，保住「老数据不至于整片没视频」。
+  const rosterHasPacks = new Set();
   for (const s of recent) {
     for (const team of stageData.seasons[s]?.teams || []) {
       const roster = (team.roster || []).map((n) => String(n)).sort().join(' + ');
       if (!roster) continue;
       const videos = videosOfTeam(team);
       if (videos.length) videosByRoster.set(`${s}|${roster}`, videos);
+      for (const [packKey, list] of Object.entries(team?.videosByPack || {})) {
+        const sorted = videosOfList(list);
+        if (sorted.length) videosByPack.set(`${s}|${packKey}`, sorted);
+      }
+      if (team?.videosByPack && Object.keys(team.videosByPack).length) {
+        rosterHasPacks.add(`${s}|${roster}`);
+      }
       if (team?.sample?.video) sampleByRoster.set(`${s}|${roster}`, team.sample);
     }
   }
@@ -845,7 +881,12 @@ export const archiveFrontier = async (mode, options = {}) => {
     }).filter((member) => member.char);
     const rosterKeyOf = `${r.season}|${members.map((m) => m.char).sort().join(' + ')}`;
     const sample = sampleByRoster.get(rosterKeyOf) || null;
-    const videos = videosByRoster.get(rosterKeyOf) || [];
+    // 整包键与 `videoIndexOf()` / 建库侧 `videosByPack` 同源（`packKeyOf`：星魂过
+    // `eidolonTierOf`、光锥缺省 `-`、叠影原值）。键对不上 = 整包桶白建。
+    const packKey = members.map((m) => packKeyOf(m)).sort().join('~');
+    const packVideos = videosByPack.get(`${r.season}|${packKey}`);
+    const videos = packVideos
+      || (rosterHasPacks.has(rosterKeyOf) ? [] : videosByRoster.get(rosterKeyOf) || []);
     return {
       cost: Number(r.c) || 0,
       actionValue: r.a === null || r.a === undefined || r.a === ''
@@ -870,10 +911,10 @@ export const archiveFrontier = async (mode, options = {}) => {
       // 首选 = **B 站优先**、其次成绩最好、再次最新（排序键见 `advice.js` 的 `videoRankOf`）。
       video: videos[0]?.url ?? null,
       /**
-       * 这套阵容**全部**的来源视频（已排序，首选在第一个）。
+       * 这一行**自己的整包**的来源视频（已排序，首选在第一个）。
        *
-       * ⚠️ 键是「版本 + 四个角色名」，所以同一套四人的任何配装共用同一批来源 ——
-       *    这是既有口径（`teams[].roster` 不含星魂 / 光锥），界面文案也一直写「来源视频」。
+       * 2026-10-22 晚起优先按整包取（`teams[].videosByPack`，键与 `packKeyOf` 同源）；
+       * 旧档案没有分桶时退回阵容级 `teams[].videos`（键只有四个角色名，会混配装）。
        */
       videos,
       // 投稿 run id：也留着 —— 它是这条证据**唯一**的稳定标识（`sample.id` 全局不重复），

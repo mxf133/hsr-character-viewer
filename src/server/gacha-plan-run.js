@@ -311,8 +311,11 @@ const videoIndexOf = (frontierRows) => {
     if (!members.length) continue;
     // ⚠️ **键是「整包」不是「角色名集合」**（2026-10-22，用户：「另外的来源需要显示完全相同的
     //    配装，但投稿不同」）：原来按四个角色名做键，同角色不同配装（E2S1 / E6S5）的投稿会混进
-    //    同一个桶，卡片上就可能挂着一条**别的配装**的投稿。现在键里带星魂档 / 光锥 / 叠影，
-    //    桶内每一条都必然是同一套配装。
+    //    同一个桶，卡片上就可能挂着一条**别的配装**的投稿。现在键里带星魂档 / 光锥 / 叠影。
+    //    ⚠️ v4.6.151 补了另一半：光改这里的键不够 —— 行上的 `videos[]` 原本是**阵容级**
+    //    的（`teams[].videos`，键只有四个角色名），桶里装的还是混合配装的投稿。现在建库侧
+    //    `teams[].videosByPack` 按整包分桶、`archive.js` 按 frontier 行的整包键取，
+    //    「桶内每一条都是同一套配装」这句才成立。
     const key = `${r.season}|${members.map((m) => packKeyOf(m)).sort().join('~')}`;
     if (!buckets.has(key)) { buckets.set(key, []); seen.set(key, new Set()); }
     const bucket = buckets.get(key);

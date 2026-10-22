@@ -663,8 +663,12 @@ const main = async () => {
        */
       const packsBytes = Buffer.byteLength(JSON.stringify(packs.body));
       const packsCount = Math.max(1, (packs.body?.packs || []).length);
+      // ⚠️ 2026-10-22 复核：8 KB/条 的预算在 main 上已经红（274 KB / 33 条 = 8.3）——
+      // v4.6.149 起 env.members 带**完整最佳证据配队**（图标 / 中文名 / 星魂 / 光锥），
+      // 单条天然 ≈ 8.3 KB（实测 envs[].members 占每条的 8.5 KB，其余字段都可忽略）。
+      // 预算放宽到 9 KB；再往每个整包上塞大字段时这条依然会先红。
       check('packs 每条配装的字节预算（防止口径改动把逐包字段撑大）',
-        packsBytes / packsCount < 8 * 1024,
+        packsBytes / packsCount < 9 * 1024,
         `${Math.round(packsBytes / 1024)} KB / ${packsCount} 条 = `
         + `${(packsBytes / packsCount / 1024).toFixed(1)} KB/条`);
       check('packs 按需载荷不超过硬上限（实测最大 ≈ 740 KB：Sparkle 117 条配装）',
@@ -749,11 +753,22 @@ const main = async () => {
         + ` 缺值=${panelEnvs.filter((e) => !Number.isFinite(Number(e.seasonMinCost))).length}`);
       // **来源视频**（用户 2026-10-14 第 6 条）：面板是**逐关卡全给**的那条路 ——
       // 逐档榜只带头条那一支的视频，其余关卡的靠这份补（`enrichTipDetail` 合并）。
-      check('packs 每个 env 都带来源视频（逐档榜缺的那几关靠它补）',
+      // ⚠️ 2026-10-22 晚口径收紧（用户报「另 N 条来源显然不是同一配装」）：视频按
+      // **整包**索引（`teams[].videosByPack`）。某套配装的投稿里一条带视频的都没有时
+      // `video` 如实留空（null）—— **不**再借同阵容其它配装的视频顶数（那是假话）。
+      // 所以这里钉两件事：有视频必须是真链接；非继承 env 的覆盖率 ≥ 90%
+      // （实测 243 个 env 里 140 个非继承、139 个有视频 = 99.3%，全库行级命中 97.8%
+      // —— 覆盖率跌破 90% 说明整包索引烂了，而不是数据本来就缺）。
+      check('packs 每个 env 的来源视频都是 http(s) 真链接或如实留空（不借别的配装的）',
         panelEnvs.length > 0
         && panelEnvs.every((e) => e.inheritedEnv === true
-          || e.video === undefined || /^https?:\/\//.test(e.video)),
+          || e.video === undefined || e.video === null || /^https?:\/\//.test(e.video)),
         `带视频的 env=${panelEnvs.filter((e) => e.video).length}/${panelEnvs.length}`);
+      const evidenceEnvs = panelEnvs.filter((e) => e.inheritedEnv !== true);
+      check('packs 非继承 env 的来源视频覆盖率 ≥ 90%（整包索引没烂掉的护栏）',
+        evidenceEnvs.length > 0
+        && evidenceEnvs.filter((e) => e.video).length / evidenceEnvs.length >= 0.9,
+        `非继承 env=${evidenceEnvs.length}，有视频 ${evidenceEnvs.filter((e) => e.video).length}`);
       // ⚠️ 比的是**角色得分**（用户 2026-10-13 第 2 条起榜面按它排序与收敛）：
       // 榜上那一条就是「这个角色角色得分最高的那个整包」，所以面板里那个最大值必须
       // 与它逐位相等。拿老的 `total` 比会漏判 —— 新排序键下「最高角色得分」的整包

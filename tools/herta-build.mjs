@@ -53,6 +53,20 @@ const superimpOf = (value) => {
   return Math.max(0, Math.min(5, Math.round(n)));
 };
 
+// 星魂比较档（0/1/2/6）：与 `src/server/gacha-score.js` 的 `eidolonTierOf` 逐字同源
+// —— 视频整包键（`videosByPack`）要和读侧 `packKeyOf` 对得上，E3~E5 必须同样归到 E2。
+const eidolonTierOf = (level) => {
+  const n = Number(level);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (n >= 6) return 6;
+  if (n >= 2) return 2;
+  return 1;
+};
+/** 整包键（`角色|E档|光锥|S档` 排序拼 `~`）：与 `gacha-score.js` 的 `packKeyOf` 同口径。 */
+const packKeyOf = (members) => members
+  .map((m) => `${m.char}|E${eidolonTierOf(m.eidolon)}|${m.lc || '-'}|S${m.superimp}`)
+  .sort().join('~');
+
 const membersOf = (run) => {
   const out = [];
   for (let i = 1; i <= 4; i += 1) {
@@ -538,6 +552,9 @@ const main = async () => {
         // 这套阵容的**全部**来源视频（2026-10-22 新增，见下面 push 处的注释）。
         // `videoSeen` 只是建库期的去重集合，不写进档案。
         videos: [], videoSeen: new Set(),
+        // 同一批视频再按**整包键**分一层（2026-10-22 晚）：「另 N 条来源 · 同一套配装」
+        // 要的是配装完全一致的投稿，阵容级混桶满足不了。键见 `packKeyOf`。
+        videosByPack: new Map(),
         costs: [], over: [0, 0, 0, 0], coneOver: [0, 0, 0, 0], bestAv: null,
         // 行动值合计与条数：成本档内真正用来分高下的量。
         // 达标率（满分率）在这个数据集里几乎是天花板——混沌回忆 95.7% 的投稿
@@ -570,14 +587,21 @@ const main = async () => {
       ? run.video_url.trim() : null;
     if (videoUrl && !t.videoSeen.has(videoUrl)) {
       t.videoSeen.add(videoUrl);
-      t.videos.push({
+      const videoEntry = {
         url: videoUrl,
         author: run.author_name ?? null,
         date: run.video_date ?? null,
         // 这条投稿自己的成绩（绝境 = 行动值、轮次型 = 轮次）：读侧按它排「同平台内谁更快」。
         av: Number.isFinite(actionValue) ? actionValue : null,
         sub: run.subcategory ?? null,
-      });
+      };
+      t.videos.push(videoEntry);
+      // 同一条视频按这条投稿**自己的配装**归进整包桶。键与读侧 `packKeyOf` 同源
+      // （E3~E5 过 `eidolonTierOf` 归 E2），对不上 = 整包桶白建。
+      const pk = packKeyOf(members);
+      let pack = t.videosByPack.get(pk);
+      if (!pack) t.videosByPack.set(pk, (pack = []));
+      pack.push(videoEntry);
     }
     t.slots = members.map((m) => m.char);
     bump(t.tiers, tier);
@@ -833,6 +857,9 @@ const main = async () => {
         // 全部来源视频（`{url, author, date, av, tier, sub}`）。旧档案没有这个字段，
         // 读侧 `videosOfTeam()` 会退回 `sample.video`，所以漏了不会「整片没有视频」。
         videos: t.videos,
+        // 整包级的视频分桶（键 = `packKeyOf`，值 = 该配装自己的投稿视频）。
+        // 读侧按 frontier 行的整包键取，取不到才退回上面的阵容级 `videos`。
+        videosByPack: Object.fromEntries(t.videosByPack),
       };
     // 档内排序：先看有没有人大面积达不到满分（满分率作为门槛），
     // 再用平均行动值分高下——这样「都满分，但谁用得更少」才排得出来。
