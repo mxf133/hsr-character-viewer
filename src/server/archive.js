@@ -12,7 +12,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import {
   VERSION_WEIGHTS, envWeightOf, normalizeVersionWeights, versionWeightOf,
-  videoUrlOf,
+  videoUrlOf, sortVideosOf,
 } from '../../public/scripts/advice.js';
 import { applyCharacterIdOverrides } from './character-icon-ids.js';
 import { buildDebutOrder, FORM_AVATAR_ID, DEBUT_ID_ALIASES } from './character-debut.js';
@@ -33,6 +33,41 @@ const superimpOf = (value) => {
   const n = Number(value);
   if (!Number.isFinite(n)) return 5;
   return Math.max(0, Math.min(5, Math.round(n)));
+};
+
+/**
+ * 一套阵容（`teams[]` 里的一条）的**全部来源视频**，已按「B 站先 → 成绩好先 → 新先」排好。
+ *
+ * 2026-10-22 新增。建库侧从这一天起给每套阵容存 `videos[]`（该阵容的每一条投稿视频）；
+ * 旧档案没有这个字段，所以这里还要能从 `sample.video` 兜回来 —— 一次重建就能补齐，
+ * 但读侧不该因为「档案是旧的」就整片没有视频。
+ *
+ * 输出的每条是 `{ url, author, date, av }`：
+ *   * `url`  真正的 http(s) 地址（`douyin:<id>` / `tiktok:<id>` 伪串被 `videoUrlOf` 挡掉）；
+ *   * `av`   这条投稿的行动值 / 轮次（建库侧原值，`null` = 该项目没有这个量）。
+ */
+const videosOfTeam = (team) => {
+  const out = [];
+  const seen = new Set();
+  const push = (url, meta = {}) => {
+    const clean = videoUrlOf(url);
+    if (!clean || seen.has(clean)) return;
+    seen.add(clean);
+    const av = Number(meta.av);
+    out.push({
+      url: clean,
+      author: meta.author ?? null,
+      date: meta.date ?? null,
+      av: Number.isFinite(av) ? av : null,
+    });
+  };
+  for (const video of team?.videos || []) push(video?.url ?? video, video || {});
+  push(team?.sample?.video, {
+    author: team?.sample?.author ?? null,
+    date: team?.sample?.date ?? null,
+    av: team?.sample?.actionValue,
+  });
+  return sortVideosOf(out);
 };
 
 /** Friendly labels for the site's mode slugs. */
@@ -442,6 +477,35 @@ export const archiveIndex = async () => {
     modes.map((m) => [m.mode, m.seasons[m.seasons.length - 1] || null]),
   );
 
+  /**
+   * `{ 副本 slug: { 版本: [首领英文名] } }`（2026-10-22，用户：「在最佳版本 x.x 右侧
+   * 显示敌方 boss 的图标和名称」）。
+   *
+   * 数据集里本来就是 `bosses[`${mode}||${season}`] = [名字…]`（英文全名，如
+   * `Anomaly Arbitration||4.4` → `['Murata Graphia, Founding Artist', 'Argenti', …]`）——
+   * 那份**只是没有经 `/api/archive` 发出去**。这里按副本 slug 与版本重排一遍，
+   * 因为下游（抽卡方案）手里只有 `picked.mode` 那个 slug（`aa` / `moc`）。
+   *
+   * ⚠️ 同一个版本的两个「关卡」（异相仲裁的骑士关 / 绝境王棋关）共用这个名单，
+   *    绝境那条的首领名带 `(Plight)` 后缀 —— 挑哪几条由调用方按 stage 过滤。
+   */
+  const bossesByMode = {};
+  for (const [modeKey, entry] of Object.entries(data.modes || {})) {
+    const slug = resolveMode(modeKey);
+    if (!bossesByMode[slug]) bossesByMode[slug] = {};
+    const bySeason = bossesByMode[slug];
+    // ⚠️ 键的形状是 **`<模式英文名>|<关卡>|<版本>`**（三节）：关卡为空时才是 `mode||season`，
+    //    绝境是 `Anomaly Arbitration|plight|4.4`。早先按两节去取，绝境那一批永远取不到，
+    //    于是「绝境卡片上没有首领」—— 而这是本轮唯一用来印首领的地方。
+    for (const [stageKey, stage] of Object.entries(entry.stages || {})) {
+      for (const season of Object.keys(stage.seasons || {})) {
+        const names = data.bosses?.[`${modeKey}|${stageKey}|${season}`];
+        if (!names?.length) continue;
+        bySeason[season] = [...new Set([...(bySeason[season] || []), ...names])];
+      }
+    }
+  }
+
   return {
     ok: true,
     available: true,
@@ -453,6 +517,7 @@ export const archiveIndex = async () => {
     latestSeason,
     latestPerMode,
     modes,
+    bossesByMode,
     schedule: data.schedule || [],
     submitCategories: data.submitCategories || [],
     // Kept for backwards compatibility; the GUI reads refs.categoryLabels.
@@ -754,11 +819,17 @@ export const archiveFrontier = async (mode, options = {}) => {
   //    「点开能看到这套阵容的投稿」（用户原话：「点击在新界面打开对应的 b 站/油管页面」）。
   // ⚠️ 查不到的**如实留空**（`null`），不猜、也不用别的版本的样本顶替：界面据此不画图标。
   const sampleByRoster = new Map();
+  // 2026-10-22：同一趟里顺手把**全部来源视频**也收起来（`teams[].videos`，已排好序）。
+  // 原来这里只拿 `sample` 一条 —— 用户报的「缺少了很多 b 站的投稿来源」就是它造成的：
+  // 每套阵容只暴露一条，且那条是按「metric 严格更小」挑的，同成绩时文件里排第一的胜出。
+  const videosByRoster = new Map();
   for (const s of recent) {
     for (const team of stageData.seasons[s]?.teams || []) {
-      if (!team?.sample?.video) continue;
       const roster = (team.roster || []).map((n) => String(n)).sort().join(' + ');
-      if (roster) sampleByRoster.set(`${s}|${roster}`, team.sample);
+      if (!roster) continue;
+      const videos = videosOfTeam(team);
+      if (videos.length) videosByRoster.set(`${s}|${roster}`, videos);
+      if (team?.sample?.video) sampleByRoster.set(`${s}|${roster}`, team.sample);
     }
   }
   const frontierRows = front.map((r) => {
@@ -772,9 +843,9 @@ export const archiveFrontier = async (mode, options = {}) => {
         superimp: superimpOf(superimp),
       };
     }).filter((member) => member.char);
-    const sample = sampleByRoster.get(
-      `${r.season}|${members.map((m) => m.char).sort().join(' + ')}`,
-    ) || null;
+    const rosterKeyOf = `${r.season}|${members.map((m) => m.char).sort().join(' + ')}`;
+    const sample = sampleByRoster.get(rosterKeyOf) || null;
+    const videos = videosByRoster.get(rosterKeyOf) || [];
     return {
       cost: Number(r.c) || 0,
       actionValue: r.a === null || r.a === undefined || r.a === ''
@@ -796,7 +867,15 @@ export const archiveFrontier = async (mode, options = {}) => {
        */
       submissions: Math.max(1, Number(r.n) || 1),
       // `videoUrlOf` 把 `douyin:<id>` / `tiktok:<id>` 那 31 条伪串挡在外面（见它的注释）。
-      video: videoUrlOf(sample?.video),
+      // 首选 = **B 站优先**、其次成绩最好、再次最新（排序键见 `advice.js` 的 `videoRankOf`）。
+      video: videos[0]?.url ?? null,
+      /**
+       * 这套阵容**全部**的来源视频（已排序，首选在第一个）。
+       *
+       * ⚠️ 键是「版本 + 四个角色名」，所以同一套四人的任何配装共用同一批来源 ——
+       *    这是既有口径（`teams[].roster` 不含星魂 / 光锥），界面文案也一直写「来源视频」。
+       */
+      videos,
       // 投稿 run id：也留着 —— 它是这条证据**唯一**的稳定标识（`sample.id` 全局不重复），
       // 探针与回归测试靠它对账「这条视频确实是这条阵容的投稿」。不下发浏览器。
       runId: sample?.id || null,
@@ -1137,9 +1216,11 @@ const aggregateTeams = (scope, i18n, options = {}) => {
     const map = new Map();
     for (const s of recent) {
       for (const team of stageData.seasons[s]?.teams || []) {
-        if (!team?.sample?.video) continue;
         const roster = (team.roster || []).map((n) => String(n)).sort().join(' + ');
-        if (roster) map.set(`${s}|${roster}`, videoUrlOf(team.sample.video));
+        if (!roster) continue;
+        // 2026-10-22：取**排序后的第一条**（B 站优先），不再是「建库时挑的那条 sample」。
+        const videos = videosOfTeam(team);
+        if (videos.length) map.set(`${s}|${roster}`, videos[0].url);
       }
     }
     return map;

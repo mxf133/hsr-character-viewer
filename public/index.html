@@ -190,6 +190,11 @@
             title="只重新读取本机已保存的黑塔网数据，不联网">重读本地数据</button>
           <button id="adviceUpdate" class="btn btn-ghost btn-sm" type="button"
             title="联网抓取黑塔网缺失和最新版本，并重建统计">同步黑塔网数据</button>
+          <!-- 更新图片（2026-10-22，用户：「已获取的所有图片保留在本地默认永不删除，可点击
+               按钮重新更新并获取图片」）。服务端是后台任务 + 轮询（见 app.js 的
+               `/api/icons/refresh`），已有的一张都不会重下、更不会被删。 -->
+          <button id="adviceIconsRefresh" class="btn btn-ghost btn-sm" type="button"
+            title="把缺的角色头像 / 光锥 / 命途 / 属性 / 立绘与首领头像补到本地（已有的不重下、永不删除）">更新图片</button>
         </div>
       </div>
 
@@ -387,6 +392,34 @@
                按钮在左，搜索框在右」），配合 `.advice-plan-toolbar` 的 `flex-start` 靠左起排。
                ⚠️ 列表下方还挂一条同名翻页条：一页 20 张卡要滚很远，看完最后一张还得滚回
                顶部翻页是很差的手感；两条是**同一份实现**，只是挂在不同位置。 -->
+          <!-- 「不使用」清单（2026-10-22）。用户：「让抽卡方案可以设置角色 / 光锥不使用
+               （至多 4 个角色 / 光锥），将会在抽卡方案内展示不使用这些角色的结果，并视为
+               账号未持有此光锥」「可以在所有的投稿队伍右侧点击『排除此配队』自动设置。
+               这个功能是为了让用户能够在已有 1 队的情况下找出合适自己的 2 队」。
+
+               口径（用户确认）：「角色剔除 + 光锥持有量 -1，相当于已经将这些角色、光锥占用」
+               —— 角色 → 含它的配队整条不出现；光锥 → 账号里这把锥叠影 -1（S1 视为没有，
+               于是用它的配队要多补 1 金）。
+
+               ⚠️ chips / 输入 / 清空这三块与卡片上的「排除此配队」共用**一份状态**
+                  （`state.planExclude`），渲染见 advice-view.js 的 `renderPlanExclude()`。 -->
+          <div class="advice-plan-exclude">
+            <div class="advice-plan-exclude-head">
+              <span class="advice-plan-exclude-title">不使用</span>
+              <span id="advicePlanExcludeHint" class="muted small"></span>
+            </div>
+            <div id="advicePlanExcludeChips" class="advice-plan-exclude-chips"></div>
+            <div class="advice-plan-exclude-add">
+              <input id="advicePlanExcludeInput" class="advice-search-input"
+                     list="advicePlanExcludeOptions" type="text"
+                     autocomplete="off" spellcheck="false"
+                     placeholder="输入角色 / 光锥名后回车（至多 4 个角色、4 把光锥）"
+                     title="排除角色 → 含它的配队不再出现；排除光锥 → 这把光锥按「已被占用一把」计补金"
+                     aria-label="输入要排除的角色或光锥名称">
+              <datalist id="advicePlanExcludeOptions"></datalist>
+              <button id="advicePlanExcludeClear" class="btn btn-ghost btn-sm" type="button">清空</button>
+            </div>
+          </div>
           <div class="advice-plan-toolbar">
             <div id="adviceTeamPlanPager" class="advice-pager" hidden></div>
             <input id="adviceTeamPlanSearch" class="advice-search-input" type="search"

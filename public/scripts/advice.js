@@ -4495,6 +4495,45 @@ export const videoUrlOf = (raw) =>
   (typeof raw === 'string' && /^https?:\/\//i.test(raw.trim()) ? raw.trim() : null);
 
 /**
+ * 某条来源视频是不是 **B 站**（`bilibili.com` 各子域 / `b23.tv` 短链）。
+ *
+ * 2026-10-22 新增。用户报「缺少了很多 b 站的投稿来源」：建库侧每套阵容原先只留一条
+ * `sample` 视频，替换条件是「metric 严格更小」——同成绩（都是 0 回合）时**文件里排第一
+ * 的那条**胜出。实测 4.4 绝境飞霄那支队留下的就是 YouTube（`youtu.be/eA3GHyFbGZU`），
+ * 而同一支队还有 3 条 B 站投稿。现在每套阵容保留全部视频（`teams[].videos`），
+ * 展示时优先 B 站那条 —— 这个判据就是「哪条算 B 站」，服务端与界面共用一份。
+ */
+export const isBilibiliUrl = (url) => /^https?:\/\/(?:[a-z0-9-]+\.)?bilibili\.com\//i
+  .test(String(url ?? ''))
+  || /^https?:\/\/(?:b23\.tv|bili2233\.cn)\//i.test(String(url ?? ''));
+
+/**
+ * 来源视频的排序键：**B 站先** → 成绩好的（行动值 / 轮次小的）先 → 新的先。
+ *
+ * 参数形状是 `[{ url, author, date, av }]`，`av` 越小越好（`null` = 未知，排在同平台最后）。
+ * 排序必须是**确定**的：同一份数据两次跑出不同顺序，「第一条就是 B 站」这条承诺会随
+ * 读取顺序漂；所以最后还有一道 `url` 词典序兜底。
+ */
+export const videoRankOf = (video) => [
+  isBilibiliUrl(video?.url) ? 0 : 1,
+  Number.isFinite(Number(video?.av)) ? Number(video.av) : 1e9,
+  -(Date.parse(video?.date) || 0),
+];
+
+/** 排好序的来源列表（顺手滤掉 `douyin:` 那种非 http 伪串）。 */
+export const sortVideosOf = (list) => [...(list || [])]
+  .filter((v) => v && videoUrlOf(v.url))
+  .sort((a, b) => {
+    const ra = videoRankOf(a);
+    const rb = videoRankOf(b);
+    return (ra[0] - rb[0]) || (ra[1] - rb[1]) || (ra[2] - rb[2])
+      || String(a.url).localeCompare(String(b.url));
+  });
+
+/** 首选来源（排序后的第一条）。空列表给 `null`，界面据此不画图标。 */
+export const preferredVideoOf = (list) => sortVideosOf(list)[0]?.url ?? null;
+
+/**
  * 把一个副本的前沿配置整理成「整包打分」要用的统一形状。
  *
  * 优先用服务端筛好的逐配置记录（`frontierRows`：达标/满分档 + 成本前沿，带角色、

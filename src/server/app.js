@@ -35,6 +35,9 @@ import { limitedCountOf } from './limited-count.js';
 import { compareRosters } from './compare.js';
 import { fetchBattleRecordsRaw, normalizeBattleRecords } from './records.js';
 import { datasetStats, pruneBackups, updateArchive, updateInProgress } from './archive-update.js';
+import {
+  BOSS_ICONS_ROOT, fetchIconToDisk, invalidateBossIconCache, refreshAllImages,
+} from './icon-fetch.js';
 import { challengePathFor, completeVerification, createVerification, dropVerification } from '../mihoyo/verification.js';
 import { APP_VERSION, enabledGames, gameByBiz, isGameEnabled, regionFromUid, regionName } from '../mihoyo/constants.js';
 import { GAME_VERSION, PROGRAM_VERSION, VERSION_TEXT } from '../version.js';
@@ -46,8 +49,47 @@ const PUBLIC_DIR = resolve(here, '../../public');
 // 放在 public 之外：这些是**几十 MB 的二进制**，不该混进要部署的静态目录；
 // 由下面那条 `/icons/*` 路由单独伺服。
 const ICONS_DIR = resolve(here, '../../theherta/icons');
+// 首领头像（`theherta/boss-data/icons/`，同样不入 git —— 由 `mirrorBossIcons()` 从
+// BWiki 敌人页抓一次）。游戏素材库里**没有**敌人图标，所以这组图没有 CDN 兜底。
+const BOSS_ICONS_DIR = BOSS_ICONS_ROOT;
 
 const MAX_BODY = 64 * 1024;
+
+/**
+ * 「更新图片」的后台任务状态（进程级，一次只跑一个）。
+ *
+ * 只在这里放**状态**：真正的活是 `icon-fetch.js` 的 `refreshAllImages()`。
+ * 任务跑完就把结果留着，界面轮询拿到之后自己决定要不要再显示。
+ */
+let iconJob = {
+  running: false, startedAt: null, finishedAt: null, result: null, error: null,
+};
+
+const iconJobView = () => ({
+  running: iconJob.running,
+  startedAt: iconJob.startedAt,
+  finishedAt: iconJob.finishedAt,
+  result: iconJob.result,
+  error: iconJob.error,
+});
+
+const startIconRefresh = (options = {}) => {
+  // 已经在跑就不再开一个（连点按钮的常见情况）：回同一份状态，界面照样能等到结果。
+  if (iconJob.running) return iconJob;
+  iconJob = {
+    running: true, startedAt: Date.now(), finishedAt: null, result: null, error: null,
+  };
+  refreshAllImages(options)
+    .then((result) => {
+      iconJob = { ...iconJob, running: false, finishedAt: Date.now(), result };
+      // 首领头像表刚变过，抽卡方案那边的缓存必须失效，否则卡片上还是「没有图标」。
+      invalidateBossIconCache();
+    })
+    .catch((error) => {
+      iconJob = { ...iconJob, running: false, finishedAt: Date.now(), error: error.message };
+    });
+  return iconJob;
+};
 
 /**
  * 把**真实账号的一份快照**反解成虚拟账号的「名单原文」（用户 2026-10-14 第 5 条
@@ -251,6 +293,16 @@ export const createApp = (options = {}) => {
         //
         // 缺失的文件回落到 `?fallback=<完整 CDN 地址>`（302 出去）而不是直接 404：
         // 只跑了 `--only=icons` 时立绘 / 卡面本地没有，这是**预期**状态。
+        // ---- 首领头像（2026-10-22）----
+        // 没有远端兜底：抓不到就是 404，界面按 `icon === null` 只印名字。
+        if (path.startsWith('/boss-icons/')) {
+          const served = await serveStatic(req, res, BOSS_ICONS_DIR, path.slice('/boss-icons'.length),
+            { cacheControl: 'public, max-age=604800, immutable' });
+          if (served) return;
+          json(res, 404, { ok: false, error: `本地没有这张首领头像：${path}`,
+            hint: '点界面上的「更新图片」，或运行 node tools/herta-icons.mjs' });
+          return;
+        }
         if (path === '/icons/manifest.json' || path.startsWith('/icons/')) {
           const served = await serveStatic(req, res, ICONS_DIR,
             path === '/icons/manifest.json' ? '/manifest.json' : path.slice('/icons'.length),
@@ -262,8 +314,16 @@ export const createApp = (options = {}) => {
           if (served) return;
           const fallback = url.searchParams.get('fallback');
           if (fallback && /^https:\/\/cdn\.jsdelivr\.net\//.test(fallback)) {
-            // 302 而不是在本机代理：省掉再读一遍公网带子的开销，也让浏览器按 CDN 自己
-            // 的缓存头（实测 `max-age=604800`）来处理。
+            // 2026-10-22（用户：「已获取的所有图片保留在本地默认永不删除」）：
+            // **先抓下来存本地，再发本地那一份**。改之前这里直接 302 回 CDN ——
+            // 于是「看过一次」的图只存在浏览器的缓存里，换台设备 / 断网就没了。
+            // 抓失败（断网 / CDN 抽风）仍然 302：宁可走网络，也不能让图变成 404。
+            try {
+              const rel = path.slice('/icons'.length);
+              const saved = await fetchIconToDisk(rel, fallback);
+              if (saved && await serveStatic(req, res, ICONS_DIR, rel,
+                { cacheControl: 'public, max-age=604800, immutable' })) return;
+            } catch { /* 落盘失败走下面的 302 */ }
             res.writeHead(302, { Location: fallback, 'Cache-Control': 'no-store' });
             res.end();
             return;
@@ -325,6 +385,32 @@ export const createApp = (options = {}) => {
         // `?force=1` 跳过 10 分钟缓存（用户连点「检查更新」时用不上，留给探针/排障）。
         const result = await checkForUpdate({ force: url.searchParams.get('force') === '1' });
         json(res, 200, result);
+        return;
+      }
+
+      // ---- 图片本地化（2026-10-22）------------------------------------------
+      //
+      // 用户原话：「已获取的所有图片保留在本地默认永不删除，**可点击按钮重新更新并获取图片**」。
+      // 这是那个按钮的后端：跑一趟 `refreshAllImages()`（图标 + 首领头像），
+      // **只补缺失的、从不删除**。
+      //
+      // ⚠️ 为什么做成「启动任务 + 轮询状态」而不是一个阻塞请求：`only: 'all'` 在**新克隆**
+      //    的机器上要下 ~57 MB（立绘最大），阻塞式请求会撞上浏览器 / 代理的超时，
+      //    而超时之后任务其实还在跑，用户再点一次就变成两个并发下载。所以：
+      //      POST /api/icons/refresh → 立刻回 `{running:true}`
+      //      GET  /api/icons/status  → 界面每 1.5s 问一次，跑完拿到统计
+      if (path === '/api/icons/refresh' && req.method === 'POST') {
+        const body = await readBody(req).catch(() => ({}));
+        startIconRefresh({
+          force: body?.force === true,
+          // 默认 `all`（头像 + 光锥 + 命途 + 属性 + 立绘 + 卡面）；已有的一张都不会重下。
+          only: body?.only === 'icons' ? 'icons' : 'all',
+        });
+        json(res, 200, { ok: true, ...iconJobView() });
+        return;
+      }
+      if (path === '/api/icons/status' && req.method === 'GET') {
+        json(res, 200, { ok: true, ...iconJobView() });
         return;
       }
 
@@ -503,6 +589,10 @@ export const createApp = (options = {}) => {
             hiddenCosts: body.hiddenCosts,
             versionWeights: body.versionWeights
               ?? JSON.parse(q.get('versionWeights') || 'null') ?? undefined,
+            // 「不使用」清单（2026-10-22）：`{ characters: [], lightCones: [] }`，各至多 4 个。
+            // 角色 → 含它的配队整条剔除；光锥 → 账号里这把锥叠影 -1（视为被占用的那一把）。
+            // GET 用 `exclude=角色A,角色B|光锥A` 这种紧凑写法（探针 / 手工排查用）。
+            exclude: body.exclude ?? parseExcludeParam(q.get('exclude')),
             // 搜索（多关键词用空格 / 逗号 / 顿号分隔，AND；同时搜次选配队）。
             query: body.query ?? q.get('q') ?? q.get('query') ?? '',
             // 分页：页码 1 起，页大小夹在 1~200（越界由 `planPageOf()` 夹回来，不报错）。

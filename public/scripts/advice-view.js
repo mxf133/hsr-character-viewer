@@ -140,6 +140,14 @@ const el = {
   teamPlanSearch: $('adviceTeamPlanSearch'),
   teamPlanPager: $('adviceTeamPlanPager'),
   teamPlanPagerBottom: $('adviceTeamPlanPagerBottom'),
+  /** 「不使用」清单的 chips / 输入框 / 候选 / 清空（2026-10-22）。 */
+  planExcludeChips: $('advicePlanExcludeChips'),
+  planExcludeInput: $('advicePlanExcludeInput'),
+  planExcludeOptions: $('advicePlanExcludeOptions'),
+  planExcludeClear: $('advicePlanExcludeClear'),
+  planExcludeHint: $('advicePlanExcludeHint'),
+  /** 「更新图片」按钮（2026-10-22，用户：「可点击按钮重新更新并获取图片」）。 */
+  iconsRefresh: $('adviceIconsRefresh'),
   chars: $('adviceChars'),
   charMeta: $('adviceCharMeta'),
   charNote: $('adviceCharNote'),
@@ -326,6 +334,21 @@ const state = {
    *    也要发一次请求（带上 `page`）。服务端会把越界页码夹回来，`fetchPlan()` 以它为准。
    */
   teamPlanPage: 1,
+  /**
+   * **「不使用」清单**（2026-10-22）。
+   *
+   * 用户原话：「让抽卡方案可以设置角色 / 光锥不使用（至多 4 个角色 / 光锥）……可以在所有
+   * 的投稿队伍右侧点击『排除此配队』自动设置。这个功能是为了让用户能够在已有 1 队的情况下
+   * 找出合适自己的 2 队。」
+   *
+   * 口径（用户确认）：「角色剔除 + 光锥持有量 -1，相当于已经将这些角色、光锥占用」——
+   *   * `characters`：含这些角色的配队**整条不出现**；
+   *   * `lightCones`：账号里这把锥**叠影 -1**（S1 → 视为没有），用它的配队要多补金。
+   *
+   * ⚠️ 只存英文键（数据集口径），中文名在渲染时经 `cn()` / `cnCone()` 翻 ——
+   *    存中文名会在换语言 / 改名时静默失效。
+   */
+  planExclude: { characters: [], lightCones: [] },
   /**
    * **抽卡方案的计算结果**（2026-10-18 重构起由服务端算）。
    *
@@ -3208,6 +3231,67 @@ const videoLink = (url) => {
 };
 
 /**
+ * 「另 N 条来源」折叠块（2026-10-22）。
+ *
+ * 用户报「缺少了很多 b 站的投稿来源」：建库侧每套阵容原先只留一条 `sample` 视频，
+ * 现在保留全部（`teams[].videos`），服务端按「B 站优先 → 成绩好 → 新」排序后下发
+ * `videoSources`。首选那条仍然是行内那枚按钮（`videoLink(row.video)`），这里放**其余**的，
+ * 免得一屏 20 张卡各挂 6 个按钮把事实行挤成两行。
+ *
+ * @param sources   服务端给的 `[{url, author, date, av}]`（首选已在第一个）
+ * @param primaryUrl 行内那枚按钮指向的地址（这里要排除掉，不能重复列）
+ * @param scoreText  `(av) => string`：把该条投稿的成绩翻成游戏内的量（0T / 行动值 285）
+ */
+/**
+ * 卡片上那枚「敌方首领」（2026-10-22）。
+ *
+ * 用户原话：「在最佳版本 x.x 右侧显示敌方 boss 的图标和名称」。图标是**本地**资源
+ * （`theherta/boss-data/`，由 `mirrorBossIcons()` 从 BWiki 敌人页首图抓一次）；没抓到
+ * 素材的首领只印名字 —— 不拿角色头像或别的图冒充，那会让读者以为「这期打的是这个人」。
+ *
+ * @param {{name:string, nameCn?:string, icon?:string|null}} boss
+ */
+const planBossNode = (boss) => {
+  const wrap = text('span', 'advice-plan-boss');
+  wrap.title = `这一期的首领：${boss.nameCn || boss.name}`;
+  if (boss.icon) {
+    const img = document.createElement('img');
+    img.className = 'advice-plan-boss-icon';
+    img.src = boss.icon;
+    img.alt = '';
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    // 图挂了（本地没有且 CDN 也取不到）就把自己摘掉，不让读者看到破图。
+    img.addEventListener('error', () => img.remove(), { once: true });
+    wrap.appendChild(img);
+  }
+  wrap.appendChild(text('span', 'advice-plan-boss-name', boss.nameCn || boss.name));
+  return wrap;
+};
+
+const planVideoSources = (sources, primaryUrl, scoreText) => {
+  const rest = (sources || []).filter((s) => s && s.url && s.url !== primaryUrl);
+  if (!rest.length) return null;
+  const details = document.createElement('details');
+  details.className = 'advice-plan-video-more';
+  details.appendChild(text('summary', '', `另 ${rest.length} 条来源`));
+  for (const source of rest) {
+    const line = text('div', 'advice-plan-video-source');
+    const link = videoLink(source.url);
+    if (!link) continue;
+    line.appendChild(link);
+    const bits = [];
+    if (source.author) bits.push(String(source.author));
+    if (source.date) bits.push(String(source.date).slice(0, 10));
+    const score = scoreText ? scoreText(source.av) : '';
+    if (score) bits.push(score);
+    if (bits.length) line.appendChild(text('span', 'advice-plan-video-source-meta muted small', bits.join(' · ')));
+    details.appendChild(line);
+  }
+  return details.childElementCount > 1 ? details : null;
+};
+
+/**
  * 把空槽填成配队卡片：每人一张小卡片 —— 角色头像 + 中文名 + `E{n}` + 光锥图标 + `S{n}`。
  *
  * `lc` 为 null 的成员（数据里没记光锥）**整块不显示**光锥那半 —— 画一个空框会让人
@@ -4476,6 +4560,9 @@ const planInputsKey = () => JSON.stringify([
   normalizeDrawWeights(state.drawWeights || {}),
   hiddenCostsSignature(),
   state.versionWeights || [],
+  // 「不使用」清单（2026-10-22）：它直接改池子，不进签名就是「点了排除、界面纹丝不动」。
+  state.planExclude?.characters || [],
+  state.planExclude?.lightCones || [],
 ]);
 
 /**
@@ -4553,6 +4640,12 @@ const fetchPlan = async () => {
         drawWeights: { ...(state.drawWeights || {}) },
         hiddenCosts: { ...(state.hiddenCosts || {}) },
         versionWeights: [...(state.versionWeights || [])],
+        // 「不使用」清单（2026-10-22）。角色 → 服务端把含它的配队整条剔除；
+        // 光锥 → 服务端把这把锥的叠影 -1（视为被第 1 队占用）。上限由服务端夹到 4 + 4。
+        exclude: {
+          characters: [...(state.planExclude?.characters || [])],
+          lightCones: [...(state.planExclude?.lightCones || [])],
+        },
         // 搜索与分页（2026-10-20）：`query` 在**全池**上筛，`page` 只决定回哪 20 条。
         query: requested.query,
         page: requested.page,
@@ -4782,7 +4875,14 @@ const variantConeIcons = (members, baseMembers) => {
   return wrap;
 };
 
-/** 一行配装的完整写法（角色·命座·光锥S数）—— 只进 `title`，不在界面上占位。 */
+/**
+ * 一行配装的完整写法（角色 · 命座 · 光锥 S 数）。
+ *
+ * ⚠️ 2026-10-22 起**直接印在界面上**（用户：「其它配装也要显示完整的介绍」）。
+ *    原来只塞进 `title`，于是「换了哪把光锥」只能靠图标认，「叠影几层 / 命座几级」
+ *    必须悬停才看得到 —— 那不算「完整的介绍」。次选配队那边仍然只用它做 `title`
+ *    （那一行要同时印「换了几人」和四个头像，塞不下）。
+ */
 const variantNamesText = (members) => (members || [])
   .map((m) => {
     const head = `${m.charCn || cn(m.char)} E${Number(m.eidolon) || 0}`;
@@ -4864,8 +4964,138 @@ const planScoreTip = (row, plan, ws, wc) => {
   });
 };
 
+// ------------------------------------------------- 抽卡方案：「不使用」清单（2026-10-22）
+//
+// 用户原话：「让抽卡方案可以设置角色 / 光锥不使用（至多 4 个角色 / 光锥）……可以在所有的
+// 投稿队伍右侧点击『排除此配队』自动设置。这个功能是为了让用户能够在已有 1 队的情况下
+// 找出合适自己的 2 队。」
+//
+// 三块 UI 共用同一份状态（`state.planExclude`）：
+//   ① 输入框 + `<datalist>`（敲名字加一条，候选就是数据集的全部角色 / 光锥）；
+//   ② chips（每条一个 ×，可单条撤掉）；
+//   ③ 每张卡片右侧的「排除此配队」（覆盖成这队的 4 角色 + 4 光锥）。
+// 任何一块改动都走 `applyPlanExclude()`：改状态 → 重画 chips → 回第 1 页 → 重取方案。
+//
+// ⚠️ 上限是**每一类 4 个**（不是总共 4 个）：用户选的方案是「排除此配队 = 4 角色 + 4 光锥」，
+//    总共 8 项，所以只能是 4 + 4。服务端 `normalizeExclude()` 会再夹一次。
+const PLAN_EXCLUDE_MAX = 4;
+
+/** 可选的全部角色 / 光锥（数据集 `refs`，已带中文名）。 */
+const planExcludeCandidates = () => {
+  const refs = state.index?.refs || {};
+  return [
+    ...(refs.characters || []).map((c) => ({
+      kind: 'char', name: c.name, label: c.nameCn || c.name,
+    })),
+    ...(refs.lightCones || []).map((c) => ({
+      kind: 'cone', name: c.name, label: c.nameCn || c.name,
+    })),
+  ];
+};
+
+/** 按用户敲的字找一条候选：先精确（中文名 / 英文键，忽略大小写与首尾空白），再前缀，再包含。 */
+const findPlanExcludeCandidate = (text) => {
+  const query = String(text || '').trim().toLowerCase();
+  if (!query) return null;
+  const all = planExcludeCandidates();
+  const hit = all.find((c) => c.label.toLowerCase() === query || c.name.toLowerCase() === query);
+  if (hit) return hit;
+  return all.find((c) => c.label.toLowerCase().startsWith(query))
+    || all.find((c) => c.name.toLowerCase().startsWith(query))
+    || all.find((c) => c.label.toLowerCase().includes(query))
+    || null;
+};
+
+const planExcludeListOf = (kind) => (kind === 'cone'
+  ? state.planExclude.lightCones : state.planExclude.characters);
+
+/** 加一条。同类已满 4 个时返回 false（调用方据此提示，而不是静默丢掉）。 */
+const addPlanExclude = (kind, name) => {
+  const list = planExcludeListOf(kind);
+  if (!name || list.includes(name)) return true;
+  if (list.length >= PLAN_EXCLUDE_MAX) return false;
+  list.push(name);
+  return true;
+};
+
+const removePlanExclude = (kind, name) => {
+  const list = planExcludeListOf(kind);
+  const at = list.indexOf(name);
+  if (at >= 0) list.splice(at, 1);
+};
+
+/** 改完状态之后统一走这里：重画 → 回第 1 页 → 重取。 */
+const applyPlanExclude = () => {
+  renderPlanExclude();
+  state.teamPlanPage = 1;
+  void fetchPlan();
+};
+
+/**
+ * 画「不使用」那一块：chips、计数提示、`<datalist>` 候选、清空按钮的可用性。
+ *
+ * ⚠️ `datalist` 只在**空**的时候重建：它有两百多个 `<option>`（94 个角色 + 全部光锥），
+ *    每次重画都重建会让输入框每敲一个字都掉帧。候选表只随数据集变，而数据集变了会
+ *    重新 `loadIndex()`（那时 chips 也会整块重画）。
+ */
+const renderPlanExclude = () => {
+  if (el.planExcludeChips) {
+    const chips = el.planExcludeChips;
+    chips.innerHTML = '';
+    const pushChip = (kind, name) => {
+      const chip = text('span', `advice-plan-exclude-chip is-${kind}`);
+      const icon = iconUrlOf(kind === 'cone' ? 'cone' : 'char', name);
+      if (icon) chip.appendChild(iconImg(icon, 'advice-plan-exclude-icon'));
+      chip.appendChild(text('span', 'advice-plan-exclude-name',
+        kind === 'cone' ? (cnCone(name) || name) : (cn(name) || name)));
+      chip.appendChild(text('span', 'advice-plan-exclude-kind',
+        kind === 'cone' ? '光锥' : '角色'));
+      const drop = document.createElement('button');
+      drop.type = 'button';
+      drop.className = 'advice-plan-exclude-drop';
+      drop.textContent = '×';
+      drop.title = '不再排除这一项';
+      drop.addEventListener('click', () => {
+        removePlanExclude(kind, name);
+        applyPlanExclude();
+      });
+      chip.appendChild(drop);
+      chips.appendChild(chip);
+    };
+    for (const name of state.planExclude.characters) pushChip('char', name);
+    for (const name of state.planExclude.lightCones) pushChip('cone', name);
+    if (!state.planExclude.characters.length && !state.planExclude.lightCones.length) {
+      chips.appendChild(text('span', 'advice-plan-exclude-empty muted small',
+        '还没排除任何东西。点卡片右侧的「排除此配队」，或在下面输入角色 / 光锥名。'));
+    }
+  }
+  if (el.planExcludeHint) {
+    const chars = state.planExclude.characters.length;
+    const cones = state.planExclude.lightCones.length;
+    el.planExcludeHint.textContent = (chars || cones)
+      ? `已排除 ${chars}/${PLAN_EXCLUDE_MAX} 个角色、${cones}/${PLAN_EXCLUDE_MAX} 把光锥`
+        + ' —— 下面的方案已经不使用它们'
+      : `角色至多 ${PLAN_EXCLUDE_MAX} 个、光锥至多 ${PLAN_EXCLUDE_MAX} 把`;
+  }
+  if (el.planExcludeOptions && !el.planExcludeOptions.childElementCount) {
+    for (const candidate of planExcludeCandidates()) {
+      const option = document.createElement('option');
+      option.value = candidate.label;
+      option.label = candidate.kind === 'cone' ? '光锥' : '角色';
+      el.planExcludeOptions.appendChild(option);
+    }
+  }
+  if (el.planExcludeClear) {
+    el.planExcludeClear.disabled = !state.planExclude.characters.length
+      && !state.planExclude.lightCones.length;
+  }
+};
+
 const renderTeamPlan = () => {
   if (!el.teamPlanBody) return;
+  // 「不使用」那一块与方案内容无关（它是输入），每趟顺手同步一次 —— 它自己会跳过
+  // 昂贵的 `datalist` 重建。
+  renderPlanExclude();
   el.teamPlanBody.innerHTML = '';
   const setMeta = (value) => { if (el.teamPlanMeta) el.teamPlanMeta.textContent = value; };
 
@@ -4976,6 +5206,17 @@ const renderTeamPlan = () => {
         + `更早的版本（${seasonText ? '窗口之前' : '3.x 起'}）与其它关卡不在本次范围 ——`
         + ' 在「版本权重」里加档位可以纳入更早的版本，或先切换关卡再搜。'
       : '这个关卡下没有可用的配队（该关卡的投稿里没有可评成绩）。'));
+    // 「不使用」把池子搜空时，必须说清**可能是它干的** —— 否则就是「昨天还有 267 支，
+    // 今天一支都没有」，而真正的原因藏在上面那一排 chips 里。
+    if (state.planExclude.characters.length || state.planExclude.lightCones.length) {
+      const names = [
+        ...state.planExclude.characters.map((name) => cn(name) || name),
+        ...state.planExclude.lightCones.map((name) => cnCone(name) || name),
+      ];
+      el.teamPlanBody.appendChild(text('p', 'muted small advice-plan-exclude-empty-hint',
+        `注意：你还排除了「${names.join('、')}」—— 含这些角色 / 光锥的配队不会出现在这里。`
+        + '想恢复就把上面那几枚标签撤掉。'));
+    }
     return;
   }
 
@@ -5030,6 +5271,24 @@ const renderTeamPlan = () => {
       + `（${planIsTurn(plan) ? '轮次' : '行动值'}口径）`));
     scoreWrap.appendChild(lazyTip(() => planScoreTip(row, plan, ws, wc)));
     head.appendChild(scoreWrap);
+    // 「排除此配队」（2026-10-22，用户：「可以在所有的投稿队伍右侧点击『排除此配队』
+    // 自动设置」）。语义是**覆盖**：这队的 4 个角色 + 4 把光锥正好填满两类的上限
+    // （`PLAN_EXCLUDE_MAX` = 4 + 4），所以它替换掉现有清单，而不是往里追加。
+    // 目的是「已经有这一队了，方案只给我第 2 队」。
+    const excludeBtn = document.createElement('button');
+    excludeBtn.type = 'button';
+    excludeBtn.className = 'advice-plan-exclude-btn';
+    excludeBtn.textContent = '排除此配队';
+    excludeBtn.title = '把这支队伍的 4 个角色与它用到的光锥设为「不使用」：'
+      + '方案里就不再出现它们，只剩你还能凑齐的队（已有 1 队时用来找第 2 队）';
+    excludeBtn.addEventListener('click', () => {
+      state.planExclude = {
+        characters: [...new Set(row.members.map((m) => m.char).filter(Boolean))],
+        lightCones: [...new Set(row.members.map((m) => m.lc).filter(Boolean))],
+      };
+      applyPlanExclude();
+    });
+    head.appendChild(excludeBtn);
     card.appendChild(head);
 
     // ---- 四个位置 ------------------------------------------------------------
@@ -5092,12 +5351,23 @@ const renderTeamPlan = () => {
       if (bestScore) {
         best.appendChild(text('span', 'advice-plan-team-best-score', ` · ${bestScore}`));
       }
+      // 敌方首领（2026-10-22，用户：「在最佳版本 x.x 右侧显示敌方 boss 的图标和名称」）。
+      // 榜单只算一个关卡，而首领是**按版本**变的 —— 所以「最佳版本」那半句后面跟着的，
+      // 必须是**那一版**的首领（`plan.bosses[bestSeason]`），不是当前期的。
+      for (const boss of (plan.bosses || {})[row.bestSeason] || []) {
+        best.appendChild(planBossNode(boss));
+      }
       facts.appendChild(best);
     }
     // 来源视频（用户 2026-10-14 第 6 条 + 2026-10-18「把视频接回来」）：
     // 服务端按「版本 + 角色名集合」匹配，所以它是**这套阵容**的某条投稿，不是这一分的。
+    // ⚠️ 2026-10-22：首选那条现在**优先 B 站**（`videoRankOf`），其余来源收进折叠块 ——
+    //    用户报「缺少了很多 b 站的投稿来源」，而每套阵容其实有 2~6 条投稿视频。
     const video = videoLink(row.video);
     if (video) facts.appendChild(video);
+    const moreSources = planVideoSources(row.videoSources, row.video,
+      (av) => metricValueTextOf(plan.mode, plan.stage, av));
+    if (moreSources) facts.appendChild(moreSources);
     card.appendChild(facts);
 
     // ---- 补金顺序 ------------------------------------------------------------
@@ -5163,7 +5433,12 @@ const renderTeamPlan = () => {
     //   ③ **只列前 8 套**。实测这批变体从 1.64 一路排到 -0.79（负分 = 比代表行多补
     //      10 金以上，性价比项已经转负），后 9 套与代表行差好几倍，列出来只稀释上面几行。
     //      余下的在列表末尾写一句「还有 N 套更低分的」—— 收敛而非静默丢弃。
-    const VARIANTS_SHOWN = 8;
+    // ⚠️ 2026-10-22（用户：「其它配装也要显示完整的介绍」）：
+    //   ① 每行现在**印出完整的配装文字**（角色 E 档 · 光锥 S 数，四个位置全写）；
+    //      2026-10-21 那版把它退进 `title` 只留 4 把光锥图标 —— 图标能看出「换了哪把
+    //      光锥」，看不出「换成了什么、叠影几层、命座几级」，而「完整介绍」要的正是后者。
+    //   ② 不再截断到 8 套：折叠块默认是收起的，列全不会挤占版面，而「还有 N 套没列」
+    //      会让想核对的人以为数据缺了。
     if ((row.variants || []).length) {
       // 折叠进来的这一批**不止换光锥**：`lineup` 的键只有四个角色名（`lineupKeyOf`），
       // 命座也在变（实测某张卡的 17 套里 15 种命座组合）。标题按实际内容写 ——
@@ -5178,23 +5453,20 @@ const renderTeamPlan = () => {
       details.appendChild(text('summary', '',
         `其它 ${row.variants.length} 套配装（同角色，换光锥 / 叠影${eidolonMoves ? ' / 命座' : ''}）`));
       const list = text('div', 'advice-plan-variant-list');
-      for (const v of row.variants.slice(0, VARIANTS_SHOWN)) {
+      for (const v of row.variants) {
         const line = text('div', 'advice-plan-variant');
         line.appendChild(variantScoreChip(v.score, row.score));
         line.appendChild(text('span', 'advice-plan-variant-gap', `补 ${v.gap} 金`));
         line.appendChild(variantConeIcons(v.members, row.members));
-        line.title = variantNamesText(v.members);
         const vv = videoLink(v.video);
         if (vv) line.appendChild(vv);
+        // 完整的配装文字（换行到第二行，见 `.advice-plan-variant-names`）：
+        // 「砂金 E6 · 向浪花掷下盛夏 S5 / 不死途 E2 · 烦恼着，幸福着 S1 / …」。
+        line.appendChild(text('span', 'advice-plan-variant-names',
+          variantNamesText(v.members)));
         list.appendChild(line);
       }
       details.appendChild(list);
-      const restCount = row.variants.length - VARIANTS_SHOWN;
-      if (restCount > 0) {
-        const last = row.variants[row.variants.length - 1];
-        details.appendChild(text('p', 'advice-plan-variant-more muted small',
-          `还有 ${restCount} 套更低分的没列（最低 ${Number(last.score).toFixed(2)} 分）。`));
-      }
       card.appendChild(details);
     }
 
@@ -5732,6 +6004,65 @@ const loadIndex = async () => {
   return indexPromise;
 };
 
+// ------------------------------------------------------------------- 更新图片
+
+/**
+ * 「更新图片」（2026-10-22）。
+ *
+ * 用户原话：「**已获取的所有图片保留在本地默认永不删除，可点击按钮重新更新并获取图片**」。
+ *
+ * 服务端那侧是**后台任务 + 轮询**（见 `src/server/app.js` 的 `/api/icons/refresh`）：
+ * `POST` 立刻返回、`GET /api/icons/status` 每 1.5 秒问一次。做成轮询而不是一个阻塞请求，
+ * 是因为新克隆的机器缺立绘（~55 MB），阻塞式请求会撞上浏览器 / 代理超时 —— 而超时之后
+ * 任务其实还在跑，用户再点一次就变成两个并发下载。
+ *
+ * 跑完要**重取方案**：首领头像表变过（`invalidateBossIconCache()` 在服务端做），
+ * 卡片上「最佳版本」旁边那枚图标才会出现。
+ */
+const runIconsRefresh = async () => {
+  if (!el.iconsRefresh || el.iconsRefresh.dataset.running === '1') return;
+  const label = el.iconsRefresh.textContent;
+  el.iconsRefresh.dataset.running = '1';
+  el.iconsRefresh.disabled = true;
+  el.iconsRefresh.textContent = '正在更新图片…';
+  try {
+    const started = await fetch('/api/icons/refresh', {
+      method: 'POST',
+      headers: accessHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({}),
+    }).then((r) => r.json()).catch(() => null);
+    if (!started?.ok) throw new Error(started?.error || '请求失败');
+    // 最多等 15 分钟（一轮全量在断网时会一直重试，别把界面钉死在这里）。
+    for (let i = 0; i < 600; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const status = await fetch('/api/icons/status', { headers: accessHeaders() })
+        .then((r) => r.json()).catch(() => null);
+      if (!status) continue;
+      if (status.running) { el.iconsRefresh.textContent = '正在更新图片…'; continue; }
+      const icons = status.result?.icons;
+      const bosses = status.result?.bosses;
+      const bits = [];
+      if (icons) bits.push(`图标 +${icons.added}（已有 ${icons.skipped}，失败 ${icons.failed}）`);
+      if (bosses) bits.push(`首领 +${bosses.added}（已有 ${bosses.skipped}，失败 ${bosses.failed}）`);
+      el.iconsRefresh.textContent = bits.length ? `图片已更新 · ${bits.join(' · ')}` : '图片已更新';
+      if (status.error) el.iconsRefresh.textContent = '更新失败';
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      break;
+    }
+  } catch (error) {
+    el.iconsRefresh.textContent = '更新失败';
+    console.warn('[advice] 更新图片失败：', error.message);
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+  } finally {
+    el.iconsRefresh.textContent = label;
+    el.iconsRefresh.disabled = false;
+    delete el.iconsRefresh.dataset.running;
+    // 首领头像可能刚补齐 → 让方案那份缓存作废再取一次（服务端的图标表已经失效过）。
+    state.planKey = '';
+    if (state.plan) void fetchPlan();
+  }
+};
+
 // ------------------------------------------------------------------- 手动更新
 
 /**
@@ -6039,6 +6370,38 @@ export const mountAdviceView = (options = {}) => {
     loadIndex();
   });
   el.update.addEventListener('click', runUpdate);
+  el.iconsRefresh?.addEventListener('click', () => { void runIconsRefresh(); });
+  // 「不使用」输入框：回车（含从 `datalist` 里选完按回车）就加一条。
+  // 认不出名字时**在提示行里说清**，不弹窗 —— 这个输入框会被连续敲几次。
+  el.planExcludeInput?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const raw = el.planExcludeInput.value;
+    const candidate = findPlanExcludeCandidate(raw);
+    if (!candidate) {
+      if (el.planExcludeHint) {
+        el.planExcludeHint.textContent = raw.trim()
+          ? `没找到「${raw.trim()}」—— 请输入角色名（如「飞霄」）或光锥名（如「我将巡征追猎」）`
+          : `先输入一个角色 / 光锥名`;
+      }
+      return;
+    }
+    if (!addPlanExclude(candidate.kind, candidate.name)) {
+      if (el.planExcludeHint) {
+        el.planExcludeHint.textContent = candidate.kind === 'cone'
+          ? `光锥最多排除 ${PLAN_EXCLUDE_MAX} 把，先撤掉一把再加`
+          : `角色最多排除 ${PLAN_EXCLUDE_MAX} 个，先撤掉一个再加`;
+      }
+      return;
+    }
+    el.planExcludeInput.value = '';
+    applyPlanExclude();
+  });
+  el.planExcludeClear?.addEventListener('click', () => {
+    if (!state.planExclude.characters.length && !state.planExclude.lightCones.length) return;
+    state.planExclude = { characters: [], lightCones: [] };
+    applyPlanExclude();
+  });
 
   return {
     /** Called when the tab becomes visible. */

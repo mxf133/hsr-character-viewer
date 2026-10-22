@@ -2826,6 +2826,76 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   margin: 2px 0 10px;
 }
 .advice-plan-toolbar .advice-pager { margin: 0; }
+
+/* ------------------------------------------------- 抽卡方案：「不使用」清单（2026-10-22）
+   与下面那行「翻页 + 搜索」分开成两块：这一块是**输入条件**（改了要重算整池），
+   那一块是**视图**（翻页 / 搜索只是看哪一段）。混成一行会让人以为「搜不到」= 「排除了」。 */
+.advice-plan-exclude {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 10px;
+  padding: 9px 11px;
+  border: 1px solid rgba(240, 198, 116, 0.26);
+  border-radius: 9px;
+  background: rgba(240, 198, 116, 0.05);
+}
+.advice-plan-exclude-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 9px;
+}
+.advice-plan-exclude-title { font-size: 12.5px; font-weight: 600; color: var(--gold); }
+.advice-plan-exclude-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.advice-plan-exclude-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px 2px 6px;
+  border: 1px solid rgba(240, 198, 116, 0.4);
+  border-radius: 999px;
+  background: rgba(240, 198, 116, 0.1);
+  font-size: 11.5px;
+}
+/* 光锥用青色、角色用金色 —— 两类排除的**后果不同**（角色整队消失、光锥只是多补金），
+   颜色是唯一能在 chips 里一眼分开的维度。 */
+.advice-plan-exclude-chip.is-cone {
+  border-color: rgba(111, 211, 232, 0.42);
+  background: rgba(111, 211, 232, 0.1);
+}
+.advice-plan-exclude-icon { width: 16px; height: 16px; border-radius: 50%; object-fit: cover; }
+.advice-plan-exclude-kind { font-size: 10px; color: var(--text-dim); }
+.advice-plan-exclude-drop {
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.advice-plan-exclude-drop:hover, .advice-plan-exclude-drop:focus-visible { color: var(--text); }
+.advice-plan-exclude-add { display: flex; align-items: center; gap: 8px; }
+.advice-plan-exclude-add .advice-search-input { max-width: 380px; }
+.advice-plan-exclude-empty-hint { color: var(--gold); }
+/* 卡片右上角的「排除此配队」：`margin-left: auto` 顶到等式右边。
+   默认低对比 —— 它是**破坏性**动作（会把整队从榜上抹掉），悬停才变金。 */
+.advice-plan-exclude-btn {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid rgba(240, 198, 116, 0.3);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+.advice-plan-exclude-btn:hover, .advice-plan-exclude-btn:focus-visible {
+  border-color: rgba(240, 198, 116, 0.7);
+  background: rgba(240, 198, 116, 0.1);
+  color: var(--gold);
+}
 .advice-page-btn {
   font: inherit;
   font-size: 12px;
@@ -3104,6 +3174,16 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 }
 .advice-plan-variant-gap { color: var(--text-muted); }
 .advice-plan-variant-members { color: var(--text-dim); min-width: 0; }
+/* 「其它配装」每行的完整配装文字（2026-10-22，用户：「其它配装也要显示完整的介绍」）：
+   `flex: 1 0 100%` 让它独占第二行 —— 分数 / 补金 / 图标留在第一行，扫读时先看差异、
+   再看具体换成什么。原来这段文字只在 `title` 里，悬停才看得到。 */
+.advice-plan-variant-names {
+  flex: 1 0 100%;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  word-break: break-word;
+}
 .advice-plan-variant-icons {
   display: inline-flex;
   align-items: center;
@@ -4828,6 +4908,39 @@ html:has(#virtualRosterModal:not([hidden])) { overflow: hidden; }
   padding-left: 9px;
   border-left: 1px solid var(--hairline);
 }
+
+/* 「另 N 条来源」（2026-10-22）：抽卡方案的事实行里挂一枚折叠。
+   一套阵容实测有 2~6 条投稿视频，全平铺出来会把这一行挤成两行、把「补金 / 最佳版本」
+   挤到下一行去。所以**首选那条仍是行内按钮**（默认就是 B 站那条），其余收在这里。 */
+.advice-plan-video-more { font-size: 11.5px; }
+.advice-plan-video-more > summary { cursor: pointer; color: var(--text-dim); }
+.advice-plan-video-more > summary:hover { color: var(--text); }
+.advice-plan-video-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+.advice-plan-video-source-meta { white-space: nowrap; }
+
+/* 「最佳版本 4.4 · 行动值 37 ⊙ 始作画者，无量塔绘世」里的首领（2026-10-22）。
+   图标 18px 圆形 —— 与卡片里 20px 的角色头像同量级但不抢主视觉；名字跟在后面，
+   因为缩略图只够认出「是哪个怪」，读起来还得靠字。 */
+.advice-plan-boss {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+.advice-plan-boss-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.06);
+}
+.advice-plan-boss-name { font-size: 11.5px; color: var(--text-dim); }
 
 /* ------------------------------------------------------------ 环境统计 */
 /* 分组标题（副本名 + 口径）与上面的「环境统计 · 上场率」形成两级，

@@ -2585,6 +2585,52 @@
 //            `_probe-strength-gap.mjs`（90 天花板 / 缺副本 / 覆盖率修正）、
 //            `_probe-strength-why.mjs`（单角色逐副本 / 逐版本对比「现状行 vs 最快行」）、
 //
+//   v4.6.145 2026-10-22：**抽卡方案五条**（用户附件「新建 文本文档.txt」）：
+//
+//            ① **「不使用」清单**（角色 / 光锥各至多 4 个）。用户口径：「角色剔除 + 光锥
+//               持有量 -1，相当于已经将这些角色、光锥占用」，用途是「已有 1 队时找第 2 队」。
+//               `runPlan({ exclude })`：含被排除角色的配队**整条不进池**
+//               （`buildPlanPool()` 的 `excludeChars`），被排除光锥的叠影 -1
+//               （`accountWithExclusions()`，S1 → 0 = 视为没有 → 补金 +1）。
+//               三块 UI 共用 `state.planExclude`：输入框 + `<datalist>`、chips（可单条撤）、
+//               每张卡右侧的「排除此配队」（覆盖成该队 4 角色 + 4 光锥）。
+//               ⚠️ 角色名**必须**进整池缓存键（`planSignatureOf` 的 `x=…`）—— 只改账号不改键
+//               的表现是「点了排除、界面纹丝不动」。
+//            ② **全部投稿视频 + 优先 B 站**。用户报「查下飞霄在 4.4 版本绝境的表现，为什么
+//               没有显示 b 站的视频；缺少了很多 b 站的投稿来源」。根因在建库：每套阵容只留
+//               一条 `sample`，替换条件是「metric 严格更小」—— 4.4 绝境飞霄那队 6 条投稿的
+//               metric 全是 0，于是文件里排第一的 YouTube 永远胜出，3 条 B 站全丢；而且它
+//               还不是最快的（33 行动值那条才是）。现在 `teams[].videos[]` 留全部
+//               （两万余条视频入档，archive.json 24.1 → 27.1 MB；本轮是用
+//               `tools/herta-add-team-videos.mjs` **只补字段**——站点已撤掉混沌 4.5，
+//               全量重建会整季消失，`herta-build.mjs` 为此加了赛季消失护栏），展示侧按
+//               「B 站优先 → 成绩好 → 新 → url」排序（`advice.js` 的 `videoRankOf`），
+//               首选那条仍是行内按钮，其余收进「另 N 条来源」。修后飞霄 #4 的首选是
+//               `b23.tv/0pPF1AX`（行动值 33）。
+//            ③ **「最佳版本」右边印首领**（图标 + 名称）。名单本来就在 `archive.bosses`
+//               （键是 `模式|关卡|版本`，**三节**：绝境是 `…|plight|4.4`），只是没经
+//               `/api/archive` 发出去 —— 现在 `archiveIndex()` 出 `bossesByMode`。
+//               图标没有现成素材（StarRailRes 只有角色 / 光锥 / 命途 / 属性），新增
+//               `mirrorBossIcons()` 从 BWiki 敌人页首图抓一次（50 个首领命中 47 个，
+//               3 个只印名字），落在 `theherta/boss-data/`，走 `/boss-icons/*`。
+//            ④ **「其它配装」显示完整介绍**：每行把「角色 E 档 · 光锥 S 数」四位全印出来
+//               （`flex: 1 0 100%` 独占一行），不再只塞 `title`；同时取消「只列前 8 套」的
+//               截断（折叠块默认收起，列全不挤版面）。
+//            ⑤ **图片本地永不删除 + 「更新图片」按钮**。`/icons/*` 未命中时先在服务端抓下来
+//               落盘再发（原来是 302，只进浏览器缓存）；新按钮跑 `POST /api/icons/refresh`
+//               （后台任务 + `GET /api/icons/status` 轮询，1.5s 一次），补角色 / 光锥 / 命途 /
+//               属性 / 立绘 / 卡面 + 首领头像，**已有的一张都不重下、任何路径都不删文件**。
+//               `tools/herta-icons.mjs` 改成这份实现的 CLI 外壳（原来两处会分叉），
+//               顺带修掉「UNC 上 rename 覆盖已存在文件 EPERM」导致写列表失败。
+//
+//            回归：`run-tests` 27 套件（本机 3 套 spawn UNKNOWN 固定失败）；新增探针
+//            `_probe-plan-exclude.mjs`（角色剔除 / 光锥 -1 两种语义）、
+//            `_probe-plan-2026-10-22.mjs`（首领 / 视频来源 / 变体全量）、
+//            `_probe-boss-icons.mjs`（首领名 → BWiki → 头像）。
+//            ⚠️ 顺手修了 `iconPlanOf()` 的一个真 bug：`loadI18n()` 会把 `icons.base`
+//            改写成 `/icons`，拿它当 CDN 根会把图写到 `theherta/icons//cdn.jsdelivr.net/…`
+//            这种垃圾路径下（而且「下载成功」）—— 现在从某条地址的 `fallback` 里还原。
+//
 //   v4.6.144 2026-10-21：**角色总榜整链切 v2**（`advice.js` 的 `frontierBoard`）。用户拍板
 //             「B（整链切 v2）」：① 强度改线性 `100 × (1 − 行动值/500)`（轮次型
 //             `100/(轮次+1)`），不再有「顶格档按金数扣分 / 第二档 95 × 曲线」；
@@ -3708,7 +3754,7 @@
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.144';
+export const PROGRAM_VERSION = '4.6.145';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';

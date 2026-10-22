@@ -418,9 +418,12 @@ export const alternativesOf = (row, ranked, rankOf, byMember, limit = 3,
  * @param options.ws            强度权重（2026-10-20 起乘在强度项上；缺省 1 = 不加权）
  * @param options.wc            性价比权重
  * @param options.maxAlternatives
- * @param options.videoOf       `(rosterKey, season) => url|null`。可选；`frontier` 行里没有
- *                              视频字段（它在 sibling 的 `teams[].sample` 上），所以要由
- *                              调用方补进来 —— 不给就一律 null，不影响其余字段。
+ * @param options.excludeChars  `Set<string>`：**不使用**的角色名（2026-10-22）。含这些角色的
+ *                              配队整条不进池；缺省 / 空集 = 不过滤。
+ * @param options.videoOf       `(rosterKey, season) => {url, sources}|string|null`。可选；
+ *                              `frontier` 行里没有视频字段（它在 sibling 的 `teams[].videos` 上），
+ *                              所以要由调用方补进来 —— 不给就一律 null，不影响其余字段。
+ *                              `sources` 是这套阵容的**全部**来源（已按「B 站优先」排序）。
  * @returns 池状态（`pool` 全部整包 / `lineups` 折叠后的代表行 / 倒排 / 名次表 …），
  *          交给 `materializePlanRow()` 用。**不含任何 fill / mid / 隐金字段**。
  */
@@ -433,7 +436,10 @@ export const buildPlanPool = (scored, options = {}) => {
     wc = 1,
     maxAlternatives = 3,
     videoOf = null,
+    // 被排除（「不使用」）的角色名集合（2026-10-22）。
+    excludeChars = null,
   } = options;
+  const excluded = excludeChars instanceof Set ? excludeChars : new Set();
 
   const owned = account.owned instanceof Set ? account.owned : new Set();
   const hidden = normalizeHiddenCosts(hiddenCosts);
@@ -460,6 +466,10 @@ export const buildPlanPool = (scored, options = {}) => {
   const groups = groupRosters(scored);
   const pool = [];
   for (const entry of groups.values()) {
+    // 「不使用」的角色 → 含它的配队**整条不出现**（用户 2026-10-22：「角色剔除」）。
+    // 过滤放在聚合之后、算分之前：`groupRosters()` 已经按整包分好组，这里只是跳过整组，
+    // 不需要改任何下游（`pool` / `lineups` / 倒排都从 `pool` 派生）。
+    if (excluded.size && entry.members.some((m) => excluded.has(m.char))) continue;
     let gap = 0;
     // ⚠️ 这里**只加 gap，不建 gapItems 数组**：10 万条投稿有近 10 万套阵容，
     // 而 `gapItems` 只有下发那几十条的 `fill` 用得上。给全池各建一个数组（+ 把每个成员的
@@ -472,6 +482,9 @@ export const buildPlanPool = (scored, options = {}) => {
       gold += goldOfMember(entry.members[i], entry.packKeys[i]);
     }
     const best = bestSeasonOf(entry, ws, wc, gap);
+    // 来源视频：`videoOf` 回 `{ url, sources }`（首选 + 全部来源）。兼容「只回字符串」
+    // 的旧调用方 —— 那种情况下 `sources` 只有一条，界面不会多画一个「更多来源」。
+    const videoHit = videoOf ? videoOf(entry.key, best?.season) : null;
 
     pool.push({
       key: entry.key,
@@ -504,7 +517,9 @@ export const buildPlanPool = (scored, options = {}) => {
        *    这一格恒为 `perfect`，行为与改之前一致。
        */
       tier: best ? (best.row.tier || 'perfect') : null,
-      video: videoOf ? (videoOf(entry.key, best?.season) ?? null) : null,
+      video: typeof videoHit === 'string' ? videoHit : (videoHit?.url ?? null),
+      // 这套阵容全部的来源视频（首选在第一个）。2026-10-22 新增，界面的「更多来源」用。
+      videoSources: Array.isArray(videoHit?.sources) ? videoHit.sources : [],
     });
   }
 
@@ -674,6 +689,8 @@ export const materializePlanRow = (row, state) => {
     // 卡片据此印「差一档 / 通关 / 未达标」标记（见 `advice-view.js` 的 `TIER_BADGES`）。
     tier: row.tier || 'perfect',
     video: row.video,
+    // 全部来源视频（`{url, author, date, av}`，首选已在第一个）。旧档案只有一条时数组长度为 1。
+    videoSources: row.videoSources || [],
   };
 };
 

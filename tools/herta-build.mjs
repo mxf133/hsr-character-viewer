@@ -11,7 +11,7 @@
 // 涨到 15.5 MB，而信息量没变。
 //
 // Usage: node tools/herta-build.mjs
-import { readFile, writeFile, readdir, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, readdir, mkdir, rename, unlink } from 'node:fs/promises';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 // 名称归一化：投稿里的名字和 characters_config.json 有标点差异（见 limitedIfUnknown）。
@@ -97,6 +97,8 @@ const MIN_STABILITY_RUNS = 3;
  */
 const SHRINK_FLOOR = 0.5;
 const ALLOW_SHRINK = process.argv.includes('--allow-shrink');
+/** 允许「整季消失」（见下面那段赛季护栏的注释）。 */
+const ALLOW_DROP_SEASON = process.argv.includes('--allow-drop-season');
 
 /**
  * 档位的数值序（越大越好）。达标率画像要拿它和「该阵容的常见档位」比较，
@@ -533,6 +535,9 @@ const main = async () => {
     if (!teams.has(rosterKey)) {
       teams.set(rosterKey, {
         roster, count: 0, best: null, bosses: new Map(), subcategories: new Map(), sample: null,        tiers: new Map(), eidoDist: new Array(7).fill(0), eidoN: 0,
+        // 这套阵容的**全部**来源视频（2026-10-22 新增，见下面 push 处的注释）。
+        // `videoSeen` 只是建库期的去重集合，不写进档案。
+        videos: [], videoSeen: new Set(),
         costs: [], over: [0, 0, 0, 0], coneOver: [0, 0, 0, 0], bestAv: null,
         // 行动值合计与条数：成本档内真正用来分高下的量。
         // 达标率（满分率）在这个数据集里几乎是天花板——混沌回忆 95.7% 的投稿
@@ -554,6 +559,26 @@ const main = async () => {
     }
     const t = teams.get(rosterKey);
     t.count += 1;
+    // ---- 来源视频（2026-10-22）------------------------------------------------
+    // 每套阵容的**全部**投稿视频都留着。用户报的「缺少了很多 b 站的投稿来源」根因就在
+    // 上一版：只存一条 `sample`，替换条件是「metric 严格更小」——同成绩（都是 0 回合）
+    // 时**文件里排第一的那条**胜出，实测 4.4 绝境飞霄那支队留下的是 YouTube，
+    // 同一支队另外 3 条 B 站投稿全丢。
+    // ⚠️ 平台优先级**不在这里判**：读侧 `archive.js` 的 `videosOfTeam()` 会按
+    //    「B 站优先 → 成绩好优先 → 新优先」排序，建库只负责如实记录。
+    const videoUrl = typeof run.video_url === 'string' && /^https?:\/\//i.test(run.video_url.trim())
+      ? run.video_url.trim() : null;
+    if (videoUrl && !t.videoSeen.has(videoUrl)) {
+      t.videoSeen.add(videoUrl);
+      t.videos.push({
+        url: videoUrl,
+        author: run.author_name ?? null,
+        date: run.video_date ?? null,
+        // 这条投稿自己的成绩（绝境 = 行动值、轮次型 = 轮次）：读侧按它排「同平台内谁更快」。
+        av: Number.isFinite(actionValue) ? actionValue : null,
+        sub: run.subcategory ?? null,
+      });
+    }
     t.slots = members.map((m) => m.char);
     bump(t.tiers, tier);
     for (const m of members) {
@@ -805,6 +830,9 @@ const main = async () => {
           ]))
           : undefined,
         sample: t.sample,
+        // 全部来源视频（`{url, author, date, av, tier, sub}`）。旧档案没有这个字段，
+        // 读侧 `videosOfTeam()` 会退回 `sample.video`，所以漏了不会「整片没有视频」。
+        videos: t.videos,
       };
     // 档内排序：先看有没有人大面积达不到满分（满分率作为门槛），
     // 再用平均行动值分高下——这样「都满分，但谁用得更少」才排得出来。
@@ -959,6 +987,41 @@ const main = async () => {
   const previous = await readFile(join(OUT, 'archive.json'), 'utf8')
     .then((t) => JSON.parse(t)).catch(() => null);
   const previousRuns = Number(previous?.runCount);
+  /**
+   * **赛季消失护栏**（2026-10-22 加）。
+   *
+   * 站点会**撤掉**赛季：实测 2026-10-22 起
+   * `/api/archive/submissions?season=4.5&mode=Memory of Chaos` 直接回
+   * `{"items":[],"count":0}`，而入库的 `archive.json` 里那一季有 **503 条投稿 /
+   * 225 套阵容**。重建会把整季抹掉，`v2 评分内核` 的判据正是那批数字（一重建就红），
+   * 而「总投稿数」几乎不掉（新赛季补上了），所以上面那道缩水护栏拦不住。
+   *
+   * 拦下来之后有两条正路：
+   *   ① 只补新字段而不重建 —— `node tools/herta-add-team-videos.mjs`；
+   *   ② 确认要接受这个损失 —— 加 `--allow-drop-season`。
+   */
+  const droppedSeasons = [];
+  for (const [modeKey, entry] of Object.entries(previous?.modes || {})) {
+    for (const [stageKey, stageEntry] of Object.entries(entry.stages || {})) {
+      for (const [season, seasonEntry] of Object.entries(stageEntry.seasons || {})) {
+        const before = Number(seasonEntry?.runCount) || 0;
+        if (before < MIN_SEASON_RUNS) continue;
+        const after = modes?.[modeKey]?.stages?.[stageKey]?.seasons?.[season];
+        if (!after || !(Number(after.runCount) > 0)) {
+          droppedSeasons.push(`${modeKey}|${stageKey}|${season}（原有 ${before} 条投稿）`);
+        }
+      }
+    }
+  }
+  if (droppedSeasons.length && !ALLOW_DROP_SEASON) {
+    console.error('聚合结果里少了整季数据，已拒绝覆盖：');
+    for (const line of droppedSeasons) console.error(`  ✗ ${line}`);
+    console.error('这通常说明站点撤掉了那一季（实测 2026-10-22 起每期混沌 4.5 直接回空）。');
+    console.error('要么只用 `node tools/herta-add-team-videos.mjs` 补新字段，');
+    console.error('要么确认接受损失后加 `--allow-drop-season`。现有 theherta/archive.json 未改动。');
+    process.exitCode = 1;
+    return;
+  }
   const shrinking = Number.isFinite(previousRuns) && previousRuns > 0
     && runCount < previousRuns * SHRINK_FLOOR;
   if (shrinking && !ALLOW_SHRINK) {
@@ -971,7 +1034,28 @@ const main = async () => {
     return;
   }
 
-  await writeFile(join(OUT, 'archive.json'), text, 'utf8');
+  // ⚠️ 先写 `.tmp` 再 `rename`（原子替换）：
+  //   ① 24 MB 的成品写到一半崩掉，仓库里就没有能用的数据集了 —— rename 是原子的，
+  //      要么旧文件还在，要么新文件完整；
+  //   ② 这个工作区是 UNC 共享盘，**拒绝对已存在文件原地覆写**（EPERM），而
+  //      「写新文件 + 改名」两条路都通。`*.tmp` 已在 .gitignore 里。
+  const finalPath = join(OUT, 'archive.json');
+  const tmpPath = `${finalPath}.tmp`;
+  await writeFile(tmpPath, text, 'utf8');
+  try {
+    await rename(tmpPath, finalPath);
+  } catch (err) {
+    // UNC 共享盘（\\host\share\...）不支持「rename 覆盖已存在文件」，会报 EPERM。
+    // 退路：先把旧文件改名让位，再把新的挪进来，最后尽力删掉让位的副本
+    // （删不掉也无所谓 —— `*.old` 已被 .gitignore 忽略，不会进版本库）。
+    if (err?.code !== 'EPERM' && err?.code !== 'EEXIST' && err?.code !== 'EACCES') throw err;
+    // ⚠️ 让位的名字必须**唯一**：`${finalPath}.old` 在第二次替换时已经存在，
+    //    `rename` 覆盖已存在文件在 UNC 上照样 EPERM（第一次能过、第二次静默失败）。
+    const asidePath = `${finalPath}.old-${Date.now()}`;
+    await rename(finalPath, asidePath).catch(() => {});
+    await rename(tmpPath, finalPath);
+    await unlink(asidePath).catch(() => {});
+  }
   const mb = (Buffer.byteLength(text) / 1024 / 1024).toFixed(2);
   console.log(`已写出 theherta/archive.json  ${mb} MB`);
   console.log(`  战绩 ${runCount} 条（去重后）`);

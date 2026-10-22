@@ -21,13 +21,16 @@
  *    共用的是 `gacha-score.js` 里那几个纯函数，所以判据不会分叉。
  */
 
-import { archiveEpoch, archiveFrontierAll, archiveIndex, loadI18n, zhName } from './archive.js';
+import {
+  archiveEpoch, archiveFrontierAll, archiveIndex, loadI18n, localizeBosses, zhName,
+} from './archive.js';
+import { bossIconMap } from './icon-fetch.js';
 import { envKindOf, scoreEnvRows } from './gacha-score.js';
 import { buildPlanPool, materializePlanRow } from './gacha-plan.js';
 import {
   createPlanCache, hashOf, mergePlanEntries, planPageOf, searchPlanIndex,
 } from './plan-index.js';
-import { normalizeDrawWeights, normalizeHiddenCosts } from '../../public/scripts/advice.js';
+import { normalizeDrawWeights, normalizeHiddenCosts, sortVideosOf } from '../../public/scripts/advice.js';
 
 /** 可选的关卡清单（前端「关卡选择」下拉框用；顺序 = 游戏解锁顺序）。 */
 const PLAN_ENVS = [
@@ -42,6 +45,18 @@ const PLAN_ENVS = [
 export const DEFAULT_PLAN_ENV = 'aa|plight';
 
 export const planEnvList = () => PLAN_ENVS.map((env) => ({ ...env }));
+
+/**
+ * GET 参数里的「不使用」清单：`exclude=角色A,角色B|光锥A,光锥B`（`|` 左边角色、右边光锥）。
+ *
+ * 只给手工排查 / 探针用；界面走 POST 的 JSON（不用为中文名做 URL 编码转换）。
+ */
+const parseExcludeParam = (raw) => {
+  if (!raw || typeof raw !== 'string') return undefined;
+  const [chars, cones] = raw.split('|');
+  const split = (text) => String(text || '').split(',').map((s) => s.trim()).filter(Boolean);
+  return { characters: split(chars), lightCones: split(cones) };
+};
 
 const envOf = (key) => PLAN_ENVS.find((env) => env.key === key)
   || PLAN_ENVS.find((env) => env.key === DEFAULT_PLAN_ENV);
@@ -82,6 +97,58 @@ export const accountOf = (raw) => ({
   eidolons: asNameMap(raw?.eidolons),
   cones: asNameMap(raw?.cones),
 });
+
+// ------------------------------------------------------------------ 「不使用」清单
+//
+// 2026-10-22（用户）：
+//   「让抽卡方案可以设置角色 / 光锥不使用（至多 4 个角色 / 光锥）…… 可以在所有的投稿队伍
+//    右侧点击『排除此配队』自动设置。这个功能是为了让用户能够在已有 1 队的情况下找出
+//    合适自己的 2 队。」
+// 澄清口径（用户原话）：「角色剔除 + 光锥持有量 -1，相当于已经将这些角色、光锥占用」。
+//
+//   * **角色** → 含它的配队**整条不出现**（`buildPlanPool` 的 `excludeChars`）；
+//   * **光锥** → 把账号里这把锥的**叠影层数减 1**（S1 → 0 = 视为没有，S5 → S4）。
+//     于是「用了我那把唯一的光锥」的配队会多出补金，而配队本身仍然列出 ——
+//     这正是「占用」的语义：锥还在，但这一队用不上了。
+
+/** 每一类最多能排除几个（用户：「至多 4 个角色 / 光锥」，角色与光锥各 4）。 */
+export const MAX_EXCLUDE_PER_KIND = 4;
+
+const asNameList = (value, limit = MAX_EXCLUDE_PER_KIND) => {
+  const list = Array.isArray(value) ? value : [];
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    const name = typeof raw === 'string' ? raw.trim() : '';
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    out.push(name);
+    if (out.length >= limit) break;
+  }
+  return out;
+};
+
+/** 归一「不使用」清单：去空、去重、上限 4 + 4。 */
+export const normalizeExclude = (raw) => ({
+  characters: asNameList(raw?.characters),
+  lightCones: asNameList(raw?.lightCones),
+});
+
+/**
+ * 把「不使用」应用成一份**账号视图**：被排除的光锥叠影 -1（见上面那段口径）。
+ *
+ * ⚠️ 只动 `cones`，不动 `owned` / `eidolons`：角色那条走的是「整队剔除」，
+ *    不是「按没抽到算钱」—— 两者在界面上是完全不同的两件事。
+ */
+export const accountWithExclusions = (account, exclude) => {
+  const cones = new Map(account?.cones instanceof Map ? account.cones : []);
+  for (const name of exclude?.lightCones || []) {
+    if (!cones.has(name)) continue;
+    const left = Math.max(0, (Number(cones.get(name)) || 0) - 1);
+    cones.set(name, left);
+  }
+  return { ...account, cones };
+};
 
 // ------------------------------------------------------------------ 缓存签名
 //
@@ -130,9 +197,13 @@ export const envSignatureOf = ({ envKey, window, versionWeights, wc }) => {
  *    不进 `envKey`；但方案分里强度项要乘 `ws`（`planScoreAt()`），换个强度权重
  *    整池名次就全变了，键里不带它就会把上一组权重的池子发出去。
  */
-export const planSignatureOf = ({ envKey, hiddenCosts, ws, account }) => {
+export const planSignatureOf = ({ envKey, hiddenCosts, ws, account, exclude }) => {
   const hidden = normalizeHiddenCosts(hiddenCosts);
-  return `${envKey}|ws=${ws ?? 1}|${hashOf(JSON.stringify(hidden))}|${accountSignatureOf(account)}`;
+  // ⚠️ 「不使用」的角色**必须**进键：它直接把整队从池子里剔掉，键里不带就会把
+  //    上一份（没排除的）池子发出去 —— 那就是「点了排除，界面纹丝不动」。
+  //    光锥不用单独带：`accountWithExclusions()` 已经把叠影 -1 写进 `account` 了。
+  const chars = (exclude?.characters || []).slice().sort().join(',');
+  return `${envKey}|ws=${ws ?? 1}|${hashOf(JSON.stringify(hidden))}|${accountSignatureOf(account)}|x=${chars}`;
 };
 
 /**
@@ -217,7 +288,8 @@ const rowOf = (r) => ({
  */
 
 const videoIndexOf = (frontierRows) => {
-  const map = new Map();
+  const buckets = new Map();
+  const seen = new Map();
   // 同一个阵容 + 版本可能既有满分投稿也有差一档投稿、都带视频。先扫满分，再扫其余
   // —— 满分那条排在前面就永远轮不到低档位顶替它；低档位只做「满分没有时的兜底」
   // （这也是 minTier 放开到 0 之后视频列反而变多的唯一来源）。
@@ -225,11 +297,35 @@ const videoIndexOf = (frontierRows) => {
     (a, b) => (a.tier === 'perfect' ? 0 : 1) - (b.tier === 'perfect' ? 0 : 1),
   );
   for (const r of rows) {
-    if (!r.video) continue;
     const roster = (r.members || []).map((m) => m.char).sort().join(' + ');
     if (!roster) continue;
     const key = r.season + '|' + roster;
-    if (!map.has(key)) map.set(key, r.video);
+    if (!buckets.has(key)) { buckets.set(key, []); seen.set(key, new Set()); }
+    const bucket = buckets.get(key);
+    const known = seen.get(key);
+    // ⚠️ 2026-10-22：一行现在可能带 `videos[]`（该阵容**全部**来源）。旧档案没有这个
+    //    字段，退回单条 `video` —— 两种档案都能读出东西，不会「重建前后差一批视频」。
+    const list = Array.isArray(r.videos) && r.videos.length ? r.videos : (r.video ? [{ url: r.video }] : []);
+    for (const video of list) {
+      const url = typeof video === 'string' ? video : video?.url;
+      if (!url || known.has(url)) continue;
+      known.add(url);
+      bucket.push(typeof video === 'string' ? { url: video } : video);
+    }
+  }
+  // 排序口径见 `advice.js` 的 `videoRankOf`：**B 站优先** → 成绩好 → 新 → url 兜底。
+  const map = new Map();
+  for (const [key, list] of buckets) {
+    const sorted = sortVideosOf(list);
+    // `sources` 只留界面要印的字段（url / 作者 / 日期 / 成绩），不把整条投稿带下去。
+    if (sorted.length) {
+      map.set(key, {
+        url: sorted[0].url,
+        sources: sorted.slice(0, 8).map((v) => ({
+          url: v.url, author: v.author ?? null, date: v.date ?? null, av: v.av ?? null,
+        })),
+      });
+    }
   }
   return map;
 };
@@ -384,6 +480,11 @@ export const runPlan = async (options = {}) => {
   const kind = envKindOf(picked.mode, picked.stage);
 
   // ---- ② 整池：聚合 / 排序 / 折叠（与账号、权重、隐金都有关）----
+  // 「不使用」清单在**建池前**就应用：角色靠剔除整队生效、光锥靠改账号叠影生效，
+  // 两者都改变池子本身，所以既进 `planKey` 又进 `buildOptions`（只进一处就会拿到旧池）。
+  const exclude = normalizeExclude(options.exclude);
+  const excludedChars = new Set(exclude.characters);
+  const account = accountWithExclusions(accountOf(options.account), exclude);
   const planKey = planSignatureOf({
     envKey,
     hiddenCosts: options.hiddenCosts,
@@ -391,17 +492,21 @@ export const runPlan = async (options = {}) => {
     //    换个强度权重整池的名次就全变了。wc 已经通过 `envKey` 进来了（关卡层的
     //    `scoreEnvRows()` 收 wc），ws 不进关卡层，只能在这里单独带上。
     ws,
-    account: accountOf(options.account),
+    account,
+    exclude,
   });
   const poolState = await cachedAsync(POOL_CACHE, planKey, (value) => value.rowCount, async () => {
     const buildOptions = {
       // ⚠️ 必须过 `accountOf()`：它把 JSON 的数组/对象转成成本模型要的 Set / Map。
       //    直接透传 `options.account` 会让 `owned.has()` 永远 false（见上面那段注释）。
-      account: accountOf(options.account),
+      // 这里用的是**已经减过叠影的**那一份（`accountWithExclusions`），与签名同源。
+      account,
+      excludeChars: excludedChars,
       availability: index.availability || index.refs?.availability || {},
       hiddenCosts: options.hiddenCosts,
       ws,
       wc,
+      // 回 `{ url, sources }`：`url` 是首选（B 站优先），`sources` 是这套阵容的全部来源。
       videoOf: (rosterKey, season) => {
         // `rosterKey` 是整包键（`角色|E档|光锥|S档` 排序拼 ~），视频索引的键是角色名。
         // 这里把整包键还原成角色名集合再查 —— 两种键都从同一批成员派生，不会对不上。
@@ -474,6 +579,27 @@ export const runPlan = async (options = {}) => {
   const zh = (name) => (name ? (zhName(i18n, 'characters', name) || null) : null);
   const zhCone = (name) => (name ? (zhName(i18n, 'lightCones', name) || null) : null);
 
+  // ---- 首领（2026-10-22，用户：「在最佳版本 x.x 右侧显示敌方 boss 的图标和名称」）----
+  //
+  // 名单来自档案的 `bosses['<模式英文名>||<版本>']`（经 `archiveIndex()` 重排成
+  // `bossesByMode[slug][版本]`）。**图标是本地资源**：游戏素材库（StarRailRes）里没有敌
+  // 人图标，所以由 `mirrorBossIcons()` 从 BWiki 敌人页首图抓一次落在 `theherta/boss-data/`；
+  // 没抓到的那几个 `icon` 为 null，界面只印名字（不拿别的图冒充）。
+  //
+  // ⚠️ 按 stage 过滤：异相仲裁同一版本的骑士关 / 绝境王棋关共用一份名单，绝境那条名字
+  //    带 `(Plight)` 后缀。绝境卡片印绝境首领，骑士关卡片印骑士关那几只 —— 混着印就是假话。
+  const bossIcons = await bossIconMap();
+  const bossNamesBySeason = index.bossesByMode?.[picked.mode] || {};
+  const bosses = {};
+  for (const [season, names] of Object.entries(bossNamesBySeason)) {
+    const kept = (names || []).filter((name) => (picked.stage === 'plight'
+      ? /plight/i.test(name)
+      : !/plight/i.test(name)));
+    if (!kept.length) continue;
+    bosses[season] = localizeBosses(i18n, kept)
+      .map((boss) => ({ ...boss, icon: bossIcons.get(boss.name) || null }));
+  }
+
   // 成员 / 变体成员共用同一套补名逻辑（`lcCn` 走 `lightCones` 表，`charCn` 走 `characters`）。
   const withCn = (m) => ({ ...m, charCn: zh(m.char), lcCn: zhCone(m.lc) });
 
@@ -487,6 +613,10 @@ export const runPlan = async (options = {}) => {
     kind,
     window,
     seasons: env.seasons,
+    // 回显生效的「不使用」清单（归一后）：界面上的 chips 印这一份，不自己再算一遍。
+    exclude,
+    // `{ 版本: [{name, nameCn, icon}] }`：卡片「最佳版本 4.4」右边那枚首领用。
+    bosses,
     seasonWeights: env.seasonWeights,
     // 回显生效的抽卡权重（归一后）：界面左侧「强度 x / 性价比 y」那行印它，不自己再算。
     drawWeights: draw,
