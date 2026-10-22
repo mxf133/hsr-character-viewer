@@ -16,7 +16,7 @@
 // （网络优先，立刻生效）配旧 advice-view.js（缓存）⇒「不使用」那一块是空的、每张卡也没有
 // 「排除此配队」，而旧 JS 又不发 exclude 字段，服务端那条分支当场 ReferenceError，
 // 整个抽卡方案页变成一句「尚未采集资料」。改版本号 = 全量换缓存，能一次性对齐。
-const CACHE_VERSION = 'v4.6.149';
+const CACHE_VERSION = 'v4.6.150';
 const CACHE_NAME = `hsr-advisor-shell-${CACHE_VERSION}`;
 const SHELL = [
   '/',
