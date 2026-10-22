@@ -1004,28 +1004,6 @@
           "sideCount": 3,
           "availableDate": "2026-08-31",
           "expireDate": "2026-10-05"
-        },
-        "Memory of Chaos": {
-          "bosses": [
-            {
-              "name": "SparxiConOfficial",
-              "id": 5014010,
-              "hp": "9,645,484 x2"
-            },
-            {
-              "name": "Zandar",
-              "id": 4044010,
-              "hp": "27,234,309"
-            },
-            {
-              "name": "Murata Graphia, Founding Artist",
-              "id": 5014030,
-              "hp": "8,397,245 x2"
-            }
-          ],
-          "sideCount": 3,
-          "availableDate": "2026-09-28",
-          "expireDate": "2026-11-02"
         }
       }
     },
@@ -1110,6 +1088,33 @@
           "availableDate": "2026-09-28",
           "expireDate": "2026-11-08"
         },
+        "Memory of Chaos": {
+          "bosses": [
+            {
+              "name": "SparxiConOfficial",
+              "id": 5014010,
+              "hp": "9,645,484 x2"
+            },
+            {
+              "name": "Zandar",
+              "id": 4044010,
+              "hp": "27,234,309"
+            },
+            {
+              "name": "Murata Graphia, Founding Artist",
+              "id": 5014030,
+              "hp": "8,397,245 x2"
+            }
+          ],
+          "sideCount": 3,
+          "availableDate": "2026-09-28",
+          "expireDate": "2026-11-02"
+        }
+      }
+    },
+    {
+      "version": "4.7",
+      "modes": {
         "Memory of Chaos": {
           "bosses": [
             {
