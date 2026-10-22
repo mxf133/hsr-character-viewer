@@ -2877,8 +2877,19 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
 }
 .advice-plan-exclude-drop:hover, .advice-plan-exclude-drop:focus-visible { color: var(--text); }
 .advice-plan-exclude-add { display: flex; align-items: center; gap: 8px; }
-.advice-plan-exclude-add .advice-search-input { max-width: 380px; }
+/* 输入框要**能伸缩**（2026-10-22 用户截图：`max-width: 380px` 在窄窗口里被挤到 250px，
+   占位文案「（至多 4 个角色、4 把光锥）」被截断成「（至多 4 个角」）。
+   现在给它 `flex: 1 1 320px` + `min-width: 0`：窄窗口收缩、宽窗口最多 520px，
+   清空按钮始终跟在右边。 */
+.advice-plan-exclude-add .advice-search-input {
+  flex: 1 1 320px;
+  min-width: 0;
+  max-width: 520px;
+}
 .advice-plan-exclude-empty-hint { color: var(--gold); }
+/* 服务端降级时的真实原因（2026-10-22）：默认那行 hint 是「去重新采集数据」，
+   而当降级其实是**抛错**引起时，那句话会把人带偏 —— 原因必须看得见。 */
+.advice-plan-error-detail { color: var(--danger); }
 /* 卡片右上角的「排除此配队」：`margin-left: auto` 顶到等式右边。
    默认低对比 —— 它是**破坏性**动作（会把整队从榜上抹掉），悬停才变金。 */
 .advice-plan-exclude-btn {

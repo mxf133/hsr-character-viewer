@@ -5121,6 +5121,13 @@ const renderTeamPlan = () => {
     renderTeamPlanPager(0, 0);
     el.teamPlanBody.appendChild(text('p', 'muted small',
       plan.hint || '本地数据集里还没有这个关卡的投稿。'));
+    // 2026-10-22：服务端若是**抛错**降级的，必须把原因印出来。
+    // 本轮就吃过这个亏：一个 `ReferenceError` 被路由的 catch 吞掉，页面只说
+    // 「尚未采集资料」—— 用户按那句提示去重新采集数据，而数据本来是好的，白折腾。
+    if (plan.detail) {
+      el.teamPlanBody.appendChild(text('p', 'muted small advice-plan-error-detail',
+        `服务端报错：${plan.detail}`));
+    }
     return;
   }
 

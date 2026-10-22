@@ -30,7 +30,7 @@ import {
 } from './virtual-accounts.js';
 import { charCostOf, coneCostOf } from '../../public/scripts/advice.js';
 import { archiveConclusion, archiveCharacterPacks, archiveUsage } from './conclusion.js';
-import { runPlan, DEFAULT_PLAN_ENV } from './gacha-plan-run.js';
+import { runPlan, DEFAULT_PLAN_ENV, parseExcludeParam } from './gacha-plan-run.js';
 import { limitedCountOf } from './limited-count.js';
 import { compareRosters } from './compare.js';
 import { fetchBattleRecordsRaw, normalizeBattleRecords } from './records.js';

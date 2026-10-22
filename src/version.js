@@ -2585,6 +2585,25 @@
 //            `_probe-strength-gap.mjs`（90 天花板 / 缺副本 / 覆盖率修正）、
 //            `_probe-strength-why.mjs`（单角色逐副本 / 逐版本对比「现状行 vs 最快行」）、
 //
+//   v4.6.146 2026-10-22：**修 v4.6.145 的一处致命回归**（用户截图：抽卡方案整页只剩一句
+//            「尚未采集资料。请在项目目录运行：node tools/herta-fetch.mjs && …」）。
+//
+//            `parseExcludeParam()` 留成了 `gacha-plan-run.js` 的**模块私有**函数，而路由
+//            （`app.js` 的 GET 分支）直接引用它 ⇒ 只要请求里**没有** `exclude` 字段就
+//            `ReferenceError`，被路由的 catch 吞掉后按 `unavailable` 返回那一句提示。
+//            触发条件比想象中宽：curl、探针、以及**浏览器缓存里的旧 JS**（`sw.js` 的静态资源是
+//            stale-while-revalidate，新 index.html 立刻生效、旧 advice-view.js 还会跑一趟，
+//            而旧 JS 不发 `exclude`）。用户看到的就是「数据明明在、页面却说没采集」。
+//            修法：导出该函数并在 `app.js` 里 import；另外三件配套：
+//              · 降级时**印出真实原因**（`plan.detail` → 「服务端报错：…」，红色小字），
+//                不再让人按「去重新采集」这句话白跑；
+//              · `sw.js` 的 `CACHE_VERSION` 改成具体版本号（`v4.6.146`），发版即全量换缓存，
+//                避免「新 HTML + 旧 JS」这个组合再出现；
+//              · 「不使用」输入框改 `flex: 1 1 320px`，占位文案缩短成「角色 / 光锥名，回车添加」
+//                —— 窄窗口下原来会被截成「（至多 4 个角」。
+//            e2e 新增 4 条判据（不带 exclude 的 POST / 回显 / 池子随 exclude 变 / GET 形态），
+//            真浏览器探针 14/14 仍全绿。
+//
 //   v4.6.145 2026-10-22：**抽卡方案五条**（用户附件「新建 文本文档.txt」）：
 //
 //            ① **「不使用」清单**（角色 / 光锥各至多 4 个）。用户口径：「角色剔除 + 光锥
@@ -3754,7 +3773,7 @@
 // 版本号（2.109.0），用来和 salt 配套签名请求，和本工具的版本毫无关系。
 
 /** 本工具版本（包内唯一来源，package.json 的 version 与此保持一致）。 */
-export const PROGRAM_VERSION = '4.6.145';
+export const PROGRAM_VERSION = '4.6.146';
 
 /** 对齐的游戏版本。 */
 export const GAME_VERSION = '4.6';

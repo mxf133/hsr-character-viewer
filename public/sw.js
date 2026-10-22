@@ -9,7 +9,14 @@
 //
 // 版本号 CACHE_VERSION 变更即全量换缓存（activate 清旧）。
 
-const CACHE_VERSION = 'v1';
+// ⚠️ **发版时跟着改**（2026-10-22 起写具体版本号）。
+//
+// 静态资源是 stale-while-revalidate：先给缓存里的旧 JS、后台再刷新 —— 于是「服务端已经是
+// 新版、页面这一趟跑的还是旧 JS」是**常态**，下一趟才对齐。v4.6.145 就撞上了：新 index.html
+// （网络优先，立刻生效）配旧 advice-view.js（缓存）⇒「不使用」那一块是空的、每张卡也没有
+// 「排除此配队」，而旧 JS 又不发 exclude 字段，服务端那条分支当场 ReferenceError，
+// 整个抽卡方案页变成一句「尚未采集资料」。改版本号 = 全量换缓存，能一次性对齐。
+const CACHE_VERSION = 'v4.6.146';
 const CACHE_NAME = `hsr-advisor-shell-${CACHE_VERSION}`;
 const SHELL = [
   '/',

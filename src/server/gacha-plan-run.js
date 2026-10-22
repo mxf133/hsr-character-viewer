@@ -51,7 +51,14 @@ export const planEnvList = () => PLAN_ENVS.map((env) => ({ ...env }));
  *
  * 只给手工排查 / 探针用；界面走 POST 的 JSON（不用为中文名做 URL 编码转换）。
  */
-const parseExcludeParam = (raw) => {
+/**
+ * ⚠️ **必须 export**：路由（`app.js`）的 GET 分支要用它。
+ *
+ * 2026-10-22 这里踩过一次大的：函数留成了模块私有，而 `app.js` 直接 `parseExcludeParam(...)` ——
+ * 只要请求里**没有** `exclude` 字段（旧客户端、浏览器缓存里的旧 JS、curl、探针）就会
+ * `ReferenceError`，被路由的 catch 吞掉后返回「尚未采集资料」，整个抽卡方案页变成一句话。
+ */
+export const parseExcludeParam = (raw) => {
   if (!raw || typeof raw !== 'string') return undefined;
   const [chars, cones] = raw.split('|');
   const split = (text) => String(text || '').split(',').map((s) => s.trim()).filter(Boolean);

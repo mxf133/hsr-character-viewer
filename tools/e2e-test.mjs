@@ -221,6 +221,41 @@ const main = async () => {
         badMode.status === 404 && badMode.body?.ok === false, `status=${badMode.status}`);
 
       // ---- 跨模式综合结论（POST，要带账号持有情况）----------------------
+      console.log('\n[archive/plan · 降级与兼容]');
+      // ⚠️ 2026-10-22（v4.6.145.1 回归）：这条**必须**存在。
+      //    当天把 `parseExcludeParam` 写成了模块私有，路由却直接引用它 —— 只要请求里
+      //    **没有** `exclude` 字段（curl / 探针 / 浏览器缓存里的旧 JS），就会 ReferenceError，
+      //    被路由的 catch 吞掉后返回 `available:false` + 「尚未采集资料」：
+      //    页面整个变成一句话，而数据本来是好的（用户按提示去重新采集也没用）。
+      //    所以这里专门打一发**不带 exclude** 的请求。
+      const planNoExclude = await post('/api/archive/plan', {
+        envKey: 'aa|plight',
+        account: { owned: [], eidolons: {}, cones: {} },
+        drawWeights: { strength: 1, cost: 1 },
+      });
+      check('POST /api/archive/plan 不带 exclude 也能算（旧客户端 / 缓存旧 JS）',
+        planNoExclude.status === 200 && planNoExclude.body?.available === true,
+        `status=${planNoExclude.status} available=${planNoExclude.body?.available}`
+        + (planNoExclude.body?.detail ? ` detail=${planNoExclude.body.detail}` : ''));
+      check('方案载荷回显 exclude（归一后为空表）',
+        Array.isArray(planNoExclude.body?.exclude?.characters)
+        && (planNoExclude.body.exclude.characters || []).length === 0,
+        JSON.stringify(planNoExclude.body?.exclude));
+      const planExcluded = await post('/api/archive/plan', {
+        envKey: 'aa|plight',
+        account: { owned: [], eidolons: {}, cones: {} },
+        drawWeights: { strength: 1, cost: 1 },
+        exclude: { characters: ['Feixiao'] },
+      });
+      check('方案载荷的排序池会随 exclude 变化（角色剔除真的生效）',
+        planExcluded.status === 200 && planExcluded.body?.available === true
+        && Number(planExcluded.body?.total) < Number(planNoExclude.body?.total),
+        `${planNoExclude.body?.total} → ${planExcluded.body?.total}`);
+      check('GET 形态的 exclude 参数也能被解析',
+        await get('/api/archive/plan?env=aa|plight&exclude=' + encodeURIComponent('Feixiao|'))
+          .then((r) => r.body?.exclude?.characters?.[0] === 'Feixiao')
+          .catch(() => false));
+
       console.log('\n[archive/conclusion]');
       const conclusion = await post('/api/archive/conclusion', {
         account: { owned: [], eidolons: {}, cones: {} },
