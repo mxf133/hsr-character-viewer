@@ -973,7 +973,6 @@ const main = async () => {
   };
 
   await mkdir(OUT, { recursive: true });
-  const text = JSON.stringify(archive);
 
   /**
    * 覆盖前自检：投稿数**不能比现有 archive.json 少太多**（2026-10-14 加）。
@@ -988,7 +987,7 @@ const main = async () => {
     .then((t) => JSON.parse(t)).catch(() => null);
   const previousRuns = Number(previous?.runCount);
   /**
-   * **赛季消失护栏**（2026-10-22 加）。
+   * **赛季消失护栏**（2026-10-22 加，当天改过口径）。
    *
    * 站点会**撤掉**赛季：实测 2026-10-22 起
    * `/api/archive/submissions?season=4.5&mode=Memory of Chaos` 直接回
@@ -996,31 +995,74 @@ const main = async () => {
    * 225 套阵容**。重建会把整季抹掉，`v2 评分内核` 的判据正是那批数字（一重建就红），
    * 而「总投稿数」几乎不掉（新赛季补上了），所以上面那道缩水护栏拦不住。
    *
-   * 拦下来之后有两条正路：
-   *   ① 只补新字段而不重建 —— `node tools/herta-add-team-videos.mjs`；
-   *   ② 确认要接受这个损失 —— 加 `--allow-drop-season`。
+   * ⚠️ **2026-10-22 当天改过口径**：第一版是「发现整季消失就整条拒绝覆盖、退出码 1」。
+   * 结果是一次**死锁** —— 站点既然撤掉了 4.5 混沌，这一季就永远回不来，于是之后
+   * **每一次**同步都在聚合这一步失败（抓到的 61 条变化全白费，用户看到的永远是
+   * 「失败：数据已抓取，但重新聚合失败」）。护栏的目的本来是「别丢数据」，而拒绝
+   * 覆盖并不能让数据回来，只是把可用的其它季一起锁死。
+   *
+   * 现在的口径：**默认沿用**。消失的季从现有 `archive.json` 原样搬回 `modes`，
+   * 同步照常完成（那批投稿本来就是真实数据，站点撤接口不等于数据是假的）。
+   * 三条去路：
+   *   ① 什么都不做 —— 沿用，本次同步正常完成；
+   *   ② 只补新字段而不重建 —— `node tools/herta-add-team-videos.mjs`；
+   *   ③ 确认要从数据集里删掉 —— 加 `--allow-drop-season`。
    */
-  const droppedSeasons = [];
+  const droppedSeasons = []; // 站点撤了、且明确允许丢弃（--allow-drop-season）
+  const keptSeasons = []; // 站点撤了、从现有 archive.json 原样沿用
+  let keptRuns = 0;
   for (const [modeKey, entry] of Object.entries(previous?.modes || {})) {
     for (const [stageKey, stageEntry] of Object.entries(entry.stages || {})) {
       for (const [season, seasonEntry] of Object.entries(stageEntry.seasons || {})) {
         const before = Number(seasonEntry?.runCount) || 0;
         if (before < MIN_SEASON_RUNS) continue;
         const after = modes?.[modeKey]?.stages?.[stageKey]?.seasons?.[season];
-        if (!after || !(Number(after.runCount) > 0)) {
-          droppedSeasons.push(`${modeKey}|${stageKey}|${season}（原有 ${before} 条投稿）`);
+        // 这次真的抓到了（有投稿）—— 用新的，不碰。
+        if (after && Number(after.runCount) > 0) continue;
+        const label = `${modeKey}|${stageKey}|${season}`;
+        if (ALLOW_DROP_SEASON) {
+          droppedSeasons.push(`${label}（原有 ${before} 条投稿）`);
+          continue;
         }
+        // 走到这里有两种情形，都该用旧季覆盖：
+        //   a) 本次聚合里**完全没有**这一季（raw 文件被站点回空写坏 / 从未抓过）；
+        //   b) 本次聚合得到的是**0 条的空季**（正是 4.5 混沌此刻的状态 —— 线上回空、
+        //      raw 文件只剩 `{"items":[],"count":0}` 那 22 字节）。
+        // 空季的贡献是 0（runCount / teamsSeen 都是 0），直接覆盖即可，不用扣减。
+        if (!modes[modeKey]) modes[modeKey] = { stages: {} };
+        const stages = modes[modeKey].stages;
+        if (!stages[stageKey]) stages[stageKey] = { seasons: {}, runCount: 0, teamsSeen: 0 };
+        const bucket = stages[stageKey];
+        bucket.seasons[season] = seasonEntry;
+        bucket.runCount += before;
+        bucket.teamsSeen += Number(seasonEntry.totalTeams) || 0;
+        // 该版本若在本次原始数据里完全没出现，补进 seasonModes，否则下面
+        // `archive.seasonCount` 会少算一个版本。
+        if (!(seasonModes.get(season) instanceof Set)) seasonModes.set(season, new Set());
+        seasonModes.get(season).add(modeKey);
+        keptRuns += before;
+        keptSeasons.push(`${label}（沿用 ${before} 条投稿 / ${Number(seasonEntry.totalTeams) || 0} 套阵容）`);
       }
     }
   }
-  if (droppedSeasons.length && !ALLOW_DROP_SEASON) {
-    console.error('聚合结果里少了整季数据，已拒绝覆盖：');
-    for (const line of droppedSeasons) console.error(`  ✗ ${line}`);
-    console.error('这通常说明站点撤掉了那一季（实测 2026-10-22 起每期混沌 4.5 直接回空）。');
-    console.error('要么只用 `node tools/herta-add-team-videos.mjs` 补新字段，');
-    console.error('要么确认接受损失后加 `--allow-drop-season`。现有 theherta/archive.json 未改动。');
-    process.exitCode = 1;
-    return;
+  if (keptSeasons.length) {
+    // 沿用的季是真实投稿，必须算进总数：下面那道缩水自检会拿「缺了一季的新数」去比
+    // 「含那一季的旧数」，不算进来就会越沿用越容易误报。
+    runCount += keptRuns;
+    archive.runCount = runCount;
+    archive.seasonCount = seasonModes.size;
+    for (const entry of Object.values(modes)) {
+      for (const stage of Object.values(entry.stages)) {
+        stage.seasonList = Object.keys(stage.seasons).sort();
+      }
+    }
+    console.warn(`站点已撤下 ${keptSeasons.length} 个期（本次聚合里没有数据），已沿用现有 archive.json：`);
+    for (const line of keptSeasons) console.warn(`  ↺ ${line}`);
+    console.warn('要从数据集里真的删掉它们，加 `--allow-drop-season` 重跑。');
+  }
+  if (droppedSeasons.length) {
+    console.warn('已按 --allow-drop-season 丢弃这些期：');
+    for (const line of droppedSeasons) console.warn(`  ✗ ${line}`);
   }
   const shrinking = Number.isFinite(previousRuns) && previousRuns > 0
     && runCount < previousRuns * SHRINK_FLOOR;
@@ -1039,6 +1081,10 @@ const main = async () => {
   //      要么旧文件还在，要么新文件完整；
   //   ② 这个工作区是 UNC 共享盘，**拒绝对已存在文件原地覆写**（EPERM），而
   //      「写新文件 + 改名」两条路都通。`*.tmp` 已在 .gitignore 里。
+  // ⚠️ 序列化必须放在**所有覆盖前自检之后**：上面「站点撤季」的处理会往 `modes` 里
+  //    补回旧季、并调整 runCount / seasonCount，先 stringify 就会把补回前的快照写出去
+  //    （成品里那一季照样消失，护栏等于白加）。
+  const text = JSON.stringify(archive);
   const finalPath = join(OUT, 'archive.json');
   const tmpPath = `${finalPath}.tmp`;
   await writeFile(tmpPath, text, 'utf8');

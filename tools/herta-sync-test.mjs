@@ -12,6 +12,9 @@
 //   (f) 缩水护栏（2026-10-21 加）：抓取环节发现「线上条数比本地少」时不覆盖本地文件；
 //   (g) 排期刷新（2026-10-21 加）：线上新增的版本必须能被增量同步看见；
 //       排期接口挂掉时用本地排期继续、绝不中断同步。
+//   (h) 站点撤掉整季（2026-10-22 加）：**沿用**现有 archive.json 里的那一季，
+//       而不是整条拒绝覆盖 —— 后者会让同步永远失败（实测 4.5 混沌就是这么卡的）；
+//   (i) 备份清理（2026-10-22 修）：只碰时间戳目录，不能把刚建好的那份备份删掉。
 //
 // 为什么用夹具而不是真数据集：判据的核心输入是 `submission_config.json` 里的
 // `availableDate` / `expireDate`，而这些日期会随版本推进而变 —— 拿真数据集断言
@@ -21,7 +24,7 @@
 // 只用相对路径、只写 worktree 内的临时目录（放在 gitignore 掉的 theherta/backup/ 下），
 // 跑完自己清理。用法：node tools/herta-sync-test.mjs
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
@@ -602,6 +605,127 @@ const testBuildRefusesEmptyRaw = async () => {
   assert(await sha(join(dir, 'archive.json')) === before, '现有 archive.json 没被动过');
 };
 
+// ----------------------------------------------------------------------- (h)
+
+/**
+ * (h) 站点撤掉整季时**沿用**现有 archive.json，而不是让整条同步永远失败。
+ *
+ * 真实事故（2026-10-22）：黑塔网把「4.5 混沌回忆」整季撤了（接口直接回
+ * `{"items":[],"count":0}`），而入库的 archive.json 里那一季有 503 条真实投稿。
+ * 第一版护栏选择「整条拒绝覆盖、退出码 1」⇒ 站点既然撤了，这一季就永远回不来，
+ * 于是之后**每一次**同步都卡在聚合这一步，界面永远显示
+ * 「失败：数据已抓取（新增 0 条、变化 61 条），但重新聚合失败」—— 护住了那一季，
+ * 却把整条链路锁死了（抓到的变化一条也进不了成品）。
+ *
+ * 断言：
+ *   ① 默认口径：退出码 0、那一季**原样**留在成品里、总投稿数把它算进去；
+ *   ② `--allow-drop-season`：真的丢掉（用户确认要接受损失时的唯一出口）。
+ */
+const testSeasonDropKeepsPrevious = async () => {
+  console.log('\n(h) 站点撤掉整季时沿用现有 archive.json（别把同步锁死）');
+  const dir = join(SANDBOX, 'drop-season');
+  await mkdir(join(dir, 'raw', 'submissions'), { recursive: true });
+  for (const name of ['submission_config.json', 'characters_config.json',
+    'character_paths.json', 'lightcone_paths.json', 'popular_lightcones.json',
+    'unit-availability.json']) {
+    await writeFile(join(dir, name), await readFile(join(ROOT, 'theherta', name)), 'utf8');
+  }
+  // raw 里 3.0 混沌有 3 条；4.5 混沌只剩站点回空时写下的那 22 字节空文件。
+  const items = ['a', 'b', 'c'].map((id, i) => ({
+    id, season: '3.0', mode: 'Memory of Chaos', boss_name: 'Boss', metric_value: i + 1,
+    p1_char: 'Himeko', p1_eidolon: 0, p1_lc: 'Night on the Milky Way', p1_superimp: 1,
+  }));
+  await writeFile(join(dir, 'raw', 'submissions', '3.0-Memory_of_Chaos.json'),
+    JSON.stringify({ items }), 'utf8');
+  await writeFile(join(dir, 'raw', 'submissions', '4.5-Memory_of_Chaos.json'),
+    '{"items":[],"count":0}', 'utf8');
+
+  const season45 = {
+    runCount: 200, totalTeams: 2, median: 1, lowerIsBetter: true, dist: null,
+    lines: null, reliable: true, perfect: 2, target: 0, pass: 0, below: 0,
+    frontier: [],
+    teams: [{
+      rosterKey: 'Himeko', roster: ['Himeko'], slots: ['Himeko'], count: 200,
+      best: 1, bestAv: 100, avgAv: 100, bosses: [], subcategories: [],
+      perfect: 2, target: 0, pass: 0, below: 0, tierTotal: 2, cost: 0, costMax: 0,
+      over: [0, 0, 0, 0], coneOver: [0, 0, 0, 0], keyEidolon: 0, keyEidolonShare: 1,
+      eidoDist: [200, 0, 0, 0, 0], sample: null,
+    }],
+  };
+  const existing = {
+    version: 2, runCount: 203, seasonCount: 1, counts: {}, refs: {}, characters: {},
+    modes: {
+      'Memory of Chaos': {
+        stages: {
+          '': { seasons: { '4.5': season45 }, runCount: 200, teamsSeen: 2, seasonList: ['4.5'] },
+        },
+      },
+    },
+  };
+  await writeFile(join(dir, 'archive.json'), JSON.stringify(existing), 'utf8');
+
+  const kept = await run('herta-build.mjs', [], { HERTA_DATA_DIR: dir });
+  assert(kept.code === 0, '默认口径下退出码是 0（同步能完成）', `实际 ${kept.code}\n${kept.stderr.trim()}`);
+  assert(/已沿用/.test(kept.stderr), '日志说明了「沿用现有 archive.json」', kept.stderr.trim().slice(0, 200));
+  const written = JSON.parse(await readFile(join(dir, 'archive.json'), 'utf8'));
+  const stage = written.modes?.['Memory of Chaos']?.stages?.[''];
+  assert(Number(stage?.seasons?.['4.5']?.runCount) === 200, '4.5 那一季原样留在成品里',
+    `实际 ${stage?.seasons?.['4.5']?.runCount}`);
+  assert(Number(stage?.seasons?.['4.5']?.totalTeams) === 2, '阵容数也是原样');
+  assert((stage?.seasonList || []).join(',') === '3.0,4.5', 'seasonList 里新旧两季都在',
+    `实际 ${(stage?.seasonList || []).join(',')}`);
+  assert(written.runCount === 203, '总投稿数把沿用的那 200 条算进去了（3 + 200）',
+    `实际 ${written.runCount}`);
+
+  // --allow-drop-season 是唯一出口：确认损失后真的丢掉。
+  // 同一次还要 --allow-shrink —— 丢掉 200 条后总量必然跌破 50%。
+  const dropped = await run('herta-build.mjs', ['--allow-drop-season', '--allow-shrink'],
+    { HERTA_DATA_DIR: dir });
+  assert(dropped.code === 0, '--allow-drop-season 时退出码 0', `实际 ${dropped.code}`);
+  assert(/已按 --allow-drop-season 丢弃/.test(dropped.stderr), '日志说明了丢弃了哪些期');
+  const droppedArchive = JSON.parse(await readFile(join(dir, 'archive.json'), 'utf8'));
+  assert(!droppedArchive.modes?.['Memory of Chaos']?.stages?.['']?.seasons?.['4.5'],
+    '加上 --allow-drop-season 后那一季真的从成品里消失了');
+  assert(droppedArchive.runCount === 3, '总投稿数只剩新的 3 条', `实际 ${droppedArchive.runCount}`);
+};
+
+// ----------------------------------------------------------------------- (i)
+
+/**
+ * (i) 备份清理**不能吃掉刚建好的那份备份**。
+ *
+ * 真实事故（2026-10-22）：`pruneBackups` 把 `theherta/backup/` 下所有目录名排序后取
+ * 尾部 5 个。备份名 `20261022-200234` 是数字开头、测试夹具 `sync-test-<pid>` 是字母开头，
+ * 字典序里数字排在字母**前**面 ⇒ 刚建好的备份永远是最“早”的一个，同步一结束就被
+ * 自己删掉。界面上那句「已留档 4 个文件到 theherta/backup/20261022-200234/」是空话
+ * （去目录里一看根本没有），而且正好发生在聚合失败、最需要回滚的那一次。
+ *
+ * 断言：旧的按 keep 清掉、最新的留着、非时间戳目录（夹具 / 手工放的目录）不碰。
+ */
+const testPruneBackupsIgnoresNonStamp = async () => {
+  console.log('\n(i) 备份清理只碰时间戳目录，不吃掉刚建的那份');
+  const { backupPruneTargets, pruneBackups } = await import('../src/server/archive-update.js');
+  // ⚠️ 断的是**纯函数选出来的名单**：UNC / 沙箱里 `rm` 会被安全删除钩子拦下
+  //    （实测 `genie-trash` 失败 → 目录原地不动），对真实目录断「删没删掉」测的是
+  //    环境而不是逻辑。名单对了、真删不炸，这条链就没问题。
+  const names = ['20260101-010101', '20261022-200234', '20260102-010101',
+    '20260103-010101', 'sync-test-123'];
+  const targets = backupPruneTargets(names, 2);
+  assert(!targets.includes('20261022-200234'),
+    '刚建好的那份不在清理名单里（旧写法按字典序把它排在最前）', targets.join(','));
+  assert(targets.join(',') === '20260101-010101,20260102-010101',
+    '按名字（= 时间）从最旧的开始清，非时间戳目录不进名单', targets.join(','));
+  assert(backupPruneTargets(names, 5).length === 0, '份数不足 keep 时一个都不删',
+    backupPruneTargets(names, 5).join(','));
+
+  const dir = join(SANDBOX, 'backup-prune');
+  for (const name of names) await mkdir(join(dir, name), { recursive: true });
+  let threw = null;
+  await pruneBackups(2, dir).catch((err) => { threw = err.message; });
+  assert(threw === null, 'pruneBackups 不因某个目录删不掉而抛错', threw || '');
+  assert((await readdir(dir)).includes('20261022-200234'), '刚建好的那份仍在目录里');
+};
+
 // ---------------------------------------------------------------------- main
 
 const main = async () => {
@@ -619,6 +743,8 @@ const main = async () => {
     await testConfigRefresh();
     await testBuildRefusesToShrink();
     await testBuildRefusesEmptyRaw();
+    await testSeasonDropKeepsPrevious();
+    await testPruneBackupsIgnoresNonStamp();
   } finally {
     // 夹具目录在 gitignore 的 theherta/backup/ 下，跑完自己收拾干净。
     await rm(SANDBOX, { recursive: true, force: true }).catch(() => {});

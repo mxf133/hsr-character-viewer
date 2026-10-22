@@ -270,13 +270,38 @@ export const datasetStats = async () => {
   }
 };
 
-/** 清掉备份目录里最早的若干份，避免无限增长。 */
-export const pruneBackups = async (keep = 5) => {
-  const dir = join(OUT, 'backup');
+/** 备份目录名的时间戳格式（见 `stamp()`）：`YYYYMMDD-HHmmss`。 */
+const BACKUP_STAMP = /^\d{8}-\d{6}$/;
+
+/**
+ * 该清掉哪些备份目录：只有匹配时间戳格式的才参与，按名字排序（= 时间序）取最旧的若干份。
+ *
+ * ⚠️ **别再用「所有目录名排序取尾部 N 个」**（2026-10-22 修「留档 = 没留档」）。
+ *
+ * 旧写法把 `theherta/backup/` 下**所有**目录名排序后取尾部 5 个。备份名是
+ * `20261022-200234`（数字开头）、测试夹具是 `sync-test-<pid>`（字母开头），
+ * 字典序里数字排在字母**前**面 ⇒ 刚建好的那份备份永远是最“早”的一个，同步一结束
+ * 就被自己删掉。界面上的「已留档 4 个文件到 theherta/backup/20261022-200234/」
+ * 于是成了空话：去目录里一看它根本不存在（2026-10-22 20:02 那次同步实测如此，
+ * 而且正是最需要备份的那次 —— 聚合失败、结果未知）。
+ *
+ * 抽成纯函数是为了能被离线断言（UNC / 沙箱里 `rm` 会被安全删除钩子拦下，
+ * 直接对真实目录断「删没删掉」测不出逻辑对错）。
+ */
+export const backupPruneTargets = (names = [], keep = 5) => {
+  const stamps = names.filter((name) => BACKUP_STAMP.test(name)).sort();
+  return stamps.slice(0, Math.max(0, stamps.length - keep));
+};
+
+/** 按上面的口径真删。单个目录删不掉不影响其余（比如被进程占住）。 */
+export const pruneBackups = async (keep = 5, dir = join(OUT, 'backup')) => {
+  let names;
   try {
-    const entries = (await readdir(dir)).sort();
-    for (const name of entries.slice(0, Math.max(0, entries.length - keep))) {
-      await rm(join(dir, name), { recursive: true, force: true });
-    }
-  } catch { /* 没有备份目录就算了 */ }
+    names = await readdir(dir);
+  } catch {
+    return; // 没有备份目录就算了
+  }
+  for (const name of backupPruneTargets(names, keep)) {
+    await rm(join(dir, name), { recursive: true, force: true }).catch(() => {});
+  }
 };
