@@ -3010,6 +3010,30 @@ html:has(.advice-tip-modal:not([hidden])) { overflow: hidden; }
   width: 100%;
 }
 .advice-plan-variant .advice-lineup { flex: 1 0 100%; }
+/* 「其它配装」现在的第二行：账面 / 补金 + 最佳版本 · 成绩 · 首领（与卡片同一套写法）。 */
+.advice-plan-variant-facts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  width: 100%;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* 只列前 10 套，余下的用一句话交代（2026-10-22，用户：「其它配装显示最多 10 条」）。 */
+.advice-plan-variant-more { margin: 6px 0 0; }
+/* 「另 N 条来源」里那块配装说明（2026-10-22：这些投稿用的是同一套配装）。 */
+.advice-plan-video-pack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 4px 0 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.advice-plan-video-pack .advice-lineup { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 
 /* 2026-10-22：变体行 / 已有队伍行里的四格要**定列**（4 等分），不能用 `auto-fit` ——
    否则两行的列宽会随内容不同而对不齐（截图里 5.84 与 5.81 两行的光锥明显错开）。 */

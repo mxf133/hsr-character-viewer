@@ -633,23 +633,35 @@ export const materializePlanRow = (row, state) => {
   // 折叠进来的其它配装：**只带界面能用的字段**（成员整包 + 分数 + 补金），
   // 不跑 fill / mid / cuts —— 用户点开变体时要的是「换个光锥能省几金」，
   // 给每个变体都算一遍补金明细会把这几十行的成本翻几倍，而没人看。
-  const variants = (row.variants || []).map((v) => ({
-    key: v.key,
-    score: v.score,
-    bestSeason: v.bestSeason,
-    strengthPart: v.strengthPart,
-    costPart: v.costPart,
-    gap: v.gap,
-    gold: v.gold,
-    video: v.video,
-    members: v.members.map((m) => ({
-      char: m.char,
-      eidolon: m.eidolon,
-      lc: m.lc ?? null,
-      superimp: m.superimp ?? 0,
-      owned: isOwned(m.char),
-    })),
-  }));
+  // 2026-10-22（用户：「其它配装…显示金数、补金数、队伍强度和计算公式、最佳版本和行动值，
+  // 总之和本投稿的外观完全一致」）：变体按**卡片同一套字段**下发。
+  // 缺 `bestScore` 就印不出「最佳版本 4.6 · 行动值 285」那半句；缺 `displayGold` /
+  // `hiddenCut` 就印不出「账面 N 金（含隐金减免 M 金）」。
+  // ⚠️ 隐金减免必须按**这套配装自己的成员**算 —— 两者光锥可能完全不同，减免自然不同，
+  //    借用代表行的数字就是假话。
+  const variants = (row.variants || []).map((v) => {
+    const variantCut = hiddenReductionOf(v.members, availability, hidden, 'dataset').team ?? 0;
+    return {
+      key: v.key,
+      score: v.score,
+      bestSeason: v.bestSeason,
+      bestScore: v.bestScore ?? null,
+      strengthPart: v.strengthPart,
+      costPart: v.costPart,
+      gap: v.gap,
+      gold: v.gold,
+      hiddenCut: variantCut,
+      displayGold: Math.max(1, v.gold - variantCut),
+      video: v.video,
+      members: v.members.map((m) => ({
+        char: m.char,
+        eidolon: m.eidolon,
+        lc: m.lc ?? null,
+        superimp: m.superimp ?? 0,
+        owned: isOwned(m.char),
+      })),
+    };
+  });
 
   return {
     key: row.key,

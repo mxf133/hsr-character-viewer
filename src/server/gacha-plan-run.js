@@ -25,7 +25,7 @@ import {
   archiveEpoch, archiveFrontierAll, archiveIndex, loadI18n, localizeBosses, zhName,
 } from './archive.js';
 import { bossIconMap } from './icon-fetch.js';
-import { envKindOf, scoreEnvRows } from './gacha-score.js';
+import { envKindOf, packKeyOf, scoreEnvRows } from './gacha-score.js';
 import { buildPlanPool, materializePlanRow } from './gacha-plan.js';
 import {
   createPlanCache, hashOf, mergePlanEntries, planPageOf, searchPlanIndex,
@@ -307,9 +307,13 @@ const videoIndexOf = (frontierRows) => {
     (a, b) => (a.tier === 'perfect' ? 0 : 1) - (b.tier === 'perfect' ? 0 : 1),
   );
   for (const r of rows) {
-    const roster = (r.members || []).map((m) => m.char).sort().join(' + ');
-    if (!roster) continue;
-    const key = r.season + '|' + roster;
+    const members = r.members || [];
+    if (!members.length) continue;
+    // ⚠️ **键是「整包」不是「角色名集合」**（2026-10-22，用户：「另外的来源需要显示完全相同的
+    //    配装，但投稿不同」）：原来按四个角色名做键，同角色不同配装（E2S1 / E6S5）的投稿会混进
+    //    同一个桶，卡片上就可能挂着一条**别的配装**的投稿。现在键里带星魂档 / 光锥 / 叠影，
+    //    桶内每一条都必然是同一套配装。
+    const key = `${r.season}|${members.map((m) => packKeyOf(m)).sort().join('~')}`;
     if (!buckets.has(key)) { buckets.set(key, []); seen.set(key, new Set()); }
     const bucket = buckets.get(key);
     const known = seen.get(key);
@@ -516,19 +520,18 @@ export const runPlan = async (options = {}) => {
       hiddenCosts: options.hiddenCosts,
       ws,
       wc,
-      // 回 `{ url, sources }`：`url` 是首选（B 站优先），`sources` 是这套阵容的全部来源。
+      // 回 `{ url, sources }`：`url` 是首选（B 站优先），`sources` 是这套**整包**的全部来源。
+      // ⚠️ 键与 `videoIndexOf()` 同源：`season|整包键`（`角色|E档|光锥|S档` 排序拼 `~`）。
+      //    2026-10-22 之前这里按「四个角色名」查，同角色不同配装的投稿会串门 —— 卡片上印的是
+      //    E6S5，点开的却可能是 E2S1 那条投稿。用户这轮明确要求「另外的来源要显示完全相同的
+      //    配装，但投稿不同」，所以键必须带上星魂档 / 光锥 / 叠影。
       videoOf: (rosterKey, season) => {
-        // `rosterKey` 是整包键（`角色|E档|光锥|S档` 排序拼 ~），视频索引的键是角色名。
-        // 这里把整包键还原成角色名集合再查 —— 两种键都从同一批成员派生，不会对不上。
-        const chars = String(rosterKey).split('~')
-          .map((pack) => String(pack).split('|')[0])
-          .sort().join(' + ');
-        const bySeason = env.videos.get(`${season}|${chars}`);
+        const bySeason = env.videos.get(`${season}|${rosterKey}`);
         if (bySeason) return bySeason;
-        // 该版本没有就用**最新一版有视频的**兜底：用户点开要的是「这套阵容的投稿」，
+        // 该版本没有就用**最新一版有视频的**兜底：用户点开要的是「这套配装的投稿」，
         // 差一个版本仍然是同一套打法，比一个点不动的卡片有用。
         for (const s of Object.keys(env.seasonWeights).sort().reverse()) {
-          const hit = env.videos.get(`${s}|${chars}`);
+          const hit = env.videos.get(`${s}|${rosterKey}`);
           if (hit) return hit;
         }
         return null;

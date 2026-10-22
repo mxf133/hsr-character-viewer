@@ -163,14 +163,43 @@ const bossSample = await evaluate("document.querySelector('.advice-plan-boss-nam
 check('首领名是中文', /[一-龥]/.test(bossSample), bossSample);
 
 // ④ 「其它配装」每行都是**四个位置的完整配队**（2026-10-22 起换成 `.advice-lineup`）
+// ⚠️ `.advice-plan-variant` 这个 class **次选行也在用**（`is-alt`），而次选没有 `.advice-lineup`
+//    —— 判据必须排除 `is-alt`，否则抓到的是次选那一栏。
 const variantLineups = await evaluate(
-  "document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team-variants .advice-lineup').length");
+  "document.querySelectorAll('#adviceTeamPlanBody .advice-plan-variant:not(.is-alt) .advice-lineup').length");
 const variantSlots = await evaluate(`(() => {
-  const g = document.querySelector('#adviceTeamPlanBody .advice-plan-team-variants .advice-lineup');
+  const g = document.querySelector('#adviceTeamPlanBody .advice-plan-variant:not(.is-alt) .advice-lineup');
   return g ? g.querySelectorAll('.advice-lineup-slot').length : 0;
 })()`);
 check('「其它配装」每行都是四个位置的完整配队',
   variantLineups > 0 && variantSlots === 4, `${variantLineups} 行 / 首行 ${variantSlots} 格`);
+// 2026-10-22 第三版（用户：「最多 10 条」「显示金数、补金数、队伍强度和计算公式、最佳版本
+// 和行动值，总之和本投稿的外观完全一致」）：逐条对一遍这几样在不在。
+const variantDetail = await evaluate(`(() => {
+  const rows = [...document.querySelectorAll('#adviceTeamPlanBody .advice-plan-variant:not(.is-alt)')];
+  if (!rows.length) return null;
+  // 「最多 10 条」是**每一栏**的上限，不是整页 —— 按 list 分组取最大值。
+  const perList = [...document.querySelectorAll('#adviceTeamPlanBody .advice-plan-team-variants .advice-plan-variant-list')]
+    .map((l) => l.querySelectorAll(':scope > .advice-plan-variant:not(.is-alt)').length);
+  const maxRows = perList.length ? Math.max(...perList) : 0;
+  const first = rows[0];
+  const text = first ? first.textContent : '';
+  return {
+    rows: maxRows,
+    total: rows.length,
+    hasEq: !!first?.querySelector('.advice-plan-team-eq'),
+    hasGold: /账面/.test(text),
+    hasBest: /最佳版本/.test(text),
+    hasScore: !!first?.querySelector('.advice-plan-team-score'),
+    eqText: (first?.querySelector('.advice-plan-team-eq')?.textContent || '').slice(0, 60),
+  };
+})()`);
+check('「其它配装」每支都印分数 + 等式（队伍强度 / 性价比）',
+  !!variantDetail && variantDetail.hasScore && variantDetail.hasEq, JSON.stringify(variantDetail?.eqText));
+check('「其它配装」每支都印账面 / 补金', !!variantDetail && variantDetail.hasGold);
+check('「其它配装」每支都印最佳版本 · 成绩', !!variantDetail && variantDetail.hasBest);
+check('「其它配装」每栏最多 10 条', !!variantDetail && variantDetail.rows <= 10 && variantDetail.rows > 0,
+  `单栏最多 ${variantDetail?.rows} 条（全页 ${variantDetail?.total} 条）`);
 const slotText = await evaluate(
   "document.querySelector('.advice-plan-team-variants .advice-lineup-slot')?.textContent || ''");
 check('每个位置印了角色 E 档与光锥 S 档', /E[0-9]/.test(slotText) && /S[0-9]/.test(slotText),
@@ -189,6 +218,18 @@ check('「你现在就能打的队」列出补 0 金的队（每支四个位置�
 const primary = await evaluate("document.querySelectorAll('.advice-team-video').length");
 const more = await evaluate("document.querySelectorAll('.advice-plan-video-more').length");
 check('卡片有来源视频按钮', primary > 0, `${primary} 枚`);
+// 「另 N 条来源」必须写明「同一套配装」，并把那套配装印出来（2026-10-22）。
+const sourcePack = await evaluate(`(() => {
+  const d = document.querySelector('.advice-plan-video-more');
+  if (!d) return null;
+  return {
+    summary: d.querySelector('summary')?.textContent || '',
+    hasPack: !!d.querySelector('.advice-plan-video-pack .advice-lineup'),
+  };
+})()`);
+check('「另 N 条来源」标注「同一套配装」并印出配装',
+  !!sourcePack && /同一套配装/.test(sourcePack.summary) && sourcePack.hasPack,
+  sourcePack ? sourcePack.summary : '没有多来源卡片');
 const searchLinks = await evaluate("document.querySelectorAll('.advice-team-video.is-search').length");
 check('没有「B站搜索」这类兜底按钮（用户：不要）', searchLinks === 0, `${searchLinks} 枚`);
 const biliLinks = await evaluate("document.querySelectorAll('.advice-team-video.is-bilibili').length");

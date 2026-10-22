@@ -3358,12 +3358,87 @@ const planOwnedTeams = (plan) => {
   return box;
 };
 
-const planVideoSources = (sources, primaryUrl, scoreText) => {
+/**
+ * 「分数 + 等式」那一行：`3.65 = 队伍强度 0.902 × 0.50 + 性价比 0.300 × 0.50（行动值口径）`。
+ *
+ * 2026-10-22（用户：「其它配装…队伍强度和计算公式…和本投稿的外观完全一致」）：
+ * 卡片与变体行**共用一个实现** —— 抄第二份的结果一定是「卡片改了、变体还是旧式子」。
+ *
+ * ⚠️ 式子本身来自服务端 `planScoreAt()`：`(ws × 强度 + wc × 性价比) × 版本权重`。
+ *    改那一行之前先确认服务端还是不是这个式子（v4.6.135 修过一次「等式在骗人」）。
+ */
+const planScoreEquation = (source, plan, ws, wc) => {
+  const wrap = text('span', 'advice-value-wrap advice-plan-score-wrap');
+  wrap.appendChild(text('strong', 'advice-plan-team-score', Number(source.score).toFixed(2)));
+  wrap.appendChild(text('span', 'advice-plan-team-eq',
+    `= 队伍强度 ${Number(source.strengthPart).toFixed(3)} × ${ws}`
+    + ` + 性价比 ${Number(source.costPart).toFixed(3)} × ${wc}`
+    + `（${planIsTurn(plan) ? '轮次' : '行动值'}口径）`));
+  return wrap;
+};
+
+/**
+ * 「账面 N 金｜补金 M 金」那一行（含「全缺」特例与隐金减免说明）。
+ *
+ * 2026-10-19 定的口径：`补金` 与 `账面` **相等**时只说一次、改用「全缺」——
+ * 原来会印成「账面 26 金｜补金 26 金」，同一个数字在一个短语里出现两遍，读者第一反应是
+ * 「是不是算错了」。卡片与变体行共用这一份。
+ */
+const planGoldLine = (source) => {
+  const line = text('span', 'advice-plan-team-gold');
+  const displayGold = Number(source.displayGold ?? source.gold);
+  const gapGold = Number(source.gap);
+  line.appendChild(text('span', '', '账面 '));
+  line.appendChild(goldText(source.displayGold ?? source.gold));
+  if (Number(source.hiddenCut) > 0) {
+    line.appendChild(text('span', '', `（含隐金减免 ${source.hiddenCut} 金）`));
+  }
+  if (gapGold > 0 && gapGold === displayGold) {
+    line.appendChild(text('span', '', '｜全缺'));
+  } else {
+    line.appendChild(text('span', '', '｜补金 '));
+    line.appendChild(goldText(source.gap));
+  }
+  return line;
+};
+
+/**
+ * 「最佳版本 4.6 · 行动值 285 ⊙首领」那一行。
+ *
+ * 成绩走 `metricValueTextOf()`（与总榜「表现」列、分数浮层的成绩列同一把尺子），
+ * 首领按**那一版**取（`plan.bosses[bestSeason]`）—— 榜单只算一个关卡，首领却随版本变。
+ */
+const planBestLine = (source, plan) => {
+  if (!source.bestSeason) return null;
+  const best = text('span', 'advice-plan-team-best muted small',
+    `最佳版本 ${source.bestSeason}`);
+  const bestScore = metricValueTextOf(plan.mode, plan.stage, source.bestScore);
+  if (bestScore) {
+    best.appendChild(text('span', 'advice-plan-team-best-score', ` · ${bestScore}`));
+  }
+  for (const boss of (plan.bosses || {})[source.bestSeason] || []) {
+    best.appendChild(planBossNode(boss));
+  }
+  return best;
+};
+
+const planVideoSources = (sources, primaryUrl, scoreText, members) => {
   const rest = (sources || []).filter((s) => s && s.url && s.url !== primaryUrl);
   if (!rest.length) return null;
   const details = document.createElement('details');
   details.className = 'advice-plan-video-more';
-  details.appendChild(text('summary', '', `另 ${rest.length} 条来源`));
+  // 2026-10-22（用户：「另外的来源需要显示完全相同的配装，但投稿不同」）：
+  // 服务端的视频索引改成按**整包**做键了（`videoIndexOf` 的 `season|角色|E|光锥|S`），
+  // 所以这个桶里每一条投稿都必然是**同一套配装**。这里把它显式印一次（而不是逐条重复
+  // 四格）：读者一眼能确认「换的只是投稿，配装没变」。
+  details.appendChild(text('summary', '', `另 ${rest.length} 条来源 · 同一套配装`));
+  if (members && members.length) {
+    const pack = text('div', 'advice-plan-video-pack');
+    pack.appendChild(text('span', 'advice-plan-video-pack-note muted small',
+      '这几条投稿用的都是这套配装：'));
+    pack.appendChild(planLineupGrid(members));
+    details.appendChild(pack);
+  }
   for (const source of rest) {
     const line = text('div', 'advice-plan-video-source');
     const link = videoLink(source.url);
@@ -5029,6 +5104,14 @@ const planScoreTip = (row, plan, ws, wc) => {
 //    总共 8 项，所以只能是 4 + 4。服务端 `normalizeExclude()` 会再夹一次。
 const PLAN_EXCLUDE_MAX = 4;
 
+/**
+ * 「其它配装」最多列几支（2026-10-22，用户：「其它配装显示最多 10 条」）。
+ *
+ * 这一栏是**同角色换光锥 / 叠影**的备选，10 支足够看完「哪套最省」；再多就是一面墙
+ * （实测有一栏 63 套，全列出来要滚十几屏）。余下的写在列表下方（数量 + 最低分）。
+ */
+const PLAN_VARIANTS_MAX = 10;
+
 /** 可选的全部角色 / 光锥（数据集 `refs`，已带中文名）。 */
 const planExcludeCandidates = () => {
   const refs = state.index?.refs || {};
@@ -5386,46 +5469,12 @@ const renderTeamPlan = () => {
 
     // ---- 金数 / 版本 / 视频 ---------------------------------------------------
     const facts = text('div', 'advice-plan-team-facts');
-    const goldLine = text('span', 'advice-plan-team-gold');
-    // 2026-10-19：`补金` 与`账面`**相等**时只说一次。
-    // 相等意味着这套四人你一个都没有（要补的金数 = 整队金数），原来会印成
-    // 「账面 26 金｜补金 26 金」—— 同一个数字在一个短语里出现两遍，读者第一反应是
-    // 「是不是算错了」。此时改用「全缺」这个词，字数少一半、意思更直接。
-    const displayGold = Number(row.displayGold ?? row.gold);
-    const gapGold = Number(row.gap);
-    goldLine.appendChild(text('span', '', '账面 '));
-    goldLine.appendChild(goldText(row.displayGold ?? row.gold));
-    if (row.hiddenCut > 0) {
-      goldLine.appendChild(text('span', '', `（含隐金减免 ${row.hiddenCut} 金）`));
-    }
-    if (gapGold > 0 && gapGold === displayGold) {
-      goldLine.appendChild(text('span', '', '｜全缺'));
-    } else {
-      goldLine.appendChild(text('span', '', '｜补金 '));
-      goldLine.appendChild(goldText(row.gap));
-    }
-    facts.appendChild(goldLine);
-    if (row.bestSeason) {
-      const best = text('span', 'advice-plan-team-best muted small',
-        `最佳版本 ${row.bestSeason}`);
-      // ★ 2026-10-21（用户原话：「最佳版本 x.x 旁边，需要有具体的成绩，例如 0T
-      //    或者行动值 xx」）：只写版本号不说「那版打得多快」—— 同一行里 0T 与 2T
-      //    的队伍可能挨着排，读者分不清谁强。按副本量纲写游戏内那个量
-      //    （`metricValueTextOf`：轮次制 `0T` / 绝境 `行动值 285` / 末日幻影
-      //    `积分 3852`），与总榜「表现」列、分数浮层的成绩列同一把尺子。
-      //    没有成绩（老载荷 `a=null`）时不印，不编数字。
-      const bestScore = metricValueTextOf(plan.mode, plan.stage, row.bestScore);
-      if (bestScore) {
-        best.appendChild(text('span', 'advice-plan-team-best-score', ` · ${bestScore}`));
-      }
-      // 敌方首领（2026-10-22，用户：「在最佳版本 x.x 右侧显示敌方 boss 的图标和名称」）。
-      // 榜单只算一个关卡，而首领是**按版本**变的 —— 所以「最佳版本」那半句后面跟着的，
-      // 必须是**那一版**的首领（`plan.bosses[bestSeason]`），不是当前期的。
-      for (const boss of (plan.bosses || {})[row.bestSeason] || []) {
-        best.appendChild(planBossNode(boss));
-      }
-      facts.appendChild(best);
-    }
+    // 2026-10-22：金数行与「最佳版本 · 成绩 · 首领」都抽成公用组件（`planGoldLine()` /
+    // `planBestLine()`）—— 用户要求「其它配装…和本投稿的外观完全一致」，两处各写一份
+    // 迟早会分叉（历史上「等式印强度×ws、服务端却不乘」就是这么来的）。
+    facts.appendChild(planGoldLine(row));
+    const bestLine = planBestLine(row, plan);
+    if (bestLine) facts.appendChild(bestLine);
     // 来源视频（用户 2026-10-14 第 6 条 + 2026-10-18「把视频接回来」）：
     // 服务端按「版本 + 角色名集合」匹配，所以它是**这套阵容**的某条投稿，不是这一分的。
     // ⚠️ 2026-10-22：首选那条现在**优先 B 站**（`videoRankOf`），其余来源收进折叠块 ——
@@ -5436,7 +5485,7 @@ const renderTeamPlan = () => {
     const video = videoLink(row.video);
     if (video) facts.appendChild(video);
     const moreSources = planVideoSources(row.videoSources, row.video,
-      (av) => metricValueTextOf(plan.mode, plan.stage, av));
+      (av) => metricValueTextOf(plan.mode, plan.stage, av), row.members);
     if (moreSources) facts.appendChild(moreSources);
     card.appendChild(facts);
 
@@ -5523,24 +5572,37 @@ const renderTeamPlan = () => {
       details.appendChild(text('summary', '',
         `其它 ${row.variants.length} 套配装（同角色，换光锥 / 叠影${eidolonMoves ? ' / 命座' : ''}）`));
       const list = text('div', 'advice-plan-variant-list');
-      for (const v of row.variants) {
+      // 2026-10-22 第三版（用户：「其它配装显示最多 10 条，显示金数、补金数、队伍强度和
+      // 计算公式、最佳版本和行动值，总之和本投稿的外观完全一致」）：
+      //   ① 每支变体现按**卡片同一套元素**排：分数 + 等式 → 账面 / 补金 → 最佳版本 · 成绩 · 首领
+      //      → 四个位置的完整配队（`planScoreEquation` / `planGoldLine` / `planBestLine` /
+      //      `planLineupGrid` 四个都是与卡片共用的组件，写法不会分叉）；
+      //   ② 只列前 10 支（`PLAN_VARIANTS_MAX`），余下的写明数量与最低分 ——
+      //      原先「全部列出」在 63 套那一栏里是一条几十行的墙。
+      for (const v of row.variants.slice(0, PLAN_VARIANTS_MAX)) {
         const line = text('div', 'advice-plan-variant');
-        // 第一行：分数 / 补金 / 来源视频（**状态**）；第二行：四个位置的完整配队（**内容**）。
-        // 2026-10-22（用户：「其它配装也需要显示详细的配队，如同最高分的投稿一样」）：
-        // 原来只有 4 把光锥图标 + 一行挤在一起的名字，读者要自己把「图标 → 光锥名」对上；
-        // 现在直接画成四个位置（头像 + 名字 E档 + 光锥 S档），与卡片顶部那四个格子同一份信息。
         const head = text('div', 'advice-plan-variant-head');
-        head.appendChild(variantScoreChip(v.score, row.score));
-        head.appendChild(text('span', 'advice-plan-variant-gap', `补 ${v.gap} 金`));
+        head.appendChild(planScoreEquation(v, plan, ws, wc));
         const vv = videoLink(v.video);
         if (vv) head.appendChild(vv);
         line.appendChild(head);
+        const vFacts = text('div', 'advice-plan-variant-facts');
+        vFacts.appendChild(planGoldLine(v));
+        const vBest = planBestLine(v, plan);
+        if (vBest) vFacts.appendChild(vBest);
+        line.appendChild(vFacts);
         line.appendChild(planLineupGrid(v.members, { baseMembers: row.members }));
         // 完整名字串仍留一份在 `title`（窄屏折行时想一次看全可以悬停）。
         line.title = variantNamesText(v.members);
         list.appendChild(line);
       }
       details.appendChild(list);
+      const restVariants = row.variants.length - PLAN_VARIANTS_MAX;
+      if (restVariants > 0) {
+        const last = row.variants[row.variants.length - 1];
+        details.appendChild(text('p', 'advice-plan-variant-more muted small',
+          `还有 ${restVariants} 套更低分的没列（最低 ${Number(last.score).toFixed(2)} 分）。`));
+      }
       card.appendChild(details);
     }
 

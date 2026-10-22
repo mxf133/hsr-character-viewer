@@ -1025,8 +1025,11 @@ check('抽卡方案卡片：「全队金数」不许印两遍（用户 2026-10-1
   //    挑一条代表投稿的写法）。新算法逐版本取最大值，卡片上只有「账面 N 金｜补金 M 金」
   //    一处金数 + 逐版本成绩 —— 护栏改成钉「金数只出现一次」这个结果：
   //    卡片的 facts 段不允许再出现第二个金数来源。
-  const from = src.indexOf("const goldLine = text('span', 'advice-plan-team-gold');");
-  const to = src.indexOf('card.appendChild(facts);', from);
+  // ⚠️ 2026-10-22 v4.6.149：金数行抽成公用组件 `planGoldLine()`（卡片与「其它配装」变体
+  //    共用同一个金数写法），断言跟着从「卡片里那行 goldLine」改成「公用组件里那行」。
+  //    判据不变：走 displayGold、不许 bestTeamGold 回来。
+  const from = src.indexOf("const line = text('span', 'advice-plan-team-gold');");
+  const to = src.indexOf('const planBestLine', from);
   assert.ok(from > 0 && to > from, '找不到抽卡方案卡片的金数段');
   const block = src.slice(from, to);
   assert.ok(/displayGold/.test(block), '账面金数仍走 displayGold（隐金后的口径）');
