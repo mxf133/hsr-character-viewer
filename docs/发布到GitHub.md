@@ -121,11 +121,16 @@ git push --force origin "refs/tags/*:refs/tags/*"   # 旧 tag 全部指向旧提
 
 | 版本 | Release | 附件 |
 | --- | --- | --- |
+| v4.6.151 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.151> | `hsr-character-viewer-v4.6.151.zip`（7.02 MB，`git archive` 生成，不含 `data/`；发布说明汇总 v4.6.136→151，含 PWA / 总榜 v2 口径 / 抽卡方案第二轮） |
 | v4.6.135 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.135> | `hsr-character-viewer-v4.6.135.zip`（5.29 MB，`git archive` 生成，不含 `data/`；发布说明汇总 v4.6.109→135，README 重写为四张虚拟账号截图） |
 | v4.6.108 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.108> | `hsr-character-viewer-v4.6.108.zip`（4.33 MB，`git archive` 生成，不含 `data/`；发布说明汇总 v4.6.105→108） |
 | v4.6.104 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.104> | `hsr-character-viewer-v4.6.104.zip`（4.18 MB，`git archive` 生成，不含 `data/`） |
 | v4.6.103 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.103> | `hsr-character-viewer-v4.6.103.zip`（4.17 MB，`git archive` 生成，不含 `data/`） |
 | v4.6.102 | <https://github.com/mxf133/hsr-character-viewer/releases/tag/v4.6.102> | `hsr-character-viewer-v4.6.102.zip`（4.15 MB，`git archive` 生成，不含 `data/`） |
+
+> **Release 是「攒一批发一个」而不是每个 tag 一个**：v4.6.136~150 只有 tag、没有单独 Release，
+> 内容并进 v4.6.151 那篇（同 v4.6.105~108、v4.6.109~135 的做法）。tag 与版本的对应关系仍完整，
+> 想按版查代码看 tag 即可。
 
 ### 踩过的坑
 
